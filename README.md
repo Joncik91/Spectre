@@ -16,11 +16,12 @@
 
 Default Claude Code auto-memory drifts during long sessions: spec-level intent gets buried under terminal scroll-back, and "what did I just change on disk" answers require re-reading logs that have already aged out of context.
 
-Spectre overrides this with a deterministic state machine:
+Spectre overrides this with a deterministic state machine that drives an unbroken vision → spec → implement → verify chain:
 
 - `SessionStart` → `bin/hydrate.py` reads `specs/.active` (an explicit instruction-pointer file) and re-injects the one currently-active spec. No mtime guessing.
 - `PostToolUse(Bash)` → `bin/compact.py` reads the Bash result, computes a filesystem-delta heuristic, updates `state/scratchpad.json`, emits a `Delta + Anchor` block as `additionalContext`. Raw logs never re-enter context.
-- `/vision` skill → distills a vague vision into a `.spec.md`, atomically flips `.active`, resets the scratchpad. One spec at a time.
+- `/vision` skill → multi-turn inception: distills a vague vision into a `.spec.md` with explicit `action:`/`verification:` per step, atomically flips `.active`, resets the scratchpad. Includes a Feasibility Audit; refuses physically impossible visions.
+- `/implement` skill → state-aware execution: reads the active spec, runs the next step's `action`, gates on its `verification`, applies one Option B retry with diagnosis on fail, advances `step` on pass. Pre-flight re-verifies the previous step to catch root-state desync.
 
 Five named failure modes — broad matcher, hydrator bloat, recursive failure, torn writes, log inflation — each have a code-level mitigation and a test.
 
@@ -40,12 +41,20 @@ Restart Claude Code. SessionStart fires `hydrate.py`; with no `.active` yet you'
 ```bash
 # In a Claude Code session:
 /vision Build a real-time order sync between Shopify and our warehouse
+# → Claude returns a First-Principles Summary + 2-3 refinement questions.
+# → After you answer, Claude drafts the full spec (action/verification per step).
+# → On confirmation, .active is locked and the scratchpad resets.
 
-# Then work normally — every Bash call produces a tight Delta+Anchor in context.
-# Across sessions, the hydrator re-injects the same active spec; you resume mid-mission.
+/implement
+# → Reads the active spec, runs Step N's action, then its verification.
+# → On verification fail: one diagnosis + corrected action proposal (Option B).
+# → On pass: scratchpad step advances. Halts; you run /implement again for Step N+1.
+
+/implement check
+# → Re-runs the current step's verification only. No execution, no scratchpad write.
 ```
 
-To switch missions, run `/vision` again. The previous spec stays on disk; `.active` flips.
+Across sessions, the hydrator re-injects the same active spec and the scratchpad's `step` — you resume mid-mission. To switch missions, run `/vision` again.
 
 Run the test suite:
 
@@ -62,9 +71,25 @@ pytest tests/ -v   # 28 tests, ~0.5s
 | `SessionStart` | `python3 bin/hydrate.py` | stdout: active spec body wrapped in `--- ACTIVE SPEC ---` markers, plus `STATE:` line. Or `SIGNAL:` / `ERROR:` fallback. |
 | `PostToolUse` (matcher: `"Bash"`) | `python3 bin/compact.py` | stdout: JSON `{"additionalContext": "..."}`. |
 
-### Skill
+### Skills
 
-`/vision <free-form description>` — distill, write `specs/<slug>.spec.md`, atomically flip `specs/.active`, reset `state/scratchpad.json`. Defined in `skills/vision.md`.
+| Skill | Purpose |
+|---|---|
+| `/vision <text>` | Multi-turn inception. Feasibility audit → First-Principles draft → 2-3 refinement Qs → action/verification step pairs → atomic `.active` flip + scratchpad reset. Defined in `skills/vision.md`. |
+| `/implement` | Run the active spec's next step. Action → verification gate → Option B retry on fail (one diagnosis + corrected action) → advance `step` on pass. Halts on missing-binary errors, spec gaps, or root-state desync. Defined in `skills/implement.md`. |
+| `/implement check` | Re-run the current step's verification only. No execution, no advance. |
+
+### Spec step schema
+
+Each step in a generated spec is an atomic transaction:
+
+```yaml
+- step: 1
+  action: "ln -sf /var/log/syslog /usr/local/bin/quick-log"
+  verification: "[ -L /usr/local/bin/quick-log ] && [ -e /usr/local/bin/quick-log ]"
+```
+
+The `verification` command is canonical — `/implement` may retry the `action` but never the `verification`. Soft verifications (`echo done`, `true`) are forbidden by `/vision`'s rules.
 
 ### `additionalContext` payload (per Bash call)
 
@@ -98,12 +123,13 @@ Capped under ~500 chars for typical commands. Non-zero exits append to `failed_h
 ### Layout
 
 ```text
-.claude-plugin/plugin.json   manifest (hooks + skill)
+.claude-plugin/plugin.json   manifest (hooks + 2 skills)
 bin/hydrate.py               SessionStart hook
 bin/compact.py               PostToolUse(Bash) hook
 bin/_scratchpad.py           atomic JSON helpers
 skills/vision.md             /vision slash skill
-specs/template.spec.md       canonical spec structure
+skills/implement.md          /implement slash skill
+specs/template.spec.md       canonical spec structure (action/verification schema)
 tests/                       28 pytest tests
 docs/superpowers/            design + plan
 ```
