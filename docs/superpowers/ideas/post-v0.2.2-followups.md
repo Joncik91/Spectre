@@ -62,9 +62,9 @@ These items came out of Plan C self-review and the v0.2.2 first-production E2E r
 
 **Original observation (kept for record):** the v0.2.2 `bin/tier.py` classifies actions by path captures plus the Never Autonomous verb list. `systemctl daemon-reload` has no path → falls through to `silent`. Step 5 of the BTC poller spec hit this; Step 6 (`systemctl enable --now btc-poller.service`) was classified as `repo` because `btc-poller.service` looked like a project-relative file. Implementer overrode both via judgment (allowed: agents may add halts, never skip them).
 
-## 6. Anti-spec-gaming guards (the Plan D / v0.3 thesis itself)
+## 6. Pre-lock spec evaluator — context completeness (Plan D / v0.3 thesis)
 
-**Scope:** the Pragma pattern (`apps/Pragma/`) is three-tier defense against test gaming — AST classifier (always-on), coverage-of-target gate (opt-in), LLM-judge via DeepSeek (opt-in). Spectre needs the same architecture mirrored at the **spec layer**, not the test layer. Spec gaming examples observed during v0.2.2 E2E:
+**Scope:** the gap between a draft spec and a *complete* spec is invisible to the spec author (your essay: spec authors have blind spots; the reviewer is the structural answer). v0.3 closes that gap with a pre-lock evaluator that fires between `/vision` draft and lock. Architecture is borrowed from `apps/Pragma/` (AST + structural gate + LLM judge), but the **target failure mode is different**: Pragma checks test→code coverage; Spectre v0.3 checks **spec→action completeness** — every action has a `why`, every host-touching action has a tier-correct declaration, every resource is declared, every decision generates an ADR, no soft verifications. This is CDLC's Evaluate phase, currently missing from Spectre. Real failures observed during v0.2.2 E2E that an evaluator would have caught at draft time:
 
 - "Soft" verifications that don't actually probe what the action did (e.g. `verification: echo done`, `verification: true`).
 - Action↔verification mismatch — verification grep for a string the action never emits.
@@ -77,7 +77,7 @@ These items came out of Plan C self-review and the v0.2.2 first-production E2E r
 - **Tier 2 — coverage-of-action gate.** Dry-run-classify every action via `bin/tier.py` and `bin/resources.extract_resources_from_action`, then check the spec's `resources:` declarations cover the inferred set. Mismatch = finding. Opt-in.
 - **Tier 3 — LLM judge via DeepSeek v4 Pro** (NEVER local — user policy: no local LLM when away from home, thermal risk). OpenAI-compatible API call. Three-prompt structured probing per the previous turn: (a) what the spec doesn't say, (b) what the spec asserts that's wrong, (c) attacker view. Output is structured JSON `findings: [{kind, severity, ref}]` — no narrative reviews reach the lock decision.
 
-**Authorship discipline:** the evaluator's findings are not narrative — they're machine-checkable JSON. This mirrors Pragma's own pragma-test-gaming-guard pattern: findings are typed and parseable so a same-family LLM can't paper over them in subsequent turns.
+**Authorship discipline:** the evaluator's findings are not narrative — they're machine-checkable JSON. The pragma-test-gaming-guard pattern (typed findings, no prose review) is borrowed *as a defense against same-family LLM blind-spot collapse*: a Claude-authored spec reviewed by another Claude can't paper over weaknesses with co-narrative because the verdict is structured. DeepSeek as Tier 3 reviewer is the genuinely-different-distribution check.
 
 **Why this becomes a real plan, not just an item:** ~600 LOC total, 3 new modules (`bin/spec_evaluator.py`, `bin/spec_ast.py`, `bin/llm_judge.py`), opt-in tier 2/3 config in `~/.spectre/reviewer.toml`, integration into `/vision` between draft and lock confirmation. That's a Plan D ship.
 
