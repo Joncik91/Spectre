@@ -126,3 +126,22 @@ def save_symbols(path: Path, symbols: list[dict[str, Any]]) -> None:
         if os.path.exists(tmp):
             os.unlink(tmp)
         raise
+
+
+def main() -> int:
+    root = Path.cwd()
+    syms = walk_repo(root)
+    out_path = root / "state" / "local-symbols.json"
+    save_symbols(out_path, syms)
+    by_kind: dict[str, int] = {}
+    for s in syms:
+        by_kind[s["kind"]] = by_kind.get(s["kind"], 0) + 1
+    print(f"FINGERPRINT: {len(syms)} symbols across {len(by_kind)} kinds")
+    for kind, count in sorted(by_kind.items()):
+        print(f"  {kind}: {count}")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())

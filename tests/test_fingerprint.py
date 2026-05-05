@@ -183,3 +183,32 @@ def test_save_symbols_no_tmp_left_behind(tmp_path):
     fp.save_symbols(target, syms)
     leftovers = list(tmp_path.glob("syms.json*.tmp"))
     assert leftovers == []
+
+
+def test_cli_writes_symbols_json(tmp_path, monkeypatch):
+    (tmp_path / "a.py").write_text("def hello(): pass\n")
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+    fp.main()
+    out_path = state_dir / "local-symbols.json"
+    assert out_path.exists()
+
+
+def test_cli_output_json_contains_extracted_symbol(tmp_path, monkeypatch):
+    (tmp_path / "a.py").write_text("def hello(): pass\n")
+    (tmp_path / "state").mkdir()
+    monkeypatch.chdir(tmp_path)
+    fp.main()
+    data = json.loads((tmp_path / "state" / "local-symbols.json").read_text())
+    assert any(s["name"] == "hello" for s in data)
+
+
+def test_cli_emits_summary_to_stdout(tmp_path, monkeypatch, capsys):
+    (tmp_path / "a.py").write_text("def hello(): pass\n")
+    (tmp_path / "state").mkdir()
+    monkeypatch.chdir(tmp_path)
+    fp.main()
+    captured = capsys.readouterr()
+    assert "FINGERPRINT" in captured.out
+    assert "symbols" in captured.out.lower()
