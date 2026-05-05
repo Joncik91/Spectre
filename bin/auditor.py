@@ -142,14 +142,13 @@ def _check_length(prop: dict[str, Any]) -> AuditResult:
         return AuditResult(
             kind="length", passed=False, message=f"{target}: field {field_path!r} missing"
         )
-    try:
-        n = len(value)
-    except TypeError:
+    if not isinstance(value, (list, dict)):
         return AuditResult(
             kind="length",
             passed=False,
-            message=f"{target}.{field_path}: value has no length",
+            message=f"{target}.{field_path}: value type {type(value).__name__} not list/dict",
         )
+    n = len(value)
     if n < min_v:
         return AuditResult(
             kind="length",

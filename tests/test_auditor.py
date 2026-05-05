@@ -199,3 +199,28 @@ def test_pbt_unknown_kind_returns_failed_result(tmp_path):
     assert len(magic_results) == 1
     assert not magic_results[0].passed
     assert "unknown" in magic_results[0].message.lower()
+
+
+def test_pbt_length_check_fails_on_string_value(tmp_path):
+    p = tmp_path / "data.json"
+    p.write_text('{"name": "Alice"}')
+    props = [{"kind": "length", "target": str(p), "target_field": "name", "min": 1, "max": 10}]
+    results = auditor.audit_action(
+        f"echo {{}} > {p}", paths_touched=[str(p)], properties=props
+    )
+    length_results = [r for r in results if r.kind == "length"]
+    assert len(length_results) == 1
+    assert not length_results[0].passed
+    assert "not list/dict" in length_results[0].message
+
+
+def test_pbt_length_check_passes_on_dict_value(tmp_path):
+    p = tmp_path / "data.json"
+    p.write_text('{"obj": {"a": 1, "b": 2}}')
+    props = [{"kind": "length", "target": str(p), "target_field": "obj", "min": 1, "max": 5}]
+    results = auditor.audit_action(
+        f"echo {{}} > {p}", paths_touched=[str(p)], properties=props
+    )
+    length_results = [r for r in results if r.kind == "length"]
+    assert len(length_results) == 1
+    assert length_results[0].passed
