@@ -7,18 +7,44 @@ All notable changes to the SDL Vision Engine plugin (Spectre).
 **Plan A — Pre-lock spec evaluator (CDLC Evaluate phase).**
 
 ### Added
-- `bin/findings.py` — typed Finding dataclass with structured locations + dismissable flag + stable fingerprint
-- `bin/spec_ast.py` — Tier 1 deterministic spec-AST classifier (parse/structure/tautology only)
-- `bin/coverage_gate.py` — Tier 2 default-on action↔verification + resource-coverage + calibration cross-check
-- `bin/llm_judge.py` — Tier 3 DeepSeek v4 Pro adversarial reviewer (opt-in)
-- `bin/spec_evaluator.py` — review-bundle orchestrator with bundle persistence
-- `bin/eval_metadata.py` — `.eval.json` lock-metadata sidecar + no-downgrade enforcement
-- `specs/template.spec.md` — §8 Receiver Calibration (8.1 hard contract + 8.2 human notes)
+- `bin/findings.py` — typed Finding dataclass with structured locations + dismissable flag + stable fingerprint (excludes message text so LLM nondeterminism doesn't break dismissals)
+- `bin/spec_ast.py` — Tier 1 deterministic spec-AST classifier (pure parse/structure/tautology, NO `bin.tier`/`bin.resources` calls; AST-static import-isolation guards)
+- `bin/coverage_gate.py` — Tier 2 default-on coverage gate: undeclared-resource (warn), undeclared-host-path (block), calibration-hard-violation (block, both never-touches AND mutates-subset halves), decision-without-adr (warn, deterministic rule)
+- `bin/llm_judge.py` — Tier 3 DeepSeek v4 Pro adversarial reviewer (opt-in via `~/.spectre/reviewer.toml`); 3-prompt probing (context-gap, asserts-wrong, attacker-view); never raises (all errors → tier3-unavailable info sentinel)
+- `bin/spec_evaluator.py` — review-bundle orchestrator with disk persistence keyed by draft SHA-256; dismissal filtering with stable fingerprints; `EvaluatorResult` carries `sidecar_payload` for §6.7 lock
+- `bin/eval_metadata.py` — `.eval.json` lock-metadata sidecar + policy-hash + no-downgrade enforcement (config can raise severity, never lower)
+- `specs/template.spec.md` — §8 Receiver Calibration (8.1 hard contract: `mutates`/`never-touches`/`decision-budget`/`reboot-survival`; 8.2 human-facing notes: `assumes`/`runtime-flavor`/`expected-author-skill`)
 - `.spectre/reviewer.toml.example` — sample user config (committed for discoverability)
+- `tests/test_dismiss_integration.py` — high-risk integration test for dismiss → re-run → skip flow
+- `tests/test_bundle_handoff_integration.py` — high-risk integration test for §6.4→§6.7 bundle persistence pipeline
+- `tests/test_btc_poller_regression.py` + `tests/fixtures/specs/btc_poller_v022.spec.md` — canonical regression: v0.2.2 BTC poller draft surfaces 4 of 5 failures pre-lock (success criterion #1)
 
 ### Changed
-- `skills/vision/SKILL.md` — §6.4 evaluator gate inserted between draft-to-disk (§6) and ADR generation (§6.5); §6.6 Resource inference now reads from validated bundle
+- `skills/vision/SKILL.md` — §6.4 evaluator gate inserted between draft confirmation (§6) and ADR generation (§6.5); §6.6 Resource inference reads from validated persisted bundle (no recomputation); §6.7 lock writes `.eval.json` sidecar and clears bundle
 - `.claude-plugin/plugin.json` — version 1.0.2 → 1.1.0
+
+### Tests
+**439 passing** (261 v0.2.2 baseline + 178 v0.3 new). Stdlib only. Pragma test-gaming guard satisfied. Mocked HTTP for Tier 3 — no real DeepSeek calls in tests.
+
+### Hardening rounds (review-driven, both Copilot/GPT-5.4 and ucai:reviewer)
+- **findings:** fingerprint excluded `tier` (Tier 1 dismiss would silently suppress Tier 2 with same kind/location); `steps=[]` collapsed to `None` (truthiness bug); round-trip tests covered only 3/7 fields.
+- **spec_ast:** `^echo\b` regex falsely flagged compound checks (`echo done && test -f /tmp/x`); mock targets in import-isolation tests patched namespaces module never imported (vacuous tests); CRLF line endings broke YAML fence regex.
+- **coverage_gate:** `calibration-hard-violation` only checked `never-touches:`, missing the `not in mutates:` half (false pass for any path captured but undeclared); prefix-match boundary bug (`/etc` matched `/etcabc`); block-list `resources:` format silently produced empty set; `Optional[list[str]]` style inconsistency.
+- **llm_judge:** redundant `socket.timeout`/`TimeoutError` alias (nit only).
+- **eval_metadata:** unknown finding kinds in `severity_overrides` silently passed through; `validate_no_severity_downgrade` raised `KeyError` (not `ValueError`) on unknown severity.
+- **spec_evaluator:** `load_persisted_bundle` reconstructed `draft_path` as bundle directory (broken — IsADirectoryError on read); `_apply_severity_overrides` accepted invalid severity values that crashed via `Finding.__post_init__`; silent config miss when path provided but file absent; `dismissed_t3_count` counted lines not actually-dismissed findings; vacuous lazy-import mock test.
+
+### Architecture references
+- v0.3 brief: `docs/superpowers/specs/2026-05-05-spectre-v0.3-spec-evaluator.md`
+- Plan A: `docs/superpowers/plans/2026-05-05-v0.3-plan-a-spec-evaluator.md`
+- Both reviewed by Copilot/GPT-5.4 before merge; all material findings adopted.
+
+### Deferred
+- Test-gaming defense at `/implement` test outputs → **v0.4** (Pragma-pattern integration with DeepSeek as reviewer; same `bin/llm_judge.py` infrastructure)
+- Manual E2E in fresh `/vision` session → user-driven post-merge (Task 11's regression fixture covers the canonical failure-mode case automatically)
+- Auto-fix from findings → v0.5 candidate
+- Live host-state probing (port-collision detection) → ideas-doc #4
+- Local LLM as Tier 3 → never (user policy: thermal risk on A8 documented 2026-04-11)
 
 ## v0.2.2 — 2026-05-05
 
