@@ -1,0 +1,28 @@
+{
+  "description": "Spectre — SessionStart hydrator + PostToolUse(Bash) compactor.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/bin/hydrate.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/bin/compact.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

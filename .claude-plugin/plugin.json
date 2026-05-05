@@ -6,22 +6,5 @@
     "name": "Joncik91"
   },
   "keywords": ["spec-driven", "hooks", "skills", "context-engineering"],
-  "license": "MIT",
-  "hooks": {
-    "SessionStart": [
-      { "type": "command", "command": "python3 bin/hydrate.py" }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          { "type": "command", "command": "python3 bin/compact.py" }
-        ]
-      }
-    ]
-  },
-  "skills": [
-    { "path": "skills/vision.md" },
-    { "path": "skills/implement.md" }
-  ]
+  "license": "MIT"
 }

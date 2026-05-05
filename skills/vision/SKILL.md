@@ -1,4 +1,5 @@
 ---
+name: vision
 description: Unified inception — distill a vague vision into a First-Principles spec with action/verification steps, then lock it as the active spec.
 disable-model-invocation: false
 ---

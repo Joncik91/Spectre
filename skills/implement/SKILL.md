@@ -1,4 +1,5 @@
 ---
+name: implement
 description: State-aware spec executor — read the active spec, run the next step's action, gate on its verification, retry once on fail, advance the scratchpad. Halts on any unrecoverable failure with full negative knowledge.
 disable-model-invocation: false
 ---

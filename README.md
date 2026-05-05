@@ -136,15 +136,17 @@ Capped under ~500 chars for typical commands. Non-zero exits append to `failed_h
 ### Layout
 
 ```text
-.claude-plugin/plugin.json   manifest (hooks + 2 skills)
-bin/hydrate.py               SessionStart hook
-bin/compact.py               PostToolUse(Bash) hook
-bin/_scratchpad.py           atomic JSON helpers
-skills/vision.md             /vision slash skill
-skills/implement.md          /implement slash skill
-specs/template.spec.md       canonical spec structure (action/verification schema)
-tests/                       28 pytest tests
-docs/superpowers/            design + plan
+.claude-plugin/plugin.json     plugin manifest (metadata only)
+.claude-plugin/marketplace.json marketplace manifest (self-hosted)
+hooks/hooks.json               hook bindings (uses ${CLAUDE_PLUGIN_ROOT})
+bin/hydrate.py                 SessionStart command
+bin/compact.py                 PostToolUse(Bash) command
+bin/_scratchpad.py             atomic JSON helpers
+skills/vision/SKILL.md         /vision slash skill
+skills/implement/SKILL.md      /implement slash skill
+specs/template.spec.md         canonical spec structure (action/verification schema)
+tests/                         30 pytest tests
+docs/superpowers/              design + plan
 ```
 
 ## Maintainers
