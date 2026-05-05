@@ -28,3 +28,20 @@ class Node:
         if edge_type not in EDGE_TYPES:
             raise ValueError(f"unknown edge type: {edge_type!r}")
         self.edges.append({"target": target, "type": edge_type})
+
+
+def serialize_node(n: Node) -> str:
+    lines = ["---"]
+    lines.append(f"id: {n.id}")
+    lines.append(f"type: {n.type}")
+    lines.append(f"title: {n.title}")
+    lines.append(f"status: {n.status}")
+    if not n.edges:
+        lines.append("edges: []")
+    else:
+        lines.append("edges:")
+        for e in n.edges:
+            lines.append(f"  - target: {e['target']}")
+            lines.append(f"    type: {e['type']}")
+    lines.append("---")
+    return "\n".join(lines) + "\n"

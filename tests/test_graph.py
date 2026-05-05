@@ -58,3 +58,24 @@ def test_node_status_superseded():
 def test_node_status_rejects_unknown():
     with pytest.raises(ValueError, match="unknown status"):
         graph.Node(id="x", type="invariant", title="t", status="weird")
+
+
+def test_serialize_node_produces_frontmatter_block():
+    n = graph.Node(id="auth-001", type="invariant", title="UserObject schema")
+    n.add_edge(target="auth-002", edge_type="constrains")
+    out = graph.serialize_node(n)
+    assert out.startswith("---\n")
+    assert "id: auth-001" in out
+    assert "type: invariant" in out
+    assert "title: UserObject schema" in out
+    assert "status: active" in out
+    assert "edges:" in out
+    assert "  - target: auth-002" in out
+    assert "    type: constrains" in out
+    assert out.endswith("---\n")
+
+
+def test_serialize_node_no_edges_omits_list():
+    n = graph.Node(id="x", type="resource", title="port-8080")
+    out = graph.serialize_node(n)
+    assert "edges: []" in out
