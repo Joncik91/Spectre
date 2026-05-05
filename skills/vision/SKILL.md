@@ -19,6 +19,24 @@ Triggered when the user types `/vision` followed by free-form text describing wh
 
 ## Protocol
 
+### Step 0 — Codebase Fingerprint (silent, internal)
+
+Before treating the user's text as a Spark, run the fingerprinter to surface prior art in the user's codebase:
+
+```bash
+python3 bin/fingerprint.py 2>&1 | tail -5
+```
+
+This writes `state/local-symbols.json`. Read the first 50 entries:
+
+```bash
+python3 -c "import json; d=json.load(open('state/local-symbols.json')); print(json.dumps(d[:50], indent=2))"
+```
+
+When you draft the First-Principles Summary in Step 3, scan the symbol map for any function/class/module conceptually related to the user's vision (e.g. user wants "fetch BTC price" → search for `fetch`, `price`, `http`, `bitcoin`, `btc`, `requests`). If you find a candidate, surface it in the **Algorithm Audit (Delete)** section: "We will NOT reinvent `<symbol_name>` at `<file>:<line>` — we will reuse it as the basis for step N."
+
+The "never reinvent the wheel" rule is enforced by construction here. Skipping Step 0 violates the rule silently.
+
 ### Step 1 — Receive
 
 The user has typed `/vision <free-form text>`. Treat that text as the **Spark**, not the spec.
@@ -86,21 +104,89 @@ Show the full draft (Hard Problem, First Principles, ..., Steps, Success Criteri
 - `refine` → adjust per their feedback, repeat Step 5.
 - `cancel` → halt, write nothing.
 
-### Step 6 — Slugify + Write + Lock
+### Step 6 — Draft-to-disk
 
-1. **Anchor to the user's project cwd FIRST.** Run `pwd` to capture the absolute path (e.g. `/home/foo/myproject`). Call this `$PROJECT`. All file paths in the rest of this step are `$PROJECT/specs/...` and `$PROJECT/state/...`. If `$PROJECT` looks like a plugin cache (`/root/.claude/plugins/`, `${CLAUDE_PLUGIN_ROOT}`, or contains `plugins/cache/`), HALT and tell the user to restart Claude Code from their project directory.
-2. `mkdir -p "$PROJECT/specs" "$PROJECT/state"` to ensure the dirs exist.
+The user said `yes` in Step 5. Do NOT print the full spec body again — write it directly to disk so the user can review in their editor.
+
+1. **Anchor to the user's project cwd FIRST.** Run `pwd` to capture the absolute path (e.g. `/home/foo/myproject`). Call this `$PROJECT`. All file paths in the rest of this step are `$PROJECT/specs/...`, `$PROJECT/state/...`, and `$PROJECT/decisions/...`. If `$PROJECT` looks like a plugin cache (`/root/.claude/plugins/`, `${CLAUDE_PLUGIN_ROOT}`, or contains `plugins/cache/`), HALT and tell the user to restart Claude Code from their project directory.
+2. `mkdir -p "$PROJECT/specs" "$PROJECT/state" "$PROJECT/decisions"` to ensure the dirs exist.
 3. Slugify the title: lowercase, replace non-alphanumerics with `-`, collapse repeats, strip leading/trailing `-`.
-4. Filename: `$PROJECT/specs/<slug>.spec.md`.
-5. Set frontmatter `Generated:` to today's ISO date and `Slug:` to the computed slug.
-6. Write the spec file at the absolute path.
-7. Atomically flip `.active`:
+4. Set frontmatter `Generated:` to today's ISO date and `Slug:` to the computed slug.
+5. **Write the draft file at `$PROJECT/specs/<slug>.spec.md.draft`.** Use atomic write: write to `<draft>.tmp` then `mv` to `<draft>`.
+6. Print exactly one line:
+
+```
+DRAFT: specs/<slug>.spec.md.draft (N steps). Reply: yes / refine "<change>" / cancel
+```
+
+7. **Wait for the user.**
+   - `yes` → continue to Step 6.5.
+   - `refine "<change>"` → reopen the draft file, apply the requested change, atomically rewrite the .draft file, re-emit the one-line confirmation. Repeat until `yes`.
+   - `cancel` → delete the .draft file, halt, write nothing else.
+
+The draft-to-disk pattern eliminates the double-token-output friction (printing the full spec inline AND writing the file). The user reviews in their editor; we hold the spec in disk-only state until confirmed.
+
+### Step 6.5 — ADR generation (conditional)
+
+Scan the locked spec's `## 2. First Principles` bullets and step `why:` lines for explicit decision markers. A decision marker is any line that:
+
+- starts with `decision:` (case-insensitive), OR
+- contains the phrase `we choose <X> because`, OR
+- contains the phrase `<X> over <Y>` with a comparative justification.
+
+For each decision found:
+
+1. Run:
+
+```bash
+python3 - <<'PY'
+import sys
+sys.path.insert(0, ".")
+from bin import adr
+from pathlib import Path
+p = adr.write_adr(
+    Path("decisions"),
+    title="<extracted decision title>",
+    date="<today ISO>",
+    body="<one paragraph: the decision + the why from the spec>",
+    supersedes=None,  # set to "NNNN" only if this contradicts an existing ADR
+)
+print(f"ADR: {p}")
+PY
+```
+
+2. **Supersedes detection.** Before writing each ADR, list `decisions/*.md` and look for an existing ADR whose title or body contradicts the new decision (e.g. new ADR says "Use Postgres 16" and an existing ADR says "Use SQLite"). If found, pass `supersedes="<old_id>"`. If unsure, do NOT supersede — false positives are worse than missing supersedes (a missed supersedes can be retro-fixed; a wrong supersedes invalidates downstream work).
+
+3. **Graph wiring.** If `specs/.graph.md` exists AND both new and old ADRs are represented as nodes, run:
+
+```bash
+python3 - <<'PY'
+import sys
+sys.path.insert(0, ".")
+from bin import adr
+from pathlib import Path
+adr.update_graph_for_supersedes(
+    Path("specs/.graph.md"),
+    new_adr_id="adr-NNNN",
+    old_adr_id="adr-MMMM",
+)
+PY
+```
+
+In v0.2.1 the graph manifest may not have ADR nodes yet. The `update_graph_for_supersedes` call is a no-op when nodes are absent, so it is safe to always invoke after a supersede write.
+
+### Step 6.7 — Lock the spec
+
+Now that the user confirmed and ADRs are written:
+
+1. Atomic rename: `mv "$PROJECT/specs/<slug>.spec.md.draft" "$PROJECT/specs/<slug>.spec.md"`.
+2. Atomically flip `.active`:
 
    ```bash
    printf 'specs/<slug>.spec.md\n' > "$PROJECT/specs/.active.tmp" && mv "$PROJECT/specs/.active.tmp" "$PROJECT/specs/.active"
    ```
 
-8. Reset `$PROJECT/state/scratchpad.json` to:
+3. Reset `$PROJECT/state/scratchpad.json` to:
 
    ```json
    {
@@ -110,7 +196,12 @@ Show the full draft (Hard Problem, First Principles, ..., Steps, Success Criteri
      "exit_code": null,
      "delta": null,
      "timestamp": null,
-     "failed_hypotheses": []
+     "failed_hypotheses": [],
+     "paths_touched": [],
+     "last_drift_check_step": 0,
+     "last_audit_kinds": [],
+     "last_audit_passed": null,
+     "last_audit_failures": []
    }
    ```
 
