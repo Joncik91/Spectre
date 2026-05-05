@@ -144,6 +144,60 @@ def test_handle_request_missing_field_returns_error(tmp_path):
     assert resp["ok"] is False
 
 
+def test_shutdown_response_omits_internal_sentinel(tmp_path):
+    """_shutdown is a control flag, must not leak into client-visible JSON."""
+    state = supervisor.LockState(locks_path=tmp_path / ".locks.json")
+    req = {"op": "shutdown"}
+    resp = supervisor.handle_request(state, req)
+    # handle_request still includes _shutdown in its return — serve() pops it
+    # before sendall. The contract: handle_request's return is private; what
+    # matters is that the LITERAL pop happens before sendall in serve().
+    # This test pins the contract that pop returns truthy on shutdown.
+    assert resp.pop("_shutdown") is True
+
+
+def test_reconcile_idempotent_no_holder_duplication(tmp_path, monkeypatch):
+    """Calling reconcile twice must not duplicate live-actor holders."""
+    locks_path = tmp_path / ".locks.json"
+    locks_path.write_text(json.dumps({
+        "version": 1,
+        "locks": [{
+            "resource": "port:8080", "track": "auth",
+            "actor_pid": 11, "actor_start_time": 1.0,
+            "granted_at": "2026-05-05T00:00:00Z",
+        }],
+    }))
+    monkeypatch.setattr(supervisor, "_actor_alive", lambda pid, st: True)
+    state = supervisor.LockState(locks_path=locks_path)
+    state.register_resource("port:8080", capacity=1)
+    state.reconcile()
+    state.reconcile()
+    assert state.holders("port:8080") == [("auth", 11)]
+
+
+def test_persist_preserves_original_granted_at(tmp_path):
+    """granted_at must reflect acquire time, not last-persist time."""
+    locks_path = tmp_path / ".locks.json"
+    state = supervisor.LockState(locks_path=locks_path)
+    state.register_resource("port:8080", capacity=1)
+    state.acquire("port:8080", track="auth", actor_pid=11, actor_start_time=1.0)
+    first = json.loads(locks_path.read_text())["locks"][0]["granted_at"]
+    _time.sleep(0.01)
+    # Trigger another persist via a register_resource + manual _persist
+    state.register_resource("port:9090", capacity=1)
+    state._persist()
+    second = json.loads(locks_path.read_text())["locks"][0]["granted_at"]
+    assert first == second
+
+
+def test_actor_alive_returns_false_on_permission_error(tmp_path, monkeypatch):
+    """_actor_alive must not crash if /proc/<pid>/stat read raises PermissionError."""
+    def boom(self):
+        raise PermissionError("denied")
+    monkeypatch.setattr(Path, "read_text", boom)
+    assert supervisor._actor_alive(12345, 1.0) is False
+
+
 # Integration test — real socket
 import subprocess
 import time as _time

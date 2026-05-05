@@ -24,7 +24,7 @@ def _actor_alive(pid: int, start_time: float) -> bool:
     """Check /proc/<pid>/stat field 22 against expected start_time."""
     try:
         stat = Path(f"/proc/{pid}/stat").read_text()
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
         return False
     # Field 22 is starttime (jiffies since boot).
     # Field 2 is the command name in parens — may contain spaces/parens itself,
@@ -33,8 +33,10 @@ def _actor_alive(pid: int, start_time: float) -> bool:
     after = stat[rparen + 2:].split()
     if len(after) < 20:
         return False
-    actual_start = float(after[19])
-    # Allow small float drift but reject mismatches > 1.0
+    try:
+        actual_start = float(after[19])
+    except ValueError:
+        return False
     return abs(actual_start - start_time) < 1.0
 
 
@@ -57,9 +59,9 @@ class LockState:
     def __init__(self, locks_path: Path):
         self.locks_path = Path(locks_path)
         self.resources: dict[str, int] = {}  # resource_id -> capacity
-        # Internal 3-tuple storage: (track, pid, start_time)
-        self._holders: dict[str, list[tuple[str, int, float]]] = {}
-        self.queues: dict[str, list[tuple[str, int, float]]] = {}
+        # Internal 4-tuple storage: (track, pid, start_time, granted_at_iso)
+        self._holders: dict[str, list[tuple[str, int, float, str]]] = {}
+        self.queues: dict[str, list[tuple[str, int, float, str]]] = {}
 
     def register_resource(self, resource_id: str, capacity: int) -> None:
         self.resources[resource_id] = capacity
@@ -69,11 +71,12 @@ class LockState:
     def acquire(self, resource_id: str, *, track: str, actor_pid: int, actor_start_time: float) -> bool:
         if resource_id not in self.resources:
             raise KeyError(f"unknown resource: {resource_id}")
+        granted_at = datetime.now(timezone.utc).isoformat()
         if len(self._holders[resource_id]) < self.resources[resource_id]:
-            self._holders[resource_id].append((track, actor_pid, actor_start_time))
+            self._holders[resource_id].append((track, actor_pid, actor_start_time, granted_at))
             self._persist()
             return True
-        self.queues[resource_id].append((track, actor_pid, actor_start_time))
+        self.queues[resource_id].append((track, actor_pid, actor_start_time, granted_at))
         self._persist()
         return False
 
@@ -94,24 +97,30 @@ class LockState:
 
     def queue(self, resource_id: str) -> list[tuple[str, int]]:
         """Return 2-tuple view of the queue: [(track, pid), ...]."""
-        return [(t, p) for t, p, _ in self.queues.get(resource_id, [])]
+        return [(h[0], h[1]) for h in self.queues.get(resource_id, [])]
 
     def holders_view(self, resource_id: str) -> list[tuple[str, int]]:
         """Return 2-tuple view of current holders: [(track, pid), ...]."""
-        return [(t, p) for t, p, _ in self._holders.get(resource_id, [])]
+        return [(h[0], h[1]) for h in self._holders.get(resource_id, [])]
 
     def holders(self, resource_id: str) -> list[tuple[str, int]]:
         """Return 2-tuple view of current holders (backward-compat alias)."""
         return self.holders_view(resource_id)
 
     def reconcile(self) -> None:
-        """Read locks.json, probe each actor, re-grant live actors, reap dead ones."""
+        """Read locks.json, probe each actor, re-grant live actors, reap dead ones.
+
+        Idempotent: clears in-memory holders for each known resource before
+        repopulating from the persisted file.
+        """
         if not self.locks_path.exists():
             return
         try:
             data = json.loads(self.locks_path.read_text())
         except json.JSONDecodeError:
             return
+        for rid in self.resources:
+            self._holders[rid] = []
         for entry in data.get("locks", []):
             rid = entry["resource"]
             if rid not in self.resources:
@@ -119,19 +128,20 @@ class LockState:
             pid = entry["actor_pid"]
             st = entry["actor_start_time"]
             if _actor_alive(pid, st):
-                self._holders[rid].append((entry["track"], pid, st))
+                granted_at = entry.get("granted_at", datetime.now(timezone.utc).isoformat())
+                self._holders[rid].append((entry["track"], pid, st, granted_at))
         self._persist()
 
     def _persist(self) -> None:
         all_locks = []
         for rid, holders in self._holders.items():
-            for track, pid, st in holders:
+            for track, pid, st, granted_at in holders:
                 all_locks.append({
                     "resource": rid,
                     "track": track,
                     "actor_pid": pid,
                     "actor_start_time": st,
-                    "granted_at": datetime.now(timezone.utc).isoformat(),
+                    "granted_at": granted_at,
                 })
         _atomic_write_json(self.locks_path, {
             "version": LOCK_FILE_VERSION,
@@ -177,30 +187,36 @@ def handle_request(state: LockState, req: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": str(e)}
 
 
+CLIENT_RECV_TIMEOUT_SECONDS = 2.0
+
+
 def serve(project_root: Path) -> None:
-    """Main daemon loop. Binds UDS, runs select() until idle or shutdown."""
+    """Main daemon loop. Binds UDS, runs select() until idle or shutdown.
+
+    Bind is performed BEFORE writing the pid file, so a second-spawn racer
+    that loses on bind exits without disturbing the winner's pid file.
+    """
     state_dir = project_root / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     sock_path = state_dir / SOCKET_NAME
     pid_path = state_dir / PID_FILE_NAME
     locks_path = state_dir / LOCKS_FILE_NAME
-    if sock_path.exists():
-        sock_path.unlink()
-    pid_path.write_text(str(os.getpid()))
-
-    state = LockState(locks_path=locks_path)
-    # Resources are registered lazily on first acquire — see lazy registration in loop.
-    # In production, the supervisor should pre-load Resource nodes from the graph.
-    # For Plan C v0.2.2 we register them on first reference to keep startup simple.
 
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         server.bind(str(sock_path))
     except OSError:
+        # Another supervisor won the race. Close the spare socket and exit cleanly.
+        server.close()
         sys.exit(0)
+
+    pid_path.write_text(str(os.getpid()))
     os.chmod(sock_path, 0o600)
     server.listen(8)
     server.setblocking(False)
+
+    state = LockState(locks_path=locks_path)
+    state.reconcile()
 
     last_activity = time.time()
     try:
@@ -213,24 +229,29 @@ def serve(project_root: Path) -> None:
                 continue
             conn, _ = server.accept()
             last_activity = now
+            conn.settimeout(CLIENT_RECV_TIMEOUT_SECONDS)
+            should_break = False
             with conn:
-                buf = conn.recv(RECV_BUFFER)
+                try:
+                    buf = conn.recv(RECV_BUFFER)
+                except socket.timeout:
+                    continue
                 if not buf:
                     continue
                 try:
                     req = json.loads(buf.decode("utf-8"))
-                except json.JSONDecodeError:
+                except (json.JSONDecodeError, UnicodeDecodeError):
                     conn.sendall(b'{"ok": false, "error": "invalid json"}\n')
                     continue
-                # Lazy resource registration
                 if req.get("op") == "acquire" and req.get("resource_id"):
                     rid = req["resource_id"]
                     if rid not in state.resources:
                         state.register_resource(rid, capacity=1)
                 resp = handle_request(state, req)
+                should_break = resp.pop("_shutdown", False)
                 conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
-                if resp.pop("_shutdown", False):
-                    break
+            if should_break:
+                break
     finally:
         server.close()
         if sock_path.exists():
