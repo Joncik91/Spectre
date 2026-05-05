@@ -139,3 +139,58 @@ def test_should_halt_with_never_autonomous_overrides_silent():
 
 def test_should_halt_with_never_autonomous_overrides_repo():
     assert tier.should_halt("repo", "permission-change: chmod") is True
+
+
+# --- Bug 1: rm -rf ---
+
+def test_never_autonomous_rm_rf():
+    t, _, na = tier.classify("rm -rf /tmp/foo")
+    assert na == "destructive-delete: rm -rf"
+
+
+def test_never_autonomous_rm_rf_root():
+    t, _, na = tier.classify("rm -rf /")
+    assert na is not None
+    assert "destructive-delete" in na
+
+
+def test_should_halt_on_rm_rf():
+    t, _, na = tier.classify("rm -rf /home/foo/")
+    assert tier.should_halt(t, na) is True
+
+
+# --- Bug 2: sudo ---
+
+def test_never_autonomous_sudo():
+    t, _, na = tier.classify("sudo systemctl restart nginx")
+    assert na == "permission-change: sudo"
+
+
+def test_sudo_curl_classified_network():
+    t, _, na = tier.classify("sudo curl https://example.com")
+    assert t == "network"
+    assert na == "permission-change: sudo"
+
+
+def test_should_halt_on_sudo_anywhere():
+    t, _, na = tier.classify("sudo touch /tmp/x")
+    assert tier.should_halt(t, na) is True
+
+
+# --- Bug 3: quoted-string false positives ---
+
+def test_chmod_inside_commit_message_does_not_match():
+    t, _, na = tier.classify('git commit -m "fix chmod regression"')
+    assert na is None
+
+
+def test_drop_table_in_psql_still_matches():
+    t, _, na = tier.classify("psql -c 'DROP TABLE users;'")
+    assert na == "schema-mutation: DROP TABLE"
+
+
+# --- Bug 4: extensionless paths with slash ---
+
+def test_repo_tier_for_extensionless_path_with_slash():
+    t, _, na = tier.classify("touch src/widgets/foo")
+    assert t == "repo"

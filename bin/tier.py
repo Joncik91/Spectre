@@ -23,6 +23,11 @@ _NETWORK_HEADS = ("curl", "wget", "ssh", "scp", "rsync", "gh", "nsupdate", "reso
 _GIT_NETWORK_VERBS = ("push", "pull", "fetch", "clone")
 
 _NEVER_AUTONOMOUS: list[tuple[re.Pattern, str]] = [
+    # Privilege escalation — always halt regardless of what follows.
+    (re.compile(r"\bsudo\b"), "permission-change: sudo"),
+    # Destructive deletes.
+    (re.compile(r"\brm\s+(-[rRfF]+|--recursive|--force)"), "destructive-delete: rm -rf"),
+    (re.compile(r"\brm\s+-[a-zA-Z]*[rfRF][a-zA-Z]*\s+/(?:\s|$)"), "destructive-delete: rm of /"),
     (re.compile(r"\bpip\s+install\b"), "dependency-add: pip install"),
     (re.compile(r"\bnpm\s+install\b"), "dependency-add: npm install"),
     (re.compile(r"\bapt(?:-get)?\s+install\b"), "dependency-add: apt-get install"),
@@ -50,11 +55,39 @@ _NEVER_AUTONOMOUS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\bcloudflare\b"), "external-state-network: cloudflare"),
 ]
 
+# Labels for rules whose regexes should NOT match inside quoted strings.
+_VERB_SENSITIVE_LABELS = {
+    "permission-change: sudo",
+    "permission-change: chmod",
+    "permission-change: chown",
+    "permission-change: setcap",
+    "permission-change: iptables",
+    "permission-change: nft",
+    "permission-change: ufw",
+    "permission-change: user-mgmt",
+    "destructive-delete: rm -rf",
+    "destructive-delete: rm of /",
+    "dependency-add: pip install",
+    "dependency-add: npm install",
+    "dependency-add: apt-get install",
+    "dependency-add: cargo add",
+}
+
+_QUOTED_STRING_RE = re.compile(r'''(?:"[^"]*"|'[^']*')''')
+
+
+def _strip_quoted_strings(command: str) -> str:
+    """Remove single- or double-quoted substrings so verb regexes don't fire inside them."""
+    return _QUOTED_STRING_RE.sub("", command)
+
+
 _PATH_TOKEN = re.compile(r"(?:^|\s)([./][\w./-]+)")
-# Bare relative paths: non-flag words after the first token that contain a dot
-# (e.g. myfile.txt, src/foo.py) or look like plain directory/file names used
-# as positional arguments (contain a / or . extension).
-_BARE_RELATIVE = re.compile(r"(?<=\s)([A-Za-z0-9_][\w/-]*\.[A-Za-z0-9_][^\s]*)")
+# Bare relative paths: tokens that contain a slash (e.g. src/foo, tests/) or
+# have a .extension (e.g. myfile.txt, src/foo.py).
+_BARE_RELATIVE = re.compile(
+    r"(?<=\s)([A-Za-z0-9_][\w-]*(?:/[\w.-]+)+)"  # contains a slash
+    r"|(?<=\s)([A-Za-z0-9_][\w/-]*\.[A-Za-z0-9_][^\s]*)"  # has a .extension
+)
 
 
 def _extract_paths(command: str) -> list[str]:
@@ -68,8 +101,8 @@ def _extract_paths(command: str) -> list[str]:
             out.append(token)
     # Also capture bare relative paths like "myfile.txt" or "src/foo.py"
     for m in _BARE_RELATIVE.finditer(command):
-        token = m.group(1).rstrip(",;:")
-        if token not in seen:
+        token = (m.group(1) or m.group(2) or "").rstrip(",;:")
+        if token and token not in seen:
             seen.add(token)
             out.append(token)
     return out
@@ -95,17 +128,23 @@ def _is_network(command: str) -> bool:
     head = command.strip().split()
     if not head:
         return False
-    first = head[0]
+    # Skip a leading sudo so `sudo curl` is still classified network-tier.
+    idx = 1 if head[0] == "sudo" and len(head) > 1 else 0
+    if idx >= len(head):
+        return False
+    first = head[idx]
     if first in _NETWORK_HEADS:
         return True
-    if first == "git" and len(head) > 1 and head[1] in _GIT_NETWORK_VERBS:
+    if first == "git" and idx + 1 < len(head) and head[idx + 1] in _GIT_NETWORK_VERBS:
         return True
     return False
 
 
 def _check_never_autonomous(command: str) -> str | None:
+    scrubbed = _strip_quoted_strings(command)
     for regex, label in _NEVER_AUTONOMOUS:
-        if regex.search(command):
+        haystack = scrubbed if label in _VERB_SENSITIVE_LABELS else command
+        if regex.search(haystack):
             return label
     return None
 
