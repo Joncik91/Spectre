@@ -29,6 +29,19 @@ Five named failure modes — broad matcher, hydrator bloat, recursive failure, t
 
 Requires Python 3.11+ (PEP 604 / PEP 585 syntax). Stdlib only — no third-party imports in production code.
 
+**Recommended — via Claude Code marketplace:**
+
+```text
+/plugins
+→ Browse Marketplaces
+→ Add Marketplace: https://github.com/Joncik91/Spectre
+→ Install: sdl-vision-engine
+```
+
+The repo ships its own `.claude-plugin/marketplace.json` so the GitHub URL is also the marketplace URL.
+
+**Manual symlink (for local development):**
+
 ```bash
 git clone https://github.com/Joncik91/Spectre.git
 ln -s "$PWD/Spectre" ~/.claude/plugins/sdl-vision-engine

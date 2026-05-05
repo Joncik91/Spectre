@@ -2,6 +2,11 @@
   "name": "sdl-vision-engine",
   "version": "1.0.0",
   "description": "Deterministic spec hydration + post-Bash Delta+Anchor injection.",
+  "author": {
+    "name": "Joncik91"
+  },
+  "keywords": ["spec-driven", "hooks", "skills", "context-engineering"],
+  "license": "UNLICENSED",
   "hooks": {
     "SessionStart": [
       { "type": "command", "command": "python3 bin/hydrate.py" }

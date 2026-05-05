@@ -1,0 +1,18 @@
+{
+  "name": "spectre-marketplace",
+  "metadata": {
+    "version": "1.0.0",
+    "description": "Spectre — SDL Vision Engine. Deterministic spec-driven Claude Code plugin (vision → spec → implement → verify)."
+  },
+  "owner": {
+    "name": "Joncik91"
+  },
+  "plugins": [
+    {
+      "name": "sdl-vision-engine",
+      "description": "Deterministic spec hydration + post-Bash Delta+Anchor injection. /vision and /implement skills with action/verification gates.",
+      "version": "1.0.0",
+      "source": "./"
+    }
+  ]
+}
