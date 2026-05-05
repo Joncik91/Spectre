@@ -3,7 +3,9 @@
 **Date:** 2026-05-05
 **Status:** Ideas — not yet plan-able. Promote to `plans/` only if scope grows beyond a single commit.
 
-These three items came out of Plan C self-review. Each is worth fixing eventually but none on its own justifies a v0.2.3 plan.
+These items came out of Plan C self-review and the v0.2.2 first-production E2E run. Each is worth fixing eventually but none on its own justifies a v0.2.3 plan unless explicitly noted.
+
+**Plan D / v0.3 thesis (separate from this list):** the architectural move is a pre-lock spec evaluator (Pragma-pattern at the spec layer instead of the test layer). Three tiers — AST-classifier, action↔verification coverage, DeepSeek adversarial reviewer. Item #5 below is **superseded** by Plan D because the evaluator catches classifier holes at spec-author time, before they can mis-fire at /implement. Items #1-#4 remain orthogonal to Plan D.
 
 ## 1. Lock TTL enforcement
 
@@ -54,17 +56,32 @@ These three items came out of Plan C self-review. Each is worth fixing eventuall
 
 **Trigger to promote to plan:** if you also want external-holder detection for non-port Resources (DB pool exhaustion, API quota burned externally) — those have no cheap probe.
 
-## 5. Tier classifier misses bare `systemctl` / `journalctl` / `udevadm`
+## 5. ~~Tier classifier misses bare `systemctl` / `journalctl` / `udevadm`~~ — SUPERSEDED BY PLAN D
 
-**Scope:** the v0.2.2 `bin/tier.py` classifies actions by **path captures** plus the Never Autonomous verb list. A command like `systemctl daemon-reload` has no path, so it falls through to `silent`. Real failure observed during E2E (2026-05-05): Step 5 of the BTC poller spec was `systemctl daemon-reload` — a host-state mutation (re-reads all unit files, signals PID 1) — but classifier returned `silent` and skipped the user-confirm halt.
+**Status:** retained for history. Plan D's pre-lock spec evaluator (DeepSeek adversarial reviewer + AST classifier) catches host-mutation actions at spec-author time, before the runtime tier classifier ever sees them. The runtime classifier becomes a fallback, not the primary gate. Patching `bin/tier.py` for `systemctl` / `journalctl` would help the fallback marginally — worth a 1-line follow-up if Plan D ships, but no longer urgent.
 
-**Fix shape:** add a verb-only host-tier rule to `bin/tier.py`. When the action's first token is one of `systemctl`, `journalctl`, `loginctl`, `udevadm`, `sysctl`, `mount`, `umount`, `swapon`, `swapoff`, `modprobe`, `rmmod`, `insmod`, `service`, `timedatectl`, `hostnamectl`, `localectl` — classify as host regardless of path captures. These are PID-1 / kernel-talkers that can't reach silent legitimately.
+**Original observation (kept for record):** the v0.2.2 `bin/tier.py` classifies actions by path captures plus the Never Autonomous verb list. `systemctl daemon-reload` has no path → falls through to `silent`. Step 5 of the BTC poller spec hit this; Step 6 (`systemctl enable --now btc-poller.service`) was classified as `repo` because `btc-poller.service` looked like a project-relative file. Implementer overrode both via judgment (allowed: agents may add halts, never skip them).
 
-**Why it's not (just) a plan:** ~5 LOC + 5 tests. But it's a **classifier accuracy bug**, not a feature — silent execution of host mutations is exactly the failure mode Plan C's tier gate exists to prevent. Worth a fast follow-up commit.
+## 6. Anti-spec-gaming guards (the Plan D / v0.3 thesis itself)
 
-**Trigger to promote to plan:** if the verb-only rule needs per-flag refinement (e.g. `systemctl status` is read-only and harmless — could stay silent — vs `systemctl restart` is host-mutating).
+**Scope:** the Pragma pattern (`apps/Pragma/`) is three-tier defense against test gaming — AST classifier (always-on), coverage-of-target gate (opt-in), LLM-judge via DeepSeek (opt-in). Spectre needs the same architecture mirrored at the **spec layer**, not the test layer. Spec gaming examples observed during v0.2.2 E2E:
 
-**Related miss (same E2E run, Step 6):** `systemctl enable --now btc-poller.service` was classified as `repo` because the path heuristic matched `btc-poller.service` as a project-relative file. In reality, `.service` is a systemd unit name, not a project path; the action installs a symlink under `/etc/systemd/system/multi-user.target.wants/`. Implementer overrode to host via judgment, which is correct skill behavior (agents may *add* halts, never *skip* them) — but the classifier should not have been wrong in the first place. Fix: when first token is `systemctl` AND the verb is one of `enable/disable/start/stop/restart/reload/mask/unmask`, force host tier regardless of how subsequent tokens look.
+- "Soft" verifications that don't actually probe what the action did (e.g. `verification: echo done`, `verification: true`).
+- Action↔verification mismatch — verification grep for a string the action never emits.
+- Resource declarations that don't match the action's actual binds (Step 2 in the BTC E2E missed `res-port-9100` until manual refine).
+- Decision markers in §2 that don't generate ADRs because the regex is too narrow.
+
+**Fix shape (becomes Plan D / v0.3 spec brief):**
+
+- **Tier 1 — AST classifier.** Parse the spec's YAML steps, walk every `action`/`verification` pair, structurally check for tautologies (`echo done`, `true`, `[ 1 -eq 1 ]`), action-effect not probed by verification, undeclared host paths, undeclared ports. Always on, deterministic, ~10ms.
+- **Tier 2 — coverage-of-action gate.** Dry-run-classify every action via `bin/tier.py` and `bin/resources.extract_resources_from_action`, then check the spec's `resources:` declarations cover the inferred set. Mismatch = finding. Opt-in.
+- **Tier 3 — LLM judge via DeepSeek v4 Pro** (NEVER local — user policy: no local LLM when away from home, thermal risk). OpenAI-compatible API call. Three-prompt structured probing per the previous turn: (a) what the spec doesn't say, (b) what the spec asserts that's wrong, (c) attacker view. Output is structured JSON `findings: [{kind, severity, ref}]` — no narrative reviews reach the lock decision.
+
+**Authorship discipline:** the evaluator's findings are not narrative — they're machine-checkable JSON. This mirrors Pragma's own pragma-test-gaming-guard pattern: findings are typed and parseable so a same-family LLM can't paper over them in subsequent turns.
+
+**Why this becomes a real plan, not just an item:** ~600 LOC total, 3 new modules (`bin/spec_evaluator.py`, `bin/spec_ast.py`, `bin/llm_judge.py`), opt-in tier 2/3 config in `~/.spectre/reviewer.toml`, integration into `/vision` between draft and lock confirmation. That's a Plan D ship.
+
+**Trigger to promote to plan:** already met — see `docs/superpowers/specs/2026-05-05-spectre-v0.3-spec-evaluator.md` (when written).
 
 ## What's NOT here
 
