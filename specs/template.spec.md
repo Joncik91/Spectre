@@ -60,3 +60,24 @@ Each step is an atomic transaction with three required keys plus one optional:
 ## 7. Success Criteria
 - [ ] <binary pass/fail>
 - [ ] <binary pass/fail>
+
+## 8. Receiver Calibration
+
+This section declares the spec author's contract with the executor. Split into hard contract (machine-enforced) and human-facing notes (informational only). The pre-lock spec evaluator (v0.3+) cross-checks §8.1 against actions' actual path captures.
+
+### 8.1 Hard contract (machine-enforced — `block` severity on violation)
+
+Every spec MUST declare the following four fields. The evaluator blocks lock if any are absent or if any action's path captures violate them.
+
+- `mutates:` — comma-separated paths the spec is authorized to write/modify (e.g. `/opt/btc-poller/, /etc/systemd/system/`)
+- `never-touches:` — comma-separated paths the spec MUST NOT write to (e.g. `/home, /etc/passwd`)
+- `decision-budget:` — paid-API call budget (e.g. `1 paid API call per minute (CoinGecko free tier)` or `none`)
+- `reboot-survival:` — `required` | `best-effort` | `none`
+
+### 8.2 Human-facing notes (informational only — `info` severity, never blocks)
+
+Optional. For human reviewers calibrating expectations. The evaluator surfaces these as `info` findings but never blocks on them.
+
+- `assumes:` — what the executor is assumed to know (e.g. `knows-systemd, knows-python-stdlib`)
+- `runtime-flavor:` — the host the spec targets (e.g. `A8 (Debian 13, Ryzen 7 8745HS)`)
+- `expected-author-skill:` — the spec author's experience tier (e.g. `senior backend engineer`)
