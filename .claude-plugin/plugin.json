@@ -1,6 +1,6 @@
 {
   "name": "sdl-vision-engine",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Deterministic spec hydration + post-Bash Delta+Anchor injection.",
   "author": {
     "name": "Joncik91"

@@ -2,6 +2,17 @@
 
 All notable changes to the SDL Vision Engine plugin (Spectre).
 
+## [0.2.2] - 2026-05-05
+
+### Added
+- Supervisor process for parallel `/implement <track>` execution
+- Resource locks (ports, DB connections, paid-API quotas) with reboot recovery
+- Multi-track scratchpad shape (auto-migrated from v1)
+- Cross-track dependency graph (Resource nodes + `blocks` edges)
+
+### Changed
+- Scratchpad is now per-track. v1 single-track scratchpad auto-migrated on first SessionStart.
+
 ## v0.2.1 — 2026-05-05
 
 **Plan B — Skill integration.**
