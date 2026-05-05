@@ -1,6 +1,5 @@
 {
-  "id": "sdl-vision-engine",
-  "name": "SDL Vision Engine",
+  "name": "sdl-vision-engine",
   "version": "1.0.0",
   "description": "Deterministic spec hydration + post-Bash Delta+Anchor injection.",
   "hooks": {
@@ -9,7 +8,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": { "tool_name": "Bash" },
+        "matcher": "Bash",
         "hooks": [
           { "type": "command", "command": "python3 bin/compact.py" }
         ]

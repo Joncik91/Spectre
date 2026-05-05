@@ -2,6 +2,8 @@
 
 Claude Code plugin: deterministic spec hydration + post-Bash delta/anchor injection.
 
+**Requires:** Python 3.11+ (uses PEP 604 `str | None` and PEP 585 `dict[str, Any]` syntax).
+
 ## Install
 
 Symlink or copy this directory into your Claude Code plugins path. The manifest at `.claude-plugin/plugin.json` registers two hooks and one skill.

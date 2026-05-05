@@ -58,15 +58,11 @@ def active_spec() -> str | None:
     return None
 
 
-def emit(payload: dict) -> None:
-    print(json.dumps({"additionalContext": payload["additionalContext"]}))
-
-
 def main() -> int:
     try:
         event = json.loads(sys.stdin.read() or "{}")
     except json.JSONDecodeError:
-        emit({"additionalContext": "COMPACT_ERROR: invalid event JSON"})
+        print(json.dumps({"additionalContext": "COMPACT_ERROR: invalid event JSON"}))
         return 0
 
     tool_input = event.get("tool_input", {}) or {}
@@ -115,7 +111,7 @@ def main() -> int:
         f"ANCHOR: {anchor} Step {step}.\n"
         f"NEXT: scratchpad.json updated. {failed_count} negative-knowledge entries."
     )
-    emit({"additionalContext": ctx})
+    print(json.dumps({"additionalContext": ctx}))
     return 0
 
 

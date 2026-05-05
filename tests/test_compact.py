@@ -115,3 +115,9 @@ def test_delta_for_rm_multiple_flags(plugin_root):
     assert "target.txt" in ctx
     # Should NOT report a flag like "-v" as the file
     assert "rm -v" not in ctx
+
+
+def test_additional_context_under_500_chars_for_typical_command(plugin_root):
+    result = run_compact(plugin_root, make_event("ls -la"))
+    ctx = json.loads(result.stdout)["additionalContext"]
+    assert len(ctx) <= 500
