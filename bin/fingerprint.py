@@ -10,6 +10,13 @@ from pathlib import Path
 from typing import Any
 
 
+SHELL_FUNC_RE = re.compile(
+    r"^(?:function\s+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(\)\s*\{",
+    re.MULTILINE,
+)
+MD_HEADER_RE = re.compile(r"^(#{1,2})\s+(.+?)\s*$", re.MULTILINE)
+
+
 def extract_python_symbols(path: Path) -> list[dict[str, Any]]:
     path = Path(path)
     try:
@@ -43,4 +50,43 @@ def extract_python_symbols(path: Path) -> list[dict[str, Any]]:
                 "line": node.lineno,
                 "doc": ast.get_docstring(node) or "",
             })
+    return out
+
+
+def extract_shell_symbols(path: Path) -> list[dict[str, Any]]:
+    path = Path(path)
+    try:
+        src = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+    out: list[dict[str, Any]] = []
+    for m in SHELL_FUNC_RE.finditer(src):
+        line_no = src[: m.start()].count("\n") + 1
+        out.append({
+            "kind": "function",
+            "name": m.group("name"),
+            "file": str(path),
+            "line": line_no,
+            "doc": "",
+        })
+    return out
+
+
+def extract_markdown_headers(path: Path) -> list[dict[str, Any]]:
+    path = Path(path)
+    try:
+        src = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+    out: list[dict[str, Any]] = []
+    for m in MD_HEADER_RE.finditer(src):
+        depth = len(m.group(1))
+        line_no = src[: m.start()].count("\n") + 1
+        out.append({
+            "kind": f"h{depth}",
+            "name": m.group(2).strip(),
+            "file": str(path),
+            "line": line_no,
+            "doc": "",
+        })
     return out
