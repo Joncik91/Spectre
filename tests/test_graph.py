@@ -10,6 +10,10 @@ def test_edge_types_are_exact_set():
     assert graph.EDGE_TYPES == ("constrains", "satisfies", "blocks", "invalidates", "supersedes")
 
 
+def test_statuses_are_exact_set():
+    assert graph.STATUSES == ("active", "stale", "superseded")
+
+
 def test_node_init_requires_id_type_title():
     n = graph.Node(id="auth-001", type="invariant", title="UserObject schema")
     assert n.id == "auth-001"
@@ -27,12 +31,12 @@ def test_node_rejects_unknown_type():
 def test_edge_rejects_unknown_type():
     n = graph.Node(id="x", type="invariant", title="t")
     with pytest.raises(ValueError, match="unknown edge type"):
-        n.add_edge(target="y", type="bogus_edge")
+        n.add_edge(target="y", edge_type="bogus_edge")
 
 
 def test_edge_add_appends_to_list():
     n = graph.Node(id="x", type="invariant", title="t")
-    n.add_edge(target="y", type="constrains")
+    n.add_edge(target="y", edge_type="constrains")
     assert n.edges == [{"target": "y", "type": "constrains"}]
 
 

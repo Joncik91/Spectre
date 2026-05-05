@@ -24,7 +24,7 @@ class Node:
         if self.status not in STATUSES:
             raise ValueError(f"unknown status: {self.status!r}")
 
-    def add_edge(self, *, target: str, type: str) -> None:
-        if type not in EDGE_TYPES:
-            raise ValueError(f"unknown edge type: {type!r}")
-        self.edges.append({"target": target, "type": type})
+    def add_edge(self, *, target: str, edge_type: str) -> None:
+        if edge_type not in EDGE_TYPES:
+            raise ValueError(f"unknown edge type: {edge_type!r}")
+        self.edges.append({"target": target, "type": edge_type})
