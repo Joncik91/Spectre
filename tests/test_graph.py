@@ -266,3 +266,44 @@ def test_get_node_by_id_returns_match():
 def test_get_node_returns_none_when_missing():
     nodes = _build_sample_graph()
     assert graph.get_node(nodes, "no-such-id") is None
+
+
+def test_mark_stale_flips_status_on_target():
+    nodes = _build_sample_graph()
+    graph.mark_stale(nodes, node_id="impl-1")
+    assert graph.get_node(nodes, "impl-1").status == "stale"
+
+
+def test_mark_stale_cascades_through_constrains_edges():
+    nodes = _build_sample_graph()
+    graph.mark_stale_cascade(nodes, root_id="inv-1")
+    # inv-1 itself + impl-1 (constrains target) + impl-2 (already stale, stays stale)
+    assert graph.get_node(nodes, "inv-1").status == "stale"
+    assert graph.get_node(nodes, "impl-1").status == "stale"
+    assert graph.get_node(nodes, "impl-2").status == "stale"
+
+
+def test_mark_stale_cascade_does_not_propagate_through_unrelated_edges():
+    # iface-1 has no incoming constrains/satisfies edge from inv-1's reachable set
+    # Wait — impl-1 satisfies iface-1, and impl-1 is reachable from inv-1.
+    # So iface-1 IS reachable through inv-1 -> impl-1 (constrains) -> iface-1 (satisfies).
+    # Both constrains and satisfies are CASCADE_EDGES. So iface-1 SHOULD become stale.
+    nodes = _build_sample_graph()
+    graph.mark_stale_cascade(nodes, root_id="inv-1")
+    assert graph.get_node(nodes, "iface-1").status == "stale"
+
+
+def test_mark_stale_cascade_unknown_root_is_noop():
+    nodes = _build_sample_graph()
+    graph.mark_stale_cascade(nodes, root_id="bogus")
+    # Only impl-2 was already stale; everything else stays active
+    assert graph.get_node(nodes, "inv-1").status == "active"
+    assert graph.get_node(nodes, "impl-1").status == "active"
+    assert graph.get_node(nodes, "iface-1").status == "active"
+    assert graph.get_node(nodes, "impl-2").status == "stale"
+
+
+def test_mark_stale_unknown_node_is_noop():
+    nodes = _build_sample_graph()
+    graph.mark_stale(nodes, node_id="does-not-exist")
+    assert graph.get_node(nodes, "inv-1").status == "active"

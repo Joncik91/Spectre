@@ -150,6 +150,36 @@ def find_stale(nodes: list[Node]) -> list[Node]:
     return [n for n in nodes if n.status == "stale"]
 
 
+CASCADE_EDGES = ("constrains", "satisfies")
+
+
+def mark_stale(nodes: list[Node], *, node_id: str) -> None:
+    n = get_node(nodes, node_id)
+    if n is not None:
+        n.status = "stale"
+
+
+def mark_stale_cascade(nodes: list[Node], *, root_id: str) -> None:
+    """Mark root and all descendants reachable via cascade edges as stale."""
+    root = get_node(nodes, root_id)
+    if root is None:
+        return
+    visited: set[str] = set()
+    stack = [root_id]
+    while stack:
+        current_id = stack.pop()
+        if current_id in visited:
+            continue
+        visited.add(current_id)
+        n = get_node(nodes, current_id)
+        if n is None:
+            continue
+        n.status = "stale"
+        for e in n.edges:
+            if e["type"] in CASCADE_EDGES:
+                stack.append(e["target"])
+
+
 def serialize_node(n: Node) -> str:
     lines = ["---"]
     lines.append(f"id: {n.id}")
