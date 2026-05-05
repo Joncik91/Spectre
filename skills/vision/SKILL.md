@@ -175,6 +175,31 @@ PY
 
 In v0.2.1 the graph manifest may not have ADR nodes yet. The `update_graph_for_supersedes` call is a no-op when nodes are absent, so it is safe to always invoke after a supersede write.
 
+### Step 6.6 — Resource node inference
+
+For each step in the locked spec, run `bin/resources.extract_resources_from_action(<action>)`. Each non-empty result is a Resource the step touches.
+
+```bash
+python3 - <<'PY'
+import sys
+sys.path.insert(0, ".")
+from bin import resources
+# For each step's action: tuple-extract any Resource nodes mentioned
+all_seen = {}
+for step in <parsed steps from draft spec>:
+    for r in resources.extract_resources_from_action(step["action"]):
+        all_seen.setdefault(r.id, r)
+        # Append r.id to step["resources"] in the draft if not already present
+PY
+```
+
+For each unique Resource:
+
+1. Check `specs/.graph.md` for an existing node with the same `id`. If absent, append a new node block via `bin/graph.serialize_node(...)` (Node with `type="resource"`, `title=f"{kind}:{identifier}"`).
+2. Append the Resource ID to that step's `resources:` list in the spec file (atomic rewrite).
+
+Plan C only auto-detects `port:N` style. DB connections, file locks, and API quotas need user-authored Resource nodes (manually added `Resource:` block in the graph manifest). The supervisor's lazy `register_resource(capacity=1)` will fall back if the node is missing — but a missing node also means no capacity-other-than-1 declaration is possible, so explicit declaration is preferred.
+
 ### Step 6.7 — Lock the spec
 
 Now that the user confirmed and ADRs are written:
@@ -190,20 +215,30 @@ Now that the user confirmed and ADRs are written:
 
    ```json
    {
-     "active_spec": "specs/<slug>.spec.md",
-     "step": 1,
-     "last_command": null,
-     "exit_code": null,
-     "delta": null,
-     "timestamp": null,
-     "failed_hypotheses": [],
-     "paths_touched": [],
-     "last_drift_check_step": 0,
-     "last_audit_kinds": [],
-     "last_audit_passed": null,
-     "last_audit_failures": []
+     "version": 2,
+     "active_mission": "specs/<slug>.spec.md",
+     "tracks": {
+       "<track or 'default'>": {
+         "active_spec": "specs/<slug>.spec.md",
+         "step": 1,
+         "last_command": null,
+         "exit_code": null,
+         "delta": null,
+         "timestamp": null,
+         "failed_hypotheses": [],
+         "paths_touched": [],
+         "last_drift_check_step": 0,
+         "last_audit_kinds": [],
+         "last_audit_passed": null,
+         "last_audit_failures": []
+       }
+     },
+     "decisions_index": "decisions/",
+     "graph_snapshot": "specs/.graph.md"
    }
    ```
+
+   If the user invoked `/vision <track>`, use that track name; otherwise use `"default"`. Preserve any other tracks already in the scratchpad (read-modify-write via `bin/_scratchpad.save_track`).
 
 ### Step 7 — Transition signal
 
