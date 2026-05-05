@@ -171,3 +171,19 @@ def test_save_graph_creates_parent_dir(tmp_path):
     path = tmp_path / "subdir" / "g.md"
     graph.save_graph(path, [graph.Node(id="x", type="resource", title="t")])
     assert path.exists()
+
+
+def test_save_graph_cleans_up_tmp_on_failure(tmp_path, monkeypatch):
+    path = tmp_path / "g.md"
+    n = graph.Node(id="x", type="resource", title="t")
+
+    def boom(*args, **kwargs):
+        raise OSError("simulated rename failure")
+
+    monkeypatch.setattr(graph.os, "replace", boom)
+    with pytest.raises(OSError, match="simulated rename failure"):
+        graph.save_graph(path, [n])
+
+    leftovers = list(tmp_path.glob("g.md*.tmp"))
+    assert leftovers == []
+    assert not path.exists()
