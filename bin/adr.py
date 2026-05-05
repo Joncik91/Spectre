@@ -5,6 +5,7 @@ ADRs live at decisions/<NNNN>-<slug>.md with frontmatter:
 
 Atomic writes via tempfile.mkstemp + os.replace.
 """
+import json
 import os
 import re
 import tempfile
@@ -13,6 +14,17 @@ from pathlib import Path
 from bin import graph
 
 _ADR_FILENAME_RE = re.compile(r"^(\d{4})-[\w-]+\.md$")
+
+
+def _yaml_string(s: str) -> str:
+    """Return a YAML-safe JSON-encoded string scalar.
+
+    Raises ValueError for strings containing newline or carriage-return
+    characters, which cannot be safely represented as a single-line YAML scalar.
+    """
+    if "\n" in s or "\r" in s:
+        raise ValueError(f"Title must not contain newline characters: {s!r}")
+    return json.dumps(s, ensure_ascii=False)
 
 
 def slugify(title: str) -> str:
@@ -94,7 +106,7 @@ def write_adr(
     text = (
         "---\n"
         f"id: {new_id}\n"
-        f'title: "{title}"\n'
+        f"title: {_yaml_string(title)}\n"
         f"date: {date}\n"
         "status: accepted\n"
         f"supersedes: {supersedes_value}\n"
@@ -125,6 +137,8 @@ def update_graph_for_supersedes(
     old_node = graph.get_node(nodes, old_adr_id)
     if new_node is None or old_node is None:
         return
-    new_node.add_edge(target=old_adr_id, edge_type="supersedes")
+    edge = {"target": old_adr_id, "type": "supersedes"}
+    if edge not in new_node.edges:
+        new_node.add_edge(target=old_adr_id, edge_type="supersedes")
     old_node.status = "superseded"
     graph.save_graph(graph_path, nodes)

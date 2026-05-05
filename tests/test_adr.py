@@ -148,3 +148,43 @@ def test_update_graph_for_supersedes_noop_when_node_missing(tmp_path):
     old = graph.get_node(reloaded, "adr-0001")
     assert old is not None
     assert old.status == "active"
+
+
+def test_write_adr_escapes_quotes_in_title(tmp_path):
+    d = tmp_path / "decisions"
+    d.mkdir()
+    p = adr.write_adr(d, title='Use "UUID" keys', date="2026-05-05", body="B.")
+    text = p.read_text(encoding="utf-8")
+    # JSON-escaped quotes inside the YAML scalar.
+    assert 'title: "Use \\"UUID\\" keys"\n' in text
+
+
+def test_write_adr_rejects_newline_in_title(tmp_path):
+    d = tmp_path / "decisions"
+    d.mkdir()
+    with pytest.raises(ValueError):
+        adr.write_adr(d, title="line1\nline2", date="2026-05-05", body="B.")
+
+
+def test_write_adr_rejects_carriage_return_in_title(tmp_path):
+    d = tmp_path / "decisions"
+    d.mkdir()
+    with pytest.raises(ValueError):
+        adr.write_adr(d, title="line1\rline2", date="2026-05-05", body="B.")
+
+
+def test_update_graph_for_supersedes_idempotent(tmp_path):
+    g = tmp_path / "specs" / ".graph.md"
+    g.parent.mkdir()
+    nodes = [
+        graph.Node(id="adr-0001", type="invariant", title="Old"),
+        graph.Node(id="adr-0002", type="invariant", title="New"),
+    ]
+    graph.save_graph(g, nodes)
+    adr.update_graph_for_supersedes(g, new_adr_id="adr-0002", old_adr_id="adr-0001")
+    adr.update_graph_for_supersedes(g, new_adr_id="adr-0002", old_adr_id="adr-0001")
+    reloaded = graph.load_graph(g)
+    new_node = graph.get_node(reloaded, "adr-0002")
+    assert new_node is not None
+    supersedes_edges = [e for e in new_node.edges if e["type"] == "supersedes" and e["target"] == "adr-0001"]
+    assert len(supersedes_edges) == 1
