@@ -178,6 +178,50 @@ x
         tmp.unlink(missing_ok=True)
 
 
+def test_soft_verify_does_not_flag_echo_compound_check():
+    """echo prefix + real check (echo X && test ...) must NOT be flagged."""
+    import tempfile, pathlib
+    spec_text = """# Compound Check Spec
+**Generated:** 2026-05-05
+**Slug:** compound-check
+## 1. Hard Problem
+test
+## 2. First Principles
+- p
+## 3. Algorithm Audit
+- **Delete:** none
+- **Simplify:** none
+- **Accelerate:** none
+## 4. Speed-of-Light Limit
+test
+## 5. Physics Guardrails
+- inv
+## 6. Steps
+```yaml
+- step: 1
+  why: "Smoke check before real assertion."
+  action: "touch /tmp/marker"
+  verification: "echo checking && test -f /tmp/marker"
+```
+## 7. Success Criteria
+- [ ] x
+## 8. Receiver Calibration
+### 8.1 Hard contract
+- mutates: /tmp/
+- never-touches: /etc/
+- decision-budget: none
+- reboot-survival: none
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".spec.md", delete=False) as f:
+        f.write(spec_text)
+        p = pathlib.Path(f.name)
+    try:
+        fs = spec_ast.classify(p)
+        assert not any(f.kind == "soft-verification" for f in fs)
+    finally:
+        p.unlink(missing_ok=True)
+
+
 # ── missing-receiver-calibration ─────────────────────────────────────────────
 
 def test_missing_calibration_returns_finding_when_section_absent():
@@ -221,17 +265,54 @@ def test_classify_runs_under_100ms():
     assert elapsed_ms < 100
 
 
+def test_classify_handles_crlf_line_endings():
+    """CRLF (Windows-authored) specs must parse equivalently to LF specs."""
+    import tempfile, pathlib
+    good = (pathlib.Path(__file__).parent / "fixtures" / "specs" / "good_minimal.spec.md").read_text()
+    crlf_text = good.replace("\n", "\r\n")
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".spec.md", delete=False, newline="") as f:
+        f.write(crlf_text)
+        p = pathlib.Path(f.name)
+    try:
+        fs = spec_ast.classify(p)
+        assert fs == []
+    finally:
+        p.unlink(missing_ok=True)
+
+
 # ── separation of concerns (Copilot review #3) ──────────────────────────────
 
-def test_classify_does_not_call_bin_tier_classify():
-    """Tier 1 must not invoke bin.tier.classify (that's Tier 2's job)."""
-    with unittest.mock.patch("bin.tier.classify") as mock_tier:
-        spec_ast.classify(FIXTURES / "good_minimal.spec.md")
-        assert mock_tier.call_count == 0
+def test_spec_ast_does_not_import_bin_tier():
+    """Static guard: Tier 1 must not import bin.tier (Copilot review #3 — Tier 1 pure)."""
+    import ast as _ast
+    src = (pathlib.Path(__file__).resolve().parent.parent / "bin" / "spec_ast.py").read_text()
+    tree = _ast.parse(src)
+    imported = set()
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.Import):
+            for alias in node.names:
+                imported.add(alias.name)
+        elif isinstance(node, _ast.ImportFrom):
+            if node.module:
+                imported.add(node.module)
+                for alias in node.names:
+                    imported.add(f"{node.module}.{alias.name}")
+    assert "bin.tier" not in imported and "tier" not in imported
 
 
-def test_classify_does_not_call_bin_resources_extract():
-    """Tier 1 must not invoke bin.resources.extract_resources_from_action."""
-    with unittest.mock.patch("bin.resources.extract_resources_from_action") as mock_res:
-        spec_ast.classify(FIXTURES / "good_minimal.spec.md")
-        assert mock_res.call_count == 0
+def test_spec_ast_does_not_import_bin_resources():
+    """Static guard: Tier 1 must not import bin.resources (Copilot review #3)."""
+    import ast as _ast
+    src = (pathlib.Path(__file__).resolve().parent.parent / "bin" / "spec_ast.py").read_text()
+    tree = _ast.parse(src)
+    imported = set()
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.Import):
+            for alias in node.names:
+                imported.add(alias.name)
+        elif isinstance(node, _ast.ImportFrom):
+            if node.module:
+                imported.add(node.module)
+                for alias in node.names:
+                    imported.add(f"{node.module}.{alias.name}")
+    assert "bin.resources" not in imported and "resources" not in imported

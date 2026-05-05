@@ -15,7 +15,7 @@ from bin import findings as _findings
 _SOFT_VERIFY_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"^true$", re.IGNORECASE),
     re.compile(r"^:$"),
-    re.compile(r"^echo\b", re.IGNORECASE),
+    re.compile(r"^echo\b[^&|;]*$", re.IGNORECASE),
     re.compile(r"^\[\s*1\s+-eq\s+1\s*\]$"),
     re.compile(r'^\[\s*-z\s+""\s*\]$'),
 ]
@@ -159,7 +159,9 @@ def classify(spec_path: pathlib.Path) -> list[_findings.Finding]:
     PURE parse/structure/tautology. Does NOT call bin.tier or bin.resources.
     Budget: <100ms.
     """
-    body = spec_path.read_text(encoding="utf-8")
+    text = spec_path.read_text(encoding="utf-8")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")  # CRLF/CR normalization
+    body = text
     results: list[_findings.Finding] = []
 
     # ── Parse steps ──────────────────────────────────────────────────────────
