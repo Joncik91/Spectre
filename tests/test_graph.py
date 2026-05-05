@@ -141,3 +141,33 @@ def test_parse_manifest_round_trip():
     assert parsed[0].id == n1.id
     assert parsed[0].edges == n1.edges
     assert parsed[1].status == n2.status
+
+
+def test_load_graph_returns_empty_when_missing(tmp_path):
+    nodes = graph.load_graph(tmp_path / "nope.md")
+    assert nodes == []
+
+
+def test_save_graph_then_load_round_trip(tmp_path):
+    path = tmp_path / "g.md"
+    n = graph.Node(id="a", type="invariant", title="A")
+    n.add_edge(target="b", edge_type="constrains")
+    graph.save_graph(path, [n])
+    assert path.exists()
+    loaded = graph.load_graph(path)
+    assert len(loaded) == 1
+    assert loaded[0].id == "a"
+    assert loaded[0].edges == [{"target": "b", "type": "constrains"}]
+
+
+def test_save_graph_no_tmp_left_behind(tmp_path):
+    path = tmp_path / "g.md"
+    graph.save_graph(path, [graph.Node(id="x", type="resource", title="t")])
+    leftovers = list(tmp_path.glob("g.md*.tmp"))
+    assert leftovers == []
+
+
+def test_save_graph_creates_parent_dir(tmp_path):
+    path = tmp_path / "subdir" / "g.md"
+    graph.save_graph(path, [graph.Node(id="x", type="resource", title="t")])
+    assert path.exists()

@@ -3,7 +3,10 @@
 The graph lives at specs/.graph.md as a single markdown file.
 Each node is a YAML frontmatter block separated by `---` lines.
 """
+import os
+import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 
 NODE_TYPES = ("invariant", "interface", "implementation", "resource")
 EDGE_TYPES = ("constrains", "satisfies", "blocks", "invalidates", "supersedes")
@@ -88,6 +91,31 @@ def _parse_block(lines: list[str]) -> Node:
     )
     n.edges = edges
     return n
+
+
+MANIFEST_HEADER = "# Spectre Graph Manifest\n\n"
+
+
+def load_graph(path: Path) -> list[Node]:
+    path = Path(path)
+    if not path.exists():
+        return []
+    return parse_manifest(path.read_text(encoding="utf-8"))
+
+
+def save_graph(path: Path, nodes: list[Node]) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = MANIFEST_HEADER + "".join(serialize_node(n) for n in nodes)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(body)
+        os.replace(tmp, path)
+    except Exception:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
 
 
 def serialize_node(n: Node) -> str:
