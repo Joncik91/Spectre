@@ -1,0 +1,5 @@
+# Spectre Graph Manifest
+
+This file is auto-managed by bin/graph.py. Do not hand-edit unless you understand the schema.
+
+Each node is a frontmatter block separated by a `---` line. Edges are listed inside each node's `edges:` field.

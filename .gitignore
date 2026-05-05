@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 state/scratchpad.json
+state/local-symbols.json
 specs/.active
 specs/*.spec.md
 !specs/template.spec.md
