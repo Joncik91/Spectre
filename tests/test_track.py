@@ -86,3 +86,31 @@ def test_send_stale_socket_cleans_up_files(tmp_path):
     with pytest.raises(RuntimeError):
         track._send(tmp_path, {"op": "status"})
     assert not sock_path.exists()
+
+
+def test_supervisor_alive_returns_false_when_socket_missing(tmp_path):
+    sock_path = tmp_path / "state" / supervisor.SOCKET_NAME
+    assert track._supervisor_alive(sock_path) is False
+
+
+def test_supervisor_alive_returns_false_for_dead_socket(tmp_path):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    sock_path = state_dir / supervisor.SOCKET_NAME
+    sock_path.touch()  # exists but no listener
+    assert track._supervisor_alive(sock_path) is False
+
+
+def test_ensure_supervisor_running_respawns_after_stale_pid(tmp_path):
+    """SIGKILL'd supervisor leaves pid+sock on disk; ensure_supervisor must re-spawn."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    sock_path = state_dir / supervisor.SOCKET_NAME
+    pid_path = state_dir / supervisor.PID_FILE_NAME
+    sock_path.touch()
+    pid_path.write_text("99999")
+    track.ensure_supervisor_running(tmp_path)
+    # New supervisor must be live (sock connectable)
+    assert track._supervisor_alive(sock_path) is True
+    track._send(tmp_path, {"op": "shutdown"})
+    time.sleep(0.5)

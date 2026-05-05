@@ -43,19 +43,44 @@ def _send(project_root: Path, req: dict[str, Any]) -> dict[str, Any]:
     return json.loads(buf.strip())
 
 
+def _supervisor_alive(sock_path: Path) -> bool:
+    """Probe the UDS — supervisor is alive iff a socket connect succeeds."""
+    if not sock_path.exists():
+        return False
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        s.connect(str(sock_path))
+        return True
+    except (ConnectionRefusedError, OSError):
+        return False
+    finally:
+        s.close()
+
+
 def ensure_supervisor_running(project_root: Path) -> int:
-    """Spawn the supervisor if not running. Returns its PID."""
+    """Spawn the supervisor if not running. Returns its PID.
+
+    Probes the socket for a live listener before trusting an existing pid file —
+    a SIGKILL'd supervisor leaves stale pid+sock on disk that would otherwise
+    short-circuit the spawn.
+    """
     project_root = Path(project_root)
     pid_path = _pid_path(project_root)
     sock_path = _socket_path(project_root)
-    if pid_path.exists() and sock_path.exists():
+    if pid_path.exists() and sock_path.exists() and _supervisor_alive(sock_path):
         try:
             return int(pid_path.read_text())
         except ValueError:
             pass
-    # Spawn detached
+    # Stale pid/sock → clean up so a fresh bind succeeds
+    sock_path.unlink(missing_ok=True)
+    pid_path.unlink(missing_ok=True)
+    # Spawn detached. Resolve project_root to absolute path because the
+    # supervisor's cwd is the Spectre repo (so it can `import bin.supervisor`),
+    # not the project. Without resolve, Path('.') would bind in the wrong dir.
+    abs_project = project_root.resolve()
     proc = subprocess.Popen(
-        [sys.executable, "-m", "bin.supervisor", str(project_root)],
+        [sys.executable, "-m", "bin.supervisor", str(abs_project)],
         cwd=Path(__file__).parent.parent,
         start_new_session=True,
         stdout=subprocess.DEVNULL,
