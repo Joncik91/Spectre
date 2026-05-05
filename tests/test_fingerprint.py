@@ -119,3 +119,67 @@ def test_extract_markdown_headers_skips_h3_and_below(tmp_path):
     assert "Skipped" not in titles
     assert "Section A" in titles
     assert "Section B" in titles
+
+
+def test_walk_repo_collects_python_function(tmp_path):
+    (tmp_path / "a.py").write_text("def f(): pass\n")
+    out = fp.walk_repo(tmp_path)
+    assert any(s["kind"] == "function" and s["name"] == "f" for s in out)
+
+
+def test_walk_repo_collects_shell_function(tmp_path):
+    (tmp_path / "b.sh").write_text("g() { :; }\n")
+    out = fp.walk_repo(tmp_path)
+    assert any(s["kind"] == "function" and s["name"] == "g" for s in out)
+
+
+def test_walk_repo_collects_markdown_h1(tmp_path):
+    (tmp_path / "c.md").write_text("# Title\n## Sub\n")
+    out = fp.walk_repo(tmp_path)
+    assert any(s["kind"] == "h1" and s["name"] == "Title" for s in out)
+
+
+def test_walk_repo_collects_markdown_h2(tmp_path):
+    (tmp_path / "c.md").write_text("# Title\n## Sub\n")
+    out = fp.walk_repo(tmp_path)
+    assert any(s["kind"] == "h2" and s["name"] == "Sub" for s in out)
+
+
+def test_walk_repo_skips_dot_git(tmp_path):
+    hidden = tmp_path / ".git"
+    hidden.mkdir()
+    (hidden / "x.py").write_text("def secret(): pass\n")
+    out = fp.walk_repo(tmp_path)
+    assert all(s["name"] != "secret" for s in out)
+
+
+def test_walk_repo_skips_pycache(tmp_path):
+    cache = tmp_path / "__pycache__"
+    cache.mkdir()
+    (cache / "x.py").write_text("def cached(): pass\n")
+    out = fp.walk_repo(tmp_path)
+    assert all(s["name"] != "cached" for s in out)
+
+
+def test_walk_repo_skips_state_dir(tmp_path):
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "y.py").write_text("def stateful(): pass\n")
+    out = fp.walk_repo(tmp_path)
+    assert all(s["name"] != "stateful" for s in out)
+
+
+def test_save_symbols_round_trip(tmp_path):
+    target = tmp_path / "syms.json"
+    syms = [{"kind": "function", "name": "x", "file": "a.py", "line": 1, "doc": ""}]
+    fp.save_symbols(target, syms)
+    loaded = json.loads(target.read_text())
+    assert loaded == syms
+
+
+def test_save_symbols_no_tmp_left_behind(tmp_path):
+    target = tmp_path / "syms.json"
+    syms = [{"kind": "function", "name": "x", "file": "a.py", "line": 1, "doc": ""}]
+    fp.save_symbols(target, syms)
+    leftovers = list(tmp_path.glob("syms.json*.tmp"))
+    assert leftovers == []

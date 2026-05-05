@@ -5,10 +5,14 @@ Output written to state/local-symbols.json by walk_repo().
 """
 import ast
 import json
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
+
+SKIP_DIRS = {".git", "__pycache__", "state", ".venv", "node_modules", ".pytest_cache"}
 
 SHELL_FUNC_RE = re.compile(
     r"^(?:function\s+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(\)\s*\{",
@@ -90,3 +94,35 @@ def extract_markdown_headers(path: Path) -> list[dict[str, Any]]:
             "doc": "",
         })
     return out
+
+
+def walk_repo(root: Path) -> list[dict[str, Any]]:
+    root = Path(root)
+    out: list[dict[str, Any]] = []
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        if any(part in SKIP_DIRS or part.startswith(".") for part in path.relative_to(root).parts[:-1]):
+            continue
+        suffix = path.suffix.lower()
+        if suffix == ".py":
+            out.extend(extract_python_symbols(path))
+        elif suffix == ".sh":
+            out.extend(extract_shell_symbols(path))
+        elif suffix == ".md":
+            out.extend(extract_markdown_headers(path))
+    return out
+
+
+def save_symbols(path: Path, symbols: list[dict[str, Any]]) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(symbols, f, indent=2)
+        os.replace(tmp, path)
+    except Exception:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
