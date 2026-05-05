@@ -52,3 +52,23 @@ def test_valid_active_appends_state_line(plugin_root):
     result = run_hydrate(plugin_root)
     assert "STATE: step=4" in result.stdout
     assert "exit_code=0" in result.stdout
+
+
+def test_hydrate_auto_migrates_v1_scratchpad(plugin_root):
+    import json
+    target = plugin_root / "state" / "scratchpad.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps({"step": 3, "active_spec": "specs/foo.spec.md"}))
+    result = run_hydrate(plugin_root)
+    data = json.loads(target.read_text())
+    assert data["version"] == 2
+    assert "MIGRATED:" in result.stdout
+
+
+def test_hydrate_v2_scratchpad_no_migration_signal(plugin_root):
+    import json
+    target = plugin_root / "state" / "scratchpad.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps({"version": 2, "tracks": {}}))
+    result = run_hydrate(plugin_root)
+    assert "MIGRATED:" not in result.stdout

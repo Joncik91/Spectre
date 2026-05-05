@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from bin import _scratchpad as sp  # noqa: E402
+from bin import migrate_scratchpad_v1_to_v2 as _mig  # noqa: E402
 
 SPECS = Path("specs")
 ACTIVE = SPECS / ".active"
@@ -23,14 +24,24 @@ def list_specs() -> str:
 
 def state_line() -> str:
     data = sp.load(SCRATCH)
+    # Handle both v1 (top-level fields) and v2 (tracks.default) formats.
+    if data.get("version") == 2:
+        track = data.get("tracks", {}).get("default", {})
+    else:
+        track = data
     return (
-        f"STATE: step={data.get('step')} "
-        f"exit_code={data.get('exit_code')} "
-        f"last_command={data.get('last_command')!r}"
+        f"STATE: step={track.get('step')} "
+        f"exit_code={track.get('exit_code')} "
+        f"last_command={track.get('last_command')!r}"
     )
 
 
 def main() -> int:
+    # Auto-migrate v1 scratchpad on SessionStart, regardless of .active state.
+    _result = _mig.migrate(SCRATCH)
+    if _result == "migrated":
+        print("MIGRATED: scratchpad v1 → v2 (existing track moved to 'default').")
+
     if not ACTIVE.exists():
         print("SIGNAL: No active spec. Run /vision to begin.")
         print("Available specs:")
