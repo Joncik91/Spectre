@@ -72,5 +72,5 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception as exc:
-        print(f"SIGNAL: hydrator error: {exc}")
+        print(f"SIGNAL: hydrator error ({type(exc).__name__}): {exc}")
         sys.exit(0)
