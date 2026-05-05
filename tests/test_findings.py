@@ -17,6 +17,11 @@ def test_finding_location_scope_spec_wide_step_is_none():
     assert loc.step is None
 
 
+def test_finding_location_scope_spec_wide_steps_is_none():
+    loc = findings.FindingLocation(scope="spec-wide")
+    assert loc.steps is None
+
+
 def test_finding_location_unknown_scope_raises():
     with pytest.raises(ValueError, match="unknown scope"):
         findings.FindingLocation(scope="invalid-scope")
@@ -249,3 +254,64 @@ def test_fingerprint_is_sha256_hex():
 
 def test_known_kinds_includes_tier3_unavailable():
     assert "tier3-unavailable" in findings.KNOWN_KINDS
+
+
+def test_finding_to_dict_full_round_trip_preserves_all_fields():
+    """Full-fidelity round-trip: from_dict(to_dict(f)) equals f across all fields."""
+    from dataclasses import asdict
+    f = findings.Finding(
+        tier=2,
+        kind="undeclared-resource",
+        severity="warn",
+        location=findings.FindingLocation(scope="step", step=3, ref="resources"),
+        message="port 9100 inferred but not declared",
+        suggested_fix="add res-port-9100 to step 3 resources:",
+        dismissable=True,
+    )
+    f2 = findings.from_dict(findings.to_dict(f))
+    assert asdict(f2) == asdict(f)
+
+
+def test_finding_round_trip_preserves_none_suggested_fix():
+    """Regression: suggested_fix=None must survive round-trip as None."""
+    from dataclasses import asdict
+    f = findings.Finding(
+        tier=1,
+        kind="missing-why",
+        severity="block",
+        location=findings.FindingLocation(scope="step", step=2, ref="why"),
+        message="Step 2 missing why",
+    )
+    f2 = findings.from_dict(findings.to_dict(f))
+    assert asdict(f2) == asdict(f)
+    assert f2.suggested_fix is None
+
+
+def test_fingerprint_changes_when_tier_changes():
+    """Different tiers must produce different fingerprints (dismissal-pipeline integrity)."""
+    f1 = findings.Finding(
+        tier=1, kind="missing-why", severity="block",
+        location=findings.FindingLocation(scope="step", step=3, ref="why"),
+        message="m",
+    )
+    f2 = findings.Finding(
+        tier=2, kind="missing-why", severity="block",
+        location=findings.FindingLocation(scope="step", step=3, ref="why"),
+        message="m",
+    )
+    assert findings.fingerprint(f1) != findings.fingerprint(f2)
+
+
+def test_fingerprint_distinguishes_empty_steps_from_none():
+    """steps=[] must NOT collapse to steps=None in fingerprint."""
+    f_empty = findings.Finding(
+        tier=1, kind="cross-step-inconsistency", severity="warn",
+        location=findings.FindingLocation(scope="cross-step", steps=[]),
+        message="m",
+    )
+    f_none = findings.Finding(
+        tier=1, kind="cross-step-inconsistency", severity="warn",
+        location=findings.FindingLocation(scope="cross-step", steps=None),
+        message="m",
+    )
+    assert findings.fingerprint(f_empty) != findings.fingerprint(f_none)

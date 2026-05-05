@@ -68,17 +68,18 @@ def fingerprint(f: Finding) -> str:
     Stable SHA-256 fingerprint of Finding, excluding message wording.
 
     Returns hex digest of canonical JSON containing:
-    {kind, scope, step, steps (sorted), ref}
+    {tier, kind, scope, step, steps (sorted), ref}
 
     Message and suggested_fix are excluded so LLM nondeterminism doesn't
     break Tier 3 dismissals.
     """
     # Build canonical dict for hashing
     fp_data = {
+        "tier": f.tier,
         "kind": f.kind,
         "scope": f.location.scope,
         "step": f.location.step,
-        "steps": sorted(f.location.steps) if f.location.steps else None,
+        "steps": sorted(f.location.steps) if f.location.steps is not None else None,
         "ref": f.location.ref,
     }
 
