@@ -23,6 +23,18 @@ def test_default_includes_last_drift_check_step_zero(plugin_root):
     assert data["last_drift_check_step"] == 0
 
 
+def test_default_includes_last_audit_kinds_empty_list():
+    assert sp.DEFAULT["last_audit_kinds"] == []
+
+
+def test_default_includes_last_audit_passed_none():
+    assert sp.DEFAULT["last_audit_passed"] is None
+
+
+def test_default_includes_last_audit_failures_empty_list():
+    assert sp.DEFAULT["last_audit_failures"] == []
+
+
 def test_paths_touched_cap_constant_is_at_least_100():
     assert sp.PATHS_TOUCHED_CAP >= 100
 

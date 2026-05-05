@@ -18,6 +18,9 @@ DEFAULT = {
     "failed_hypotheses": [],
     "paths_touched": [],
     "last_drift_check_step": 0,
+    "last_audit_kinds": [],
+    "last_audit_passed": None,
+    "last_audit_failures": [],
 }
 
 
