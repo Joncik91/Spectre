@@ -14,7 +14,6 @@ Budget: <2s on a 7-step spec.
 """
 import pathlib
 import re
-from typing import Optional
 
 from bin import findings as _findings
 from bin import tier as _tier
@@ -61,9 +60,16 @@ def _parse_81_block(body: str) -> tuple[list[str], list[str]]:
 
 
 def _path_covered_by(path: str, prefixes: list[str]) -> bool:
-    """Return True if path starts with any of the given prefixes."""
+    """Return True if path equals or is under any of the given prefixes.
+
+    Requires a directory boundary: prefix '/etc' does NOT cover '/etcabc'.
+    Concretely: path matches if path == prefix or path starts with
+    prefix.rstrip('/') + '/'.  This treats every prefix as either an exact
+    file path or a directory root — no substring false-positives.
+    """
     for prefix in prefixes:
-        if path.startswith(prefix):
+        boundary = prefix.rstrip("/") + "/"
+        if path == prefix or path.startswith(boundary):
             return True
     return False
 
@@ -105,10 +111,14 @@ def _parse_steps(body: str) -> list[dict]:
             if not raw:
                 continue
             step: dict = {}
-            for line in raw.splitlines():
+            lines = raw.splitlines()
+            i = 0
+            while i < len(lines):
+                line = lines[i]
                 m_step = re.match(r"^\s*-\s+step:\s*(\d+)", line)
                 if m_step:
                     step["step"] = int(m_step.group(1))
+                    i += 1
                     continue
                 m_field = re.match(
                     r"^\s+(why|action|verification|resources):\s*(.*)", line
@@ -116,7 +126,24 @@ def _parse_steps(body: str) -> list[dict]:
                 if m_field:
                     key = m_field.group(1)
                     value = m_field.group(2).strip().strip('"').strip("'")
-                    step[key] = value
+                    if key == "resources" and value == "":
+                        # Block-list format: collect indented `- token` lines
+                        tokens: list[str] = []
+                        j = i + 1
+                        while j < len(lines):
+                            m_item = re.match(r"^\s+-\s+(\S+)", lines[j])
+                            if m_item:
+                                tokens.append(m_item.group(1))
+                                j += 1
+                            else:
+                                break
+                        step[key] = ", ".join(tokens)
+                        i = j
+                    else:
+                        step[key] = value
+                        i += 1
+                    continue
+                i += 1
             if "step" in step:
                 steps.append(step)
 
@@ -243,8 +270,18 @@ def _check_calibration_hard_violations(
 ) -> list[_findings.Finding]:
     """Check: path captures must subset mutates: AND must not intersect never-touches:.
 
+    For each captured path (from tier.classify):
+    - If path is in never-touches → calibration-hard-violation (never-touches collision).
+    - Else if path is NOT covered by any mutates prefix → calibration-hard-violation
+      (mutates-subset violation: path is not authorized by the §8.1 contract).
+    - Else → no finding.
+
     Skip silently if no path captures exist in a step (non-applicable, not a free pass
     at the spec level — each step is evaluated independently).
+
+    Note: if §8.1 is entirely absent, mutates=[] so every captured host path will fire
+    the mutates-subset branch.  Tier 1 also surfaces missing-receiver-calibration
+    separately; these two signals are complementary.
     """
     results: list[_findings.Finding] = []
     for step in steps:
@@ -254,26 +291,50 @@ def _check_calibration_hard_violations(
             continue
 
         _tier_name, reasons, _na = _tier.classify(action)
-        captured_paths = _extract_all_captured_paths_from_reasons(reasons)
-
-        # Also gather paths from inferred resources (by resource identifier)
-        inferred_resources = _resources.extract_resources_from_action(action)
-        # Resources are ports etc. — they don't map to filesystem paths for this check;
-        # only path captures from tier.classify matter here.
+        all_captured = _extract_all_captured_paths_from_reasons(reasons)
+        host_captured = _extract_host_paths_from_reasons(reasons)
 
         # Skip if no path captures at all (non-applicable)
-        if not captured_paths:
+        if not all_captured:
             continue
 
-        for path in captured_paths:
-            # Must subset mutates: — but we only flag paths NOT covered by mutates
-            # AND also flag paths that are in never-touches.
-            in_never_touches = _path_covered_by(path, never_touches)
-            if in_never_touches:
+        # never-touches applies to ALL captured paths (any tier): if a path the
+        # action touches is in the never-touches list, that is always a violation.
+        for path in all_captured:
+            if _path_covered_by(path, never_touches):
                 msg = f"Step {step_n}: path {path!r} is in §8.1 never-touches:."
                 if len(msg) > _findings.MAX_MESSAGE_LEN:
                     msg = msg[: _findings.MAX_MESSAGE_LEN - 3] + "..."
                 fix = f"Remove {path} from action or update never-touches: contract."
+                if len(fix) > _findings.MAX_FIX_LEN:
+                    fix = fix[: _findings.MAX_FIX_LEN - 3] + "..."
+                results.append(
+                    _findings.Finding(
+                        tier=2,
+                        kind="calibration-hard-violation",
+                        severity="block",
+                        location=_findings.FindingLocation(
+                            scope="step", step=step_n, ref="action"
+                        ),
+                        message=msg,
+                        suggested_fix=fix,
+                    )
+                )
+
+        # mutates-subset applies to host-tier paths only: host paths must be
+        # authorized by a mutates: prefix.  Non-host paths are not tracked in
+        # mutates: so they are excluded from this check.
+        for path in host_captured:
+            if _path_covered_by(path, never_touches):
+                # Already flagged by the never-touches branch above — skip.
+                continue
+            if not _path_covered_by(path, mutates):
+                msg = (
+                    f"Step {step_n}: path {path!r} is not covered by any §8.1 mutates: prefix."
+                )
+                if len(msg) > _findings.MAX_MESSAGE_LEN:
+                    msg = msg[: _findings.MAX_MESSAGE_LEN - 3] + "..."
+                fix = f"Add {path} (or its parent directory) to §8.1 mutates:."
                 if len(fix) > _findings.MAX_FIX_LEN:
                     fix = fix[: _findings.MAX_FIX_LEN - 3] + "..."
                 results.append(
@@ -298,6 +359,12 @@ def _check_decision_without_adr(
     """Check: if §2 has a 'decision:' line, spec must have adr-ref: or preview_adrs.
 
     Deterministic rule — no semantic matching. Pure syntactic.
+
+    Cardinality: exactly ONE finding per spec, regardless of how many 'decision:'
+    markers appear in §2.  If §2 has 3 decision: lines and preview_adrs is empty
+    with no adr-ref:, one finding is emitted (covering all markers in aggregate).
+    Any non-empty preview_adrs satisfies the rule for all markers.  This matches
+    the deterministic-rule intent from the v0.3 Copilot review.
     """
     # Find §2 First Principles section
     s2_match = re.search(r"^## 2\. First Principles\s*$", body, re.MULTILINE)
@@ -345,7 +412,7 @@ def _check_decision_without_adr(
 def classify(
     spec_path: pathlib.Path,
     *,
-    preview_adrs: Optional[list[str]] = None,
+    preview_adrs: list[str] | None = None,
 ) -> list[_findings.Finding]:
     """Tier 2 default-on coverage gate. Returns Finding list (possibly empty).
 

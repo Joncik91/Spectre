@@ -160,3 +160,38 @@ def test_classify_signature_accepts_none_preview_adrs():
     # Must not raise; result must be a list
     result = coverage_gate.classify(FIXTURES / "good_minimal.spec.md")
     assert isinstance(result, list)
+
+
+# ── 21. REGRESSION: missing §8.1 + host-tier action → calibration-hard-violation ─
+
+def test_missing_section_81_with_host_action_produces_calibration_hard_violation():
+    """No §8.1 → mutates=[] → every host path fires mutates-subset violation (CRITICAL #1+#2)."""
+    fs = coverage_gate.classify(FIXTURES / "missing_section_81_host_action.spec.md")
+    assert any(f.kind == "calibration-hard-violation" for f in fs)
+
+
+# ── 22. REGRESSION: path boundary — /etc prefix must NOT cover /etcabc ──────
+
+def test_path_covered_by_does_not_match_directory_sibling_with_shared_prefix():
+    """Prefix /etc must NOT cover path /etcabc/file — directory boundary required (IMPORTANT #1)."""
+    assert not coverage_gate._path_covered_by("/etcabc/file", ["/etc"])
+
+
+# ── 23. REGRESSION: block-list resources: format parses without undeclared finding ─
+
+def test_undeclared_resource_does_not_fire_for_block_list_resources_format():
+    """Block-list `resources:\\n  - res-port-X` must parse equivalently to inline (IMPORTANT #2)."""
+    fs = coverage_gate.classify(FIXTURES / "block_list_resources.spec.md")
+    assert not any(f.kind == "undeclared-resource" for f in fs)
+
+
+# ── 24. REGRESSION: multiple decision markers → exactly one finding ──────────
+
+def test_decision_without_adr_returns_one_finding_per_spec_not_per_marker():
+    """Two decision: markers with no ADR ref must produce exactly one finding (IMPORTANT #3)."""
+    fs = coverage_gate.classify(
+        FIXTURES / "two_decision_markers.spec.md",
+        preview_adrs=[],
+    )
+    count = sum(1 for f in fs if f.kind == "decision-without-adr")
+    assert count == 1
