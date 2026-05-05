@@ -20,20 +20,33 @@ Triggered when the user types `/implement` (run next step) or `/implement check`
 
 ## Protocol
 
+### Step 0.5 — Track selection
+
+`/implement` accepts an optional `<track>` argument. `/implement` (no arg) targets the `default` track. `/implement <track>` targets the named track; if the track does not yet exist in the v2 scratchpad's `tracks:` map, it is created with `track_default()` shape on first save.
+
+Read the active spec from the **per-track** scratchpad: `state/scratchpad.json["tracks"][<track>]["active_spec"]`. If absent for that track, halt:
+
+```
+ERROR: track <name> has no active spec. Run /vision <track> first.
+```
+
+For backward compat: a v1 scratchpad is auto-migrated to v2 by the SessionStart hydrator. Plain `/implement` on the migrated `default` track works without further changes.
+
 ### Step 1 — Read context
 
 ```bash
 cat specs/.active   # → relative path to active spec
-cat state/scratchpad.json   # → step, exit_code, failed_hypotheses
+cat state/scratchpad.json   # → step, exit_code, failed_hypotheses (look under tracks.<track>)
 ```
 
 If `.active` is missing or stale → halt: `ERROR: no active spec. Run /vision first.`
 
 Parse the active spec's `## 6. Steps` YAML block. Identify:
 - `total_steps` = highest `step:` number in the YAML
-- `current_step` = `scratchpad.step`
+- `current_step` = `scratchpad.tracks.<track>.step`
 - `current_action` = the `action:` value at that step
 - `current_verification` = the `verification:` value at that step
+- `current_resources` = the optional `resources:` list at that step (default `[]`)
 - `prev_verification` = the `verification:` from step `current_step - 1` (if any)
 
 **Terminal state check:** if `current_step > total_steps`, halt:
@@ -101,9 +114,39 @@ Reasoning: <one-line first-principles "why this halts — what state changes irr
 Proceed? (yes / halt / skip)
 ```
 
-- `yes` → continue to Step 3.7 then Step 4 (execute).
+- `yes` → continue to Step 3.6 then 3.7 then Step 4 (execute).
 - `halt` → stop. No scratchpad change.
 - `skip` → advance `step` by 1 (no execution, no verification). Use only when the step was already done out-of-band; rare.
+
+### Step 3.6 — Resource lock acquire
+
+If `current_resources` is non-empty, acquire each Resource via the supervisor before executing. Run:
+
+```bash
+python3 - <<'PY'
+import sys
+sys.path.insert(0, ".")
+from pathlib import Path
+from bin import track
+track.ensure_supervisor_running(Path("."))
+for rid in [<list from current_resources>]:
+    resp = track.acquire(Path("."), track_name="<current track>", resource_id=rid)
+    if not resp["granted"]:
+        print(f"QUEUED: {rid} (position {resp['queued_position']})")
+        sys.exit(1)
+    print(f"ACQUIRED: {rid}")
+PY
+```
+
+If any Resource is queued (not granted) → halt with:
+
+```
+RESOURCE QUEUED Step <N>: <track> waiting on <resource_id>
+Position: <queued_position>
+Action: another track holds this. Wait, then re-run /implement <track>.
+```
+
+The supervisor will grant the lock when the holding track releases. The track must re-invoke `/implement <track>` — the supervisor does NOT auto-resume. Resume is the human's call.
 
 ### Step 3.7 — Reasoning-in-Public WHY emit
 
@@ -225,6 +268,23 @@ After advancing `step`, check if a drift audit is due:
   5. If clean (no drift) → silently update `last_drift_check_step` to `new_step` and proceed.
 
 - If less than 5 steps since last check → no audit, no scratchpad write to `last_drift_check_step`.
+
+### Step 6.7 — Resource lock release
+
+If `current_resources` is non-empty AND verification passed (Path A) OR the step halted permanently (no further retries possible), release every Resource the step acquired:
+
+```bash
+python3 - <<'PY'
+import sys
+sys.path.insert(0, ".")
+from pathlib import Path
+from bin import track
+for rid in [<list from current_resources>]:
+    track.release(Path("."), track_name="<current track>", resource_id=rid)
+PY
+```
+
+Do NOT release on retry-mid-flight (Path B retry pending) — the track still owns the lock. Only release on terminal step state (advance OR halt).
 
 ### Step 7 — Failure logging
 
