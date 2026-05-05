@@ -195,6 +195,16 @@ def test_validate_no_severity_downgrade_returns_none_when_warn_raised_to_block()
     assert result is None
 
 
+def test_validate_no_severity_downgrade_raises_on_unknown_default():
+    with pytest.raises(ValueError, match="unknown severity"):
+        eval_metadata.validate_no_severity_downgrade("critical", "block")
+
+
+def test_validate_no_severity_downgrade_raises_on_unknown_override():
+    with pytest.raises(ValueError, match="unknown severity"):
+        eval_metadata.validate_no_severity_downgrade("block", "critical")
+
+
 # ---------------------------------------------------------------------------
 # load_severity_overrides_from_config
 # ---------------------------------------------------------------------------
@@ -240,5 +250,18 @@ def test_load_severity_overrides_returns_empty_dict_when_table_absent():
     try:
         result = eval_metadata.load_severity_overrides_from_config(path)
         assert result == {}
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def test_load_severity_overrides_raises_on_unknown_kind():
+    with tempfile.NamedTemporaryFile(suffix=".toml", mode="w", delete=False) as f:
+        # Typo in finding kind must raise, not silently pass through
+        f.write('[severity_overrides]\nbogus-kind = "block"\n')
+        f.flush()
+        path = pathlib.Path(f.name)
+    try:
+        with pytest.raises(ValueError, match="unknown finding kind"):
+            eval_metadata.load_severity_overrides_from_config(path)
     finally:
         path.unlink(missing_ok=True)

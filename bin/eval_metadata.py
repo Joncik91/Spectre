@@ -72,6 +72,10 @@ def validate_no_severity_downgrade(default_severity: str, override_severity: str
     Strictness can only be raised, never lowered (per Decision 8).
     Returns None on success.
     """
+    if default_severity not in _SEVERITY_ORDER:
+        raise ValueError(f"unknown severity: {default_severity!r}")
+    if override_severity not in _SEVERITY_ORDER:
+        raise ValueError(f"unknown severity: {override_severity!r}")
     default_rank = _SEVERITY_ORDER[default_severity]
     override_rank = _SEVERITY_ORDER[override_severity]
     if override_rank < default_rank:
@@ -103,9 +107,10 @@ def load_severity_overrides_from_config(config_path: pathlib.Path) -> dict[str, 
 
     result: dict[str, str] = {}
     for kind, override_severity in overrides_table.items():
-        default_severity = DEFAULT_SEVERITIES.get(kind)
-        if default_severity is not None:
-            validate_no_severity_downgrade(default_severity, override_severity)
+        if kind not in DEFAULT_SEVERITIES:
+            raise ValueError(f"unknown finding kind in severity_overrides: {kind!r}")
+        default_severity = DEFAULT_SEVERITIES[kind]
+        validate_no_severity_downgrade(default_severity, override_severity)
         result[kind] = override_severity
 
     return result
