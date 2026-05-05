@@ -157,4 +157,4 @@ Issues and PRs welcome. This README follows the [Standard-Readme](https://github
 
 ## License
 
-Unlicensed — private repo, all rights reserved by the maintainer.
+[MIT](./LICENSE) © Joncik91

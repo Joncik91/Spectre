@@ -6,7 +6,7 @@
     "name": "Joncik91"
   },
   "keywords": ["spec-driven", "hooks", "skills", "context-engineering"],
-  "license": "UNLICENSED",
+  "license": "MIT",
   "hooks": {
     "SessionStart": [
       { "type": "command", "command": "python3 bin/hydrate.py" }
