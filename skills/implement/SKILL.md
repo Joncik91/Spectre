@@ -133,6 +133,41 @@ Immediately after the action returns, run `current_verification` via Bash:
 VERIFYING Step <N>: <verification>
 ```
 
+### Step 5.5 — State Auditor (informational)
+
+After verification passes but before the step advances, run the State Auditor for structural sanity. The auditor is **informational on first pass — it does NOT block step advance**. Its job is to surface structural drift across many steps; the spec's own verification is the gate.
+
+```bash
+python3 - <<'PY'
+import json, sys
+sys.path.insert(0, ".")
+from bin import auditor
+
+with open("state/scratchpad.json") as f:
+    sp = json.load(f)
+paths = sp.get("paths_touched", [])
+# If the active spec's current step has a `properties:` YAML block, populate
+# `properties` with that list of dicts before invoking. Otherwise leave None.
+properties = None
+results = auditor.audit_action("<current_action>", paths_touched=paths, properties=properties)
+out = {
+    "kinds": [r.kind for r in results],
+    "passed": all(r.passed for r in results),
+    "failures": [{"kind": r.kind, "message": r.message} for r in results if not r.passed],
+}
+sp["last_audit_kinds"] = out["kinds"]
+sp["last_audit_passed"] = out["passed"]
+sp["last_audit_failures"] = out["failures"]
+with open("state/scratchpad.json", "w") as f:
+    json.dump(sp, f, indent=2)
+print(f"AUDIT: {len(results)} checks, passed={out['passed']}")
+for f in out["failures"]:
+    print(f"  FAIL: {f['kind']} — {f['message']}")
+PY
+```
+
+If audits fail repeatedly across multiple steps in the same spec, halt and tell the user the spec needs `properties:` declarations or the actions are creating malformed artifacts. Otherwise, the failures sit in scratchpad and surface in the next compact's `additionalContext` for human review.
+
 ### Step 6 — Branch on verification result
 
 **Path A — verification exits 0:**
