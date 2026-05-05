@@ -62,34 +62,48 @@ If the user invoked `/implement check`:
 - Do NOT advance `step`. Do NOT modify scratchpad except for `last_command`/`exit_code`.
 - Halt.
 
-### Step 3.5 — Risk-Gate (Yellow tier)
+### Step 3.5 — Persistence-Tier classifier
 
-Before executing `current_action`, scan it case-insensitively for these destructive verb patterns:
+Classify `current_action` by tier before executing. Run:
 
-- `\brm\s+(-[rRfF]+|--recursive|--force)` — recursive/forced delete
-- `\bsystemctl\s+(start|stop|restart|reload|enable|disable|mask)\b` — service state change
-- `\bsudo\b` — privilege escalation
-- `\bdrop\s+(table|database|schema)\b` — schema destruction
-- `\b(migrate|migration)\b` — schema migration
-- `\bgit\s+push\s+(-f|--force)\b` — history rewrite on remote
-- `\bdeploy\b` — production push
-- `\bchmod\s+777\b` — permission widening
-- `\bdd\s+if=` — raw disk write
-- `\b(reboot|shutdown|halt|poweroff)\b` — host state change
-
-On match, halt with:
+```bash
+python3 - <<'PY'
+import sys
+sys.path.insert(0, ".")
+from bin import tier
+t, reasons, na = tier.classify("""<current_action>""")
+halt = tier.should_halt(t, na)
+print(f"TIER: {t}")
+for r in reasons:
+    print(f"  reason: {r}")
+if na:
+    print(f"NEVER_AUTONOMOUS: {na}")
+print(f"HALT: {halt}")
+PY
 ```
-RISK GATE Step <N>: <action>
-Matched verb: <which pattern>
-Reasoning: <one-line first-principles "why this is destructive — what state changes irreversibly">
+
+Substitute the literal action text for `<current_action>`. The classifier is in `bin/tier.py` and is the **single source of truth** for halt-vs-execute. Never substitute your own judgment about whether something is "safe enough" — if the classifier says halt, halt.
+
+Interpret the output:
+
+- `TIER: silent` and no `NEVER_AUTONOMOUS:` line → continue to Step 3.7 silently.
+- `TIER: repo` and no `NEVER_AUTONOMOUS:` line → continue to Step 3.7 silently.
+- `TIER: host`, `TIER: network`, OR any `NEVER_AUTONOMOUS:` line → halt with:
+
+```
+TIER GATE Step <N>: <action>
+Tier: <silent|repo|host|network>
+Reasons:
+  - <reason 1>
+  - <reason 2>
+Never autonomous: <label if any, else "n/a">
+Reasoning: <one-line first-principles "why this halts — what state changes irreversibly or beyond the repo">
 Proceed? (yes / halt / skip)
 ```
 
 - `yes` → continue to Step 3.7 then Step 4 (execute).
 - `halt` → stop. No scratchpad change.
 - `skip` → advance `step` by 1 (no execution, no verification). Use only when the step was already done out-of-band; rare.
-
-If no match → continue silently to Step 3.7.
 
 ### Step 3.7 — Reasoning-in-Public WHY emit
 
