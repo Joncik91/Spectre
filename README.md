@@ -1,73 +1,83 @@
-# SDL Vision Engine
+# spectre
 
-A Claude Code plugin that turns spec-driven development into a deterministic state machine.
+> SDL Vision Engine — a Claude Code plugin for deterministic spec hydration and post-Bash Delta+Anchor injection.
 
-It hijacks two lifecycle events:
+## Table of Contents
 
-- **SessionStart** → `bin/hydrate.py` reads `specs/.active` and re-injects the one currently-active spec into Claude's context. No mtime guessing, no implicit selection — an explicit pointer is the instruction register.
-- **PostToolUse(Bash)** → `bin/compact.py` reads the Bash tool result, computes a filesystem-delta heuristic, updates `state/scratchpad.json`, and emits a compact `Delta + Anchor` block back as `additionalContext`. Raw terminal scroll-back never re-enters the conversation.
+- [Background](#background)
+- [Install](#install)
+- [Usage](#usage)
+- [API](#api)
+- [Maintainers](#maintainers)
+- [Contributing](#contributing)
+- [License](#license)
 
-The `/vision` skill turns a vague vision into a `.spec.md`, atomically flips `specs/.active`, and resets the scratchpad. One spec at a time, ever.
+## Background
 
-**Requires:** Python 3.11+ (PEP 604 `str | None`, PEP 585 `dict[str, Any]`). Stdlib only — no third-party imports in production code.
+Default Claude Code auto-memory drifts during long sessions: spec-level intent gets buried under terminal scroll-back, and "what did I just change on disk" answers require re-reading logs that have already aged out of context.
+
+Spectre overrides this with a deterministic state machine:
+
+- `SessionStart` → `bin/hydrate.py` reads `specs/.active` (an explicit instruction-pointer file) and re-injects the one currently-active spec. No mtime guessing.
+- `PostToolUse(Bash)` → `bin/compact.py` reads the Bash result, computes a filesystem-delta heuristic, updates `state/scratchpad.json`, emits a `Delta + Anchor` block as `additionalContext`. Raw logs never re-enter context.
+- `/vision` skill → distills a vague vision into a `.spec.md`, atomically flips `.active`, resets the scratchpad. One spec at a time.
+
+Five named failure modes — broad matcher, hydrator bloat, recursive failure, torn writes, log inflation — each have a code-level mitigation and a test.
 
 ## Install
 
-Symlink or copy the repo into your Claude Code plugins directory. The manifest at `.claude-plugin/plugin.json` registers the two hooks and the `/vision` skill.
+Requires Python 3.11+ (PEP 604 / PEP 585 syntax). Stdlib only — no third-party imports in production code.
 
 ```bash
-ln -s /path/to/Spectre ~/.claude/plugins/sdl-vision-engine
+git clone https://github.com/Joncik91/Spectre.git
+ln -s "$PWD/Spectre" ~/.claude/plugins/sdl-vision-engine
 ```
 
-Restart your Claude Code session. SessionStart will fire `hydrate.py`; if no `.active` exists yet, you'll see `SIGNAL: No active spec. Run /vision to begin.`
+Restart Claude Code. SessionStart fires `hydrate.py`; with no `.active` yet you'll see `SIGNAL: No active spec. Run /vision to begin.`
 
-## Use
+## Usage
 
-1. **`/vision <free-form description>`** — Claude distills the request into a first-principles spec under `specs/<slug>.spec.md`, then atomically points `.active` at it and zeroes the scratchpad.
-2. **Work normally.** Every Bash call you (or Claude) make produces a tight `Delta + Anchor` summary in context — never the full log.
-3. **Across sessions** — re-launch Claude Code. The hydrator re-injects the same active spec; you resume mid-mission with the scratchpad's `step`, `last_command`, `exit_code`, and accumulated `failed_hypotheses` intact.
+```bash
+# In a Claude Code session:
+/vision Build a real-time order sync between Shopify and our warehouse
 
-To switch missions, run `/vision` again with a new description; the previous spec stays on disk but `.active` flips to the new one.
-
-## Layout
-
-```
-.claude-plugin/plugin.json   # manifest (hooks + skill)
-bin/hydrate.py               # SessionStart: emit active spec body
-bin/compact.py               # PostToolUse(Bash): emit additionalContext
-bin/_scratchpad.py           # atomic JSON helpers (stdlib only)
-skills/vision.md             # /vision <text> slash skill
-specs/template.spec.md       # canonical spec structure
-specs/.active                # one-line pointer (gitignored)
-specs/<slug>.spec.md         # generated specs (gitignored)
-state/scratchpad.json        # physical state + failed_hypotheses (gitignored)
-docs/superpowers/specs/      # design doc
-docs/superpowers/plans/      # implementation plan
-tests/                       # 28 tests (pytest)
+# Then work normally — every Bash call produces a tight Delta+Anchor in context.
+# Across sessions, the hydrator re-injects the same active spec; you resume mid-mission.
 ```
 
-## What gets injected
+To switch missions, run `/vision` again. The previous spec stays on disk; `.active` flips.
 
-**SessionStart hydration** (`hydrate.py` stdout):
+Run the test suite:
 
-```
---- ACTIVE SPEC: specs/order-sync.spec.md ---
-<full spec body>
---- END ACTIVE SPEC ---
-STATE: step=3 exit_code=0 last_command='pytest tests/'
+```bash
+pytest tests/ -v   # 28 tests, ~0.5s
 ```
 
-If `.active` is missing or stale, the hydrator emits a `SIGNAL:` or `ERROR:` line plus a list of available specs — never silently picks an alternate.
+## API
 
-**Per-Bash `additionalContext`** (`compact.py` stdout, capped under ~500 chars for typical commands):
+### Hooks (registered by `.claude-plugin/plugin.json`)
 
-```json
-{"additionalContext": "COMMAND_RESULT: 1\nSTATE_DELTA: pytest\nANCHOR: Active Spec is 'specs/order-sync.spec.md'. Step 3.\nNEXT: scratchpad.json updated. 2 negative-knowledge entries."}
+| Event | Command | Output |
+|---|---|---|
+| `SessionStart` | `python3 bin/hydrate.py` | stdout: active spec body wrapped in `--- ACTIVE SPEC ---` markers, plus `STATE:` line. Or `SIGNAL:` / `ERROR:` fallback. |
+| `PostToolUse` (matcher: `"Bash"`) | `python3 bin/compact.py` | stdout: JSON `{"additionalContext": "..."}`. |
+
+### Skill
+
+`/vision <free-form description>` — distill, write `specs/<slug>.spec.md`, atomically flip `specs/.active`, reset `state/scratchpad.json`. Defined in `skills/vision.md`.
+
+### `additionalContext` payload (per Bash call)
+
+```text
+COMMAND_RESULT: <exit_code>
+STATE_DELTA: <heuristic delta>
+ANCHOR: Active Spec is '<path>'. Step <N>.
+NEXT: scratchpad.json updated. <count> negative-knowledge entries.
 ```
 
-Non-zero exit codes are never softened. The first matching error line (`^(Error|error|fatal|E:|FAIL|Traceback)`) gets appended verbatim to `failed_hypotheses[]` so the agent accumulates negative knowledge over the session — what was tried, what broke, what the actual error said.
+Capped under ~500 chars for typical commands. Non-zero exits append to `failed_hypotheses[]` with the first matching error line (`^(Error|error|fatal|E:|FAIL|Traceback)`) — never softened.
 
-## Scratchpad schema
+### Scratchpad schema (`state/scratchpad.json`)
 
 ```json
 {
@@ -83,26 +93,29 @@ Non-zero exit codes are never softened. The first matching error line (`^(Error|
 }
 ```
 
-`step` is user-driven (set by `/vision`, advanced by you explicitly) — `compact.py` never increments it. This preserves determinism: the agent reports physical state, the human owns the instruction pointer.
+`step` is user-driven — `compact.py` reports state but never advances it.
 
-## Failure modes (mitigated by design)
+### Layout
 
-| Mode | Mitigation |
-|---|---|
-| Broad `PostToolUse` matcher catches every tool | Manifest matcher is the literal string `"Bash"`; `tests/test_manifest.py` asserts equality. |
-| Hydrator bloat exceeds context window | Single-active-spec model. `ls`-fallback when missing or stale, never silent substitution. |
-| Recursive failure (plugin breaks itself) | Both scripts have top-level `try/except`; stdlib-only; atomic writes via `tempfile.mkstemp` + `os.replace`. |
-| Torn `.active` write under concurrency | The `/vision` skill writes to `.active.tmp` then renames — POSIX-atomic. |
-| Compactor inflates context with logs | Logs go to scratchpad; only the heuristic delta + anchor hit `additionalContext`. |
-
-## Develop
-
-```bash
-pytest tests/ -v        # 28 tests, ~0.45s
+```text
+.claude-plugin/plugin.json   manifest (hooks + skill)
+bin/hydrate.py               SessionStart hook
+bin/compact.py               PostToolUse(Bash) hook
+bin/_scratchpad.py           atomic JSON helpers
+skills/vision.md             /vision slash skill
+specs/template.spec.md       canonical spec structure
+tests/                       28 pytest tests
+docs/superpowers/            design + plan
 ```
 
-Test layout: `test_scratchpad.py` (atomic-write semantics + failure-branch coverage), `test_hydrate.py` (three branches: active / missing / stale), `test_compact.py` (delta heuristics + intellectual-honesty + scratchpad persistence + 500-char cap), `test_manifest.py` (Bash-only matcher locked), `test_e2e.py` (full hydrate → spec → compact-pass → compact-fail cycle).
+## Maintainers
 
-## Status
+[@Joncik91](https://github.com/Joncik91)
 
-v1.0.0 — all 28 tests green. The `/vision` skill is model-driven and not exercised by automated tests; manual smoke-test it once before relying on it in long missions. Manifest schema verified against the official Claude Code plugin docs (string matcher, `name` field, no `matcher` wrapper on `SessionStart`).
+## Contributing
+
+Issues and PRs welcome. This README follows the [Standard-Readme](https://github.com/RichardLitt/standard-readme) spec.
+
+## License
+
+Unlicensed — private repo, all rights reserved by the maintainer.
