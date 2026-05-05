@@ -23,6 +23,14 @@ DEFAULT = {
     "last_audit_failures": [],
 }
 
+DEFAULT_V2 = {
+    "version": 2,
+    "active_mission": None,
+    "tracks": {},
+    "decisions_index": "decisions/",
+    "graph_snapshot": "specs/.graph.md",
+}
+
 
 def load(path: Path) -> dict[str, Any]:
     path = Path(path)
@@ -56,4 +64,36 @@ def append_failed_hypothesis(path: Path, *, step: int, command: str, error: str)
         "error": error,
         "ts": datetime.now(timezone.utc).isoformat(),
     })
+    atomic_write(path, data)
+
+
+def track_default() -> dict[str, Any]:
+    return {
+        "active_spec": None,
+        "step": 1,
+        "last_command": None,
+        "exit_code": None,
+        "delta": None,
+        "timestamp": None,
+        "failed_hypotheses": [],
+        "paths_touched": [],
+        "last_drift_check_step": 0,
+        "last_audit_kinds": [],
+        "last_audit_passed": None,
+        "last_audit_failures": [],
+    }
+
+
+def load_track(path: Path, track: str) -> dict[str, Any]:
+    data = load(path)
+    tracks = data.get("tracks", {})
+    return tracks.get(track, track_default())
+
+
+def save_track(path: Path, track: str, track_data: dict[str, Any]) -> None:
+    data = load(path)
+    if data.get("version") != 2:
+        # First save into a v1 scratchpad → expand to v2 in place
+        data = dict(DEFAULT_V2)
+    data.setdefault("tracks", {})[track] = track_data
     atomic_write(path, data)
