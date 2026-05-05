@@ -304,3 +304,30 @@ def test_mark_stale_unknown_node_is_noop():
     nodes = _build_sample_graph()
     graph.mark_stale(nodes, node_id="does-not-exist")
     assert graph.get_node(nodes, "inv-1").status == "active"
+
+
+def test_resource_node_round_trips_through_serialize_parse():
+    """Resource nodes must survive a serialize → parse cycle."""
+    n = graph.Node(id="res-port-8080", type="resource", title="TCP port 8080")
+    text = graph.serialize_node(n)
+    parsed = graph.parse_manifest(text)
+    assert parsed[0].type == "resource"
+
+
+def test_blocks_edge_round_trips():
+    """`blocks` edges (Resource → Implementation) must serialize and re-parse."""
+    n = graph.Node(id="res-port-8080", type="resource", title="TCP port 8080")
+    n.add_edge(target="impl-foo", edge_type="blocks")
+    text = graph.serialize_node(n)
+    parsed = graph.parse_manifest(text)
+    assert parsed[0].edges == [{"target": "impl-foo", "type": "blocks"}]
+
+
+def test_mark_stale_cascade_does_not_traverse_blocks_edge():
+    """blocks is a resource-lock edge, not a state-dependency edge — must NOT cascade stale."""
+    res = graph.Node(id="res-port-8080", type="resource", title="port 8080")
+    res.add_edge(target="impl-foo", edge_type="blocks")
+    impl = graph.Node(id="impl-foo", type="implementation", title="foo")
+    nodes = [res, impl]
+    graph.mark_stale_cascade(nodes, root_id="res-port-8080")
+    assert graph.get_node(nodes, "impl-foo").status == "active"
