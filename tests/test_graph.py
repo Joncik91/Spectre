@@ -79,3 +79,65 @@ def test_serialize_node_no_edges_omits_list():
     n = graph.Node(id="x", type="resource", title="port-8080")
     out = graph.serialize_node(n)
     assert "edges: []" in out
+
+
+def test_parse_manifest_empty_returns_empty_list():
+    assert graph.parse_manifest("") == []
+
+
+def test_parse_manifest_header_only_returns_empty():
+    assert graph.parse_manifest("# header only\n") == []
+
+
+def test_parse_manifest_single_node_no_edges():
+    text = (
+        "---\n"
+        "id: x-001\n"
+        "type: invariant\n"
+        "title: Single node\n"
+        "status: active\n"
+        "edges: []\n"
+        "---\n"
+    )
+    nodes = graph.parse_manifest(text)
+    assert len(nodes) == 1
+    assert nodes[0].id == "x-001"
+    assert nodes[0].edges == []
+
+
+def test_parse_manifest_two_nodes_with_edges():
+    text = (
+        "# Header text ignored\n"
+        "---\n"
+        "id: a\n"
+        "type: invariant\n"
+        "title: A\n"
+        "status: active\n"
+        "edges:\n"
+        "  - target: b\n"
+        "    type: constrains\n"
+        "---\n"
+        "---\n"
+        "id: b\n"
+        "type: implementation\n"
+        "title: B\n"
+        "status: stale\n"
+        "edges: []\n"
+        "---\n"
+    )
+    nodes = graph.parse_manifest(text)
+    assert [n.id for n in nodes] == ["a", "b"]
+    assert nodes[0].edges == [{"target": "b", "type": "constrains"}]
+    assert nodes[1].status == "stale"
+
+
+def test_parse_manifest_round_trip():
+    n1 = graph.Node(id="a", type="invariant", title="A")
+    n1.add_edge(target="b", edge_type="constrains")
+    n2 = graph.Node(id="b", type="implementation", title="B", status="stale")
+    text = graph.serialize_node(n1) + graph.serialize_node(n2)
+    parsed = graph.parse_manifest(text)
+    assert len(parsed) == 2
+    assert parsed[0].id == n1.id
+    assert parsed[0].edges == n1.edges
+    assert parsed[1].status == n2.status
