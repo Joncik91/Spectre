@@ -1,37 +1,97 @@
 ---
-description: Transforms a vague vision into a First-Principles spec and locks it as the active spec.
+description: Unified inception — distill a vague vision into a First-Principles spec with action/verification steps, then lock it as the active spec.
 disable-model-invocation: false
 ---
 
 # Skill: /vision <user_vision>
 
-When invoked, follow these steps **exactly** — do not improvise structure.
+Triggered when the user types `/vision` followed by free-form text describing what they want built. Follow this protocol **exactly** — it is the only legitimate path from human intent to locked spec.
 
-## Inputs
+## Hard rules (read every invocation)
 
-`<user_vision>`: free-form text describing what the user wants built.
+- **One spec at a time.** Never write two `.active` files.
+- **Step number is user-driven.** This skill resets `step` to 1; nothing else here writes to it.
+- **No hedging, no "best practices," no industry preambles.** First-principles content only.
+- **Never silently lock a spec.** If the user has not confirmed the draft, do not write the file or flip `.active`.
+- **Refuse physically impossible visions.** Run a Feasibility Audit before drafting (step 2 below). If the request violates known physics, math, or logic, halt and explain — do not produce a spec.
 
-## Procedure
+## Protocol
 
-1. **Distill.** Read `<user_vision>` and produce these five fields:
-   - **Title** (≤8 words)
-   - **Hard Problem** (one paragraph: the non-obvious thing that makes this hard — no analogies)
-   - **First Principles** (3-7 bullets: physical/logical constraints)
-   - **Algorithm Audit** (Delete / Simplify / Accelerate)
-   - **Steps** (numbered, 5-15 items, each one binary-verifiable)
-   - **Success Criteria** (3-6 binary pass/fail checks)
+### Step 1 — Receive
 
-2. **Slugify.** Lowercase the title, replace non-alphanumerics with `-`, collapse repeats, strip leading/trailing `-`. Example: "Real-Time Order Sync" → `real-time-order-sync`. Filename: `specs/<slug>.spec.md`.
+The user has typed `/vision <free-form text>`. Treat that text as the **Spark**, not the spec.
 
-3. **Write spec.** Use `specs/template.spec.md` as the structural skeleton. Fill in the five fields. Set the **Generated** field to today's ISO date and **Slug** to the computed slug.
+### Step 2 — Feasibility Audit (silent, internal)
 
-4. **Atomically flip `.active`.** Write the relative path (e.g. `specs/<slug>.spec.md`) to `specs/.active.tmp`, then rename to `specs/.active`. Use a single Bash call:
+Before drafting anything, evaluate:
+- Is the request physically possible on the user's hardware/environment?
+- Does it require breaking cryptography, exceeding network speed-of-light, time-traveling, or otherwise violating known constraints?
+- Is the scope a single core hard problem, or is it 3+ unrelated subsystems?
+
+If infeasible: halt and tell the user what's wrong. Do not draft a spec.
+If multi-subsystem: tell the user the spec must be decomposed first; ask which sub-problem they want to lock in this round.
+
+### Step 3 — Draft + Refinement Questions (multi-turn)
+
+Output a **First-Principles Summary**:
+- **Title** (≤8 words)
+- **Hard Problem** (one paragraph, no analogies)
+- **First Principles** (3-7 bullets — physical/logical constraints)
+- **Algorithm Audit** (Delete / Simplify / Accelerate)
+- **Speed-of-Light Limit** (one paragraph: the fastest version possible)
+- **Physics Guardrails** (system invariants to preserve)
+
+Then ask **2-3 Refinement Questions** about non-obvious edge cases. Examples of good questions:
+- Persistence model (across reboot? session-only? user-namespaced?)
+- Failure semantics (fail-closed vs fail-open?)
+- Privilege boundary (root? user? sudoless?)
+- Reversibility (idempotent? destructive?)
+
+**Wait for the user's answers.** Do not continue until they respond.
+
+### Step 4 — Draft Steps with action/verification pairs
+
+Once refinement is settled, draft the **Steps** section using the schema in `specs/template.spec.md`:
+
+```yaml
+- step: 1
+  action: "<exact shell command>"
+  verification: "<post-condition check command that exits 0 iff action succeeded>"
+```
+
+Rules for steps:
+- Each `action` is a single shell command (chained with `&&` if atomic).
+- Each `verification` is a separate command that proves the action's side effect. Examples:
+  - `action: ln -s /var/log/syslog /usr/local/bin/quick-log`
+    `verification: "[ -L /usr/local/bin/quick-log ] && [ -e /usr/local/bin/quick-log ]"`
+  - `action: pip install requests`
+    `verification: python3 -c 'import requests'`
+- 5-15 steps. If you need more, the spec is too big — decompose first.
+- No "soft" verifications (`echo done`, `true`). They must observably check the action's effect.
+
+### Step 5 — Confirm with the user
+
+Show the full draft (Hard Problem, First Principles, ..., Steps, Success Criteria). Ask:
+
+> "Lock this as the active spec? (yes / refine / cancel)"
+
+- `yes` → proceed to Step 6.
+- `refine` → adjust per their feedback, repeat Step 5.
+- `cancel` → halt, write nothing.
+
+### Step 6 — Slugify + Write + Lock
+
+1. Slugify the title: lowercase, replace non-alphanumerics with `-`, collapse repeats, strip leading/trailing `-`.
+2. Filename: `specs/<slug>.spec.md`.
+3. Set frontmatter `Generated:` to today's ISO date and `Slug:` to the computed slug.
+4. Write the spec file.
+5. Atomically flip `.active`:
 
    ```bash
    printf 'specs/<slug>.spec.md\n' > specs/.active.tmp && mv specs/.active.tmp specs/.active
    ```
 
-5. **Reset scratchpad.** Overwrite `state/scratchpad.json` with:
+6. Reset `state/scratchpad.json` to:
 
    ```json
    {
@@ -45,10 +105,13 @@ When invoked, follow these steps **exactly** — do not improvise structure.
    }
    ```
 
-6. **Confirm.** Print one line: `VISION LOCKED: specs/<slug>.spec.md (step 1)`.
+### Step 7 — Transition signal
 
-## Hard rules
+Print exactly:
 
-- One spec at a time. Never write two `.active` files.
-- Never edit `step` here beyond resetting to 1.
-- Never include hedging, "best practices," or industry-standard preambles in the spec body. Only first-principles content.
+```
+VISION LOCKED: specs/<slug>.spec.md (step 1)
+Architecture locked. Ready for /implement?
+```
+
+Do **not** auto-invoke `/implement`. The user types `/implement` when ready — this preserves the human's veto right between spec-lock and execution.

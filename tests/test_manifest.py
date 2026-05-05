@@ -23,8 +23,9 @@ def test_session_start_runs_hydrate():
     assert "hydrate.py" in cmd
 
 
-def test_skill_registered():
+def test_skills_registered():
     path = Path(__file__).resolve().parent.parent / ".claude-plugin" / "plugin.json"
     data = json.loads(path.read_text())
     paths = [s["path"] for s in data["skills"]]
     assert "skills/vision.md" in paths
+    assert "skills/implement.md" in paths

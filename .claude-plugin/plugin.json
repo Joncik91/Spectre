@@ -16,6 +16,7 @@
     ]
   },
   "skills": [
-    { "path": "skills/vision.md" }
+    { "path": "skills/vision.md" },
+    { "path": "skills/implement.md" }
   ]
 }
