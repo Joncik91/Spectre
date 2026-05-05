@@ -54,6 +54,16 @@ These three items came out of Plan C self-review. Each is worth fixing eventuall
 
 **Trigger to promote to plan:** if you also want external-holder detection for non-port Resources (DB pool exhaustion, API quota burned externally) — those have no cheap probe.
 
+## 5. Tier classifier misses bare `systemctl` / `journalctl` / `udevadm`
+
+**Scope:** the v0.2.2 `bin/tier.py` classifies actions by **path captures** plus the Never Autonomous verb list. A command like `systemctl daemon-reload` has no path, so it falls through to `silent`. Real failure observed during E2E (2026-05-05): Step 5 of the BTC poller spec was `systemctl daemon-reload` — a host-state mutation (re-reads all unit files, signals PID 1) — but classifier returned `silent` and skipped the user-confirm halt.
+
+**Fix shape:** add a verb-only host-tier rule to `bin/tier.py`. When the action's first token is one of `systemctl`, `journalctl`, `loginctl`, `udevadm`, `sysctl`, `mount`, `umount`, `swapon`, `swapoff`, `modprobe`, `rmmod`, `insmod`, `service`, `timedatectl`, `hostnamectl`, `localectl` — classify as host regardless of path captures. These are PID-1 / kernel-talkers that can't reach silent legitimately.
+
+**Why it's not (just) a plan:** ~5 LOC + 5 tests. But it's a **classifier accuracy bug**, not a feature — silent execution of host mutations is exactly the failure mode Plan C's tier gate exists to prevent. Worth a fast follow-up commit.
+
+**Trigger to promote to plan:** if the verb-only rule needs per-flag refinement (e.g. `systemctl status` is read-only and harmless — could stay silent — vs `systemctl restart` is host-mutating).
+
 ## What's NOT here
 
 These came up during review but are out of scope for any plausible Plan D:
