@@ -27,7 +27,15 @@ def _send(project_root: Path, req: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError(f"supervisor socket missing: {sock_path}")
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
-        s.connect(str(sock_path))
+        try:
+            s.connect(str(sock_path))
+        except ConnectionRefusedError:
+            # Stale socket from a SIGKILL'd or crashed supervisor.
+            # Clean it up so the next ensure_supervisor_running re-spawns.
+            sock_path.unlink(missing_ok=True)
+            pid_file = _pid_path(project_root)
+            pid_file.unlink(missing_ok=True)
+            raise RuntimeError(f"supervisor socket stale (connection refused): {sock_path}")
         s.sendall(json.dumps(req).encode("utf-8"))
         buf = s.recv(_RECV_BUFFER).decode("utf-8")
     finally:

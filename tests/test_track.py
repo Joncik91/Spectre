@@ -61,3 +61,28 @@ def test_ensure_supervisor_idempotent_when_running(running_supervisor):
     pid_first = track.ensure_supervisor_running(running_supervisor)
     pid_second = track.ensure_supervisor_running(running_supervisor)
     assert pid_first == pid_second
+
+
+def test_send_stale_socket_raises_runtime_error(tmp_path):
+    """If sock file exists but no supervisor listens, _send must raise RuntimeError + clean up."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    sock_path = state_dir / supervisor.SOCKET_NAME
+    pid_path = state_dir / supervisor.PID_FILE_NAME
+    # Create a sock file with no listener — connect will refuse
+    sock_path.touch()
+    pid_path.write_text("99999")
+    with pytest.raises(RuntimeError, match="stale"):
+        track._send(tmp_path, {"op": "status"})
+
+
+def test_send_stale_socket_cleans_up_files(tmp_path):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    sock_path = state_dir / supervisor.SOCKET_NAME
+    pid_path = state_dir / supervisor.PID_FILE_NAME
+    sock_path.touch()
+    pid_path.write_text("99999")
+    with pytest.raises(RuntimeError):
+        track._send(tmp_path, {"op": "status"})
+    assert not sock_path.exists()
