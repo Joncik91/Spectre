@@ -2,6 +2,24 @@
 
 All notable changes to the SDL Vision Engine plugin (Spectre).
 
+## v0.3.0 — 2026-05-05
+
+**Plan A — Pre-lock spec evaluator (CDLC Evaluate phase).**
+
+### Added
+- `bin/findings.py` — typed Finding dataclass with structured locations + dismissable flag + stable fingerprint
+- `bin/spec_ast.py` — Tier 1 deterministic spec-AST classifier (parse/structure/tautology only)
+- `bin/coverage_gate.py` — Tier 2 default-on action↔verification + resource-coverage + calibration cross-check
+- `bin/llm_judge.py` — Tier 3 DeepSeek v4 Pro adversarial reviewer (opt-in)
+- `bin/spec_evaluator.py` — review-bundle orchestrator with bundle persistence
+- `bin/eval_metadata.py` — `.eval.json` lock-metadata sidecar + no-downgrade enforcement
+- `specs/template.spec.md` — §8 Receiver Calibration (8.1 hard contract + 8.2 human notes)
+- `.spectre/reviewer.toml.example` — sample user config (committed for discoverability)
+
+### Changed
+- `skills/vision/SKILL.md` — §6.4 evaluator gate inserted between draft-to-disk (§6) and ADR generation (§6.5); §6.6 Resource inference now reads from validated bundle
+- `.claude-plugin/plugin.json` — version 1.0.2 → 1.1.0
+
 ## v0.2.2 — 2026-05-05
 
 **Plan C — Supervisor + Resource Locks + Multi-Track.**
