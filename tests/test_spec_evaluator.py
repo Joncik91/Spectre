@@ -54,9 +54,12 @@ def test_evaluate_aggregates_tier1_and_tier2_findings_when_no_config(tmp_path):
 
 
 def test_evaluate_skips_tier3_when_config_path_is_none(tmp_path):
-    with patch("bin.llm_judge.evaluate") as mock_judge:
-        spec_evaluator.evaluate(_GOOD_MINIMAL, config_path=None, bundle_persist_dir=tmp_path)
-    assert mock_judge.call_count == 0
+    """When config_path is None, no Tier 3 findings appear in result."""
+    draft_path = tmp_path / "test.spec.md.draft"
+    import shutil
+    shutil.copy(_GOOD_MINIMAL, draft_path)
+    result = spec_evaluator.evaluate(draft_path, config_path=None, bundle_persist_dir=tmp_path)
+    assert not any(f.tier == 3 for f in result.findings)
 
 
 # ── 4. Tier 3 runs when config enables it ─────────────────────────────────────
@@ -197,20 +200,26 @@ def test_evaluate_persisted_bundle_includes_draft_sha256(tmp_path):
 def test_load_persisted_bundle_returns_bundle_when_hash_matches(tmp_path):
     result = spec_evaluator.evaluate(_GOOD_MINIMAL, bundle_persist_dir=tmp_path)
     bundle_path = tmp_path / ".eval-bundle.json"
-    loaded = spec_evaluator.load_persisted_bundle(bundle_path, result.bundle.draft_sha256)
+    loaded = spec_evaluator.load_persisted_bundle(
+        bundle_path, result.bundle.draft_sha256, draft_path=_GOOD_MINIMAL
+    )
     assert loaded is not None
 
 
 def test_load_persisted_bundle_returns_none_when_hash_mismatches(tmp_path):
     spec_evaluator.evaluate(_GOOD_MINIMAL, bundle_persist_dir=tmp_path)
     bundle_path = tmp_path / ".eval-bundle.json"
-    loaded = spec_evaluator.load_persisted_bundle(bundle_path, "deadbeef" * 8)
+    loaded = spec_evaluator.load_persisted_bundle(
+        bundle_path, "deadbeef" * 8, draft_path=_GOOD_MINIMAL
+    )
     assert loaded is None
 
 
 def test_load_persisted_bundle_returns_none_when_file_missing(tmp_path):
     missing = tmp_path / ".eval-bundle.json"
-    loaded = spec_evaluator.load_persisted_bundle(missing, "anyhash")
+    loaded = spec_evaluator.load_persisted_bundle(
+        missing, "anyhash", draft_path=_GOOD_MINIMAL
+    )
     assert loaded is None
 
 
@@ -329,3 +338,65 @@ def test_sidecar_payload_dismissals_count_matches_parse_dismissals(tmp_path):
     text = _GOOD_MINIMAL.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
     expected_dismissals = spec_evaluator.parse_dismissals(text)
     assert len(result.sidecar_payload.get("dismissals", [])) == len(expected_dismissals)
+
+
+# ── 26. CRITICAL #2: invalid severity override raises ValueError ───────────────
+
+
+def test_evaluate_raises_value_error_on_invalid_severity_override(tmp_path):
+    """A typo'd severity in [severity_overrides] raises ValueError from evaluate()."""
+    toml_text = b"[tier3]\nenabled = false\n\n[severity_overrides]\nmissing-why = \"bloock\"\n"
+    config_path = tmp_path / "bad_override.toml"
+    config_path.write_bytes(toml_text)
+    with pytest.raises(ValueError):
+        spec_evaluator.evaluate(
+            _GOOD_MINIMAL, config_path=config_path, bundle_persist_dir=tmp_path
+        )
+
+
+# ── 27. IMPORTANT #1: missing config_path emits info finding ─────────────────
+
+
+def test_evaluate_emits_info_finding_when_config_path_does_not_exist(tmp_path):
+    """When config_path is provided but file absent, result contains tier3-unavailable info finding."""
+    absent_config = tmp_path / "nonexistent.toml"
+    result = spec_evaluator.evaluate(
+        _GOOD_MINIMAL, config_path=absent_config, bundle_persist_dir=tmp_path
+    )
+    assert any(f.kind == "tier3-unavailable" and f.severity == "info" for f in result.findings)
+
+
+# ── 28. IMPORTANT #2: dismissed_t3_count reflects actually filtered findings ──
+
+
+def test_dismissed_t3_count_reflects_actually_filtered_findings_not_dismissal_lines(tmp_path):
+    """2 dismissal lines but only 1 matching Tier 3 finding → dismissed_t3_count == 1."""
+    tier3_finding = _findings.Finding(
+        tier=3,
+        kind="tier3-context-gap",
+        severity="info",
+        location=_findings.FindingLocation(scope="spec-wide"),
+        message="Context gap finding to be dismissed",
+        dismissable=True,
+    )
+    fp_real = _findings.fingerprint(tier3_finding)
+    fp_stale = "b" * 64  # stale dismissal that matches no finding
+
+    base = _minimal_spec_text()
+    augmented = (
+        base
+        + f'\n# tier3-dismissed: {fp_real} "valid dismissal"\n'
+        + f'# tier3-dismissed: {fp_stale} "stale dismissal"\n'
+    )
+    spec_path = tmp_path / "two_dismissals.spec.md"
+    spec_path.write_text(augmented, encoding="utf-8")
+
+    toml_text = b"[tier3]\nenabled = true\napi_key_env = \"DEEPSEEK_API_KEY\"\nmodel = \"deepseek-v4-pro\"\n"
+    config_path = tmp_path / "reviewer.toml"
+    config_path.write_bytes(toml_text)
+
+    with patch("bin.llm_judge.evaluate", return_value=[tier3_finding]):
+        result = spec_evaluator.evaluate(
+            spec_path, config_path=config_path, bundle_persist_dir=tmp_path
+        )
+    assert result.sidecar_payload["findings_summary"]["dismissed_t3_count"] == 1

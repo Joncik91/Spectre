@@ -35,6 +35,7 @@ from bin import coverage_gate as _coverage_gate
 from bin import resources as _resources
 from bin import tier as _tier
 from bin import adr as _adr
+from bin import eval_metadata as _eval_metadata
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -274,18 +275,28 @@ def _apply_severity_overrides(
     findings_list: list[_findings.Finding],
     overrides: dict[str, str],
 ) -> list[_findings.Finding]:
-    """Return new list with severity overrides applied (raise-only; validated elsewhere)."""
+    """Apply severity_overrides from config. Raises ValueError on invalid override."""
     if not overrides:
         return findings_list
+    # Validate overrides up-front — raises ValueError on unknown or downgraded severity
+    for kind, new_severity in overrides.items():
+        default = _eval_metadata.DEFAULT_SEVERITIES.get(kind)
+        if default is not None:
+            # Raises ValueError on downgrade or unknown severity
+            _eval_metadata.validate_no_severity_downgrade(default, new_severity)
+        else:
+            # Unknown kind — validate the severity string itself is valid
+            if new_severity not in _findings.SEVERITIES:
+                raise ValueError(f"unknown severity: {new_severity!r}")
+    # Apply
     result: list[_findings.Finding] = []
     for f in findings_list:
-        new_severity = overrides.get(f.kind)
-        if new_severity and _findings.SEVERITY_ORDER.get(new_severity, 0) > _findings.SEVERITY_ORDER.get(f.severity, 0):
-            # Build a new Finding with promoted severity
+        new_sev = overrides.get(f.kind)
+        if new_sev and new_sev != f.severity:
             result.append(_findings.Finding(
                 tier=f.tier,
                 kind=f.kind,
-                severity=new_severity,
+                severity=new_sev,
                 location=f.location,
                 message=f.message,
                 suggested_fix=f.suggested_fix,
@@ -365,23 +376,35 @@ def evaluate(
     severity_overrides: dict[str, str] = {}
 
     if config_path is not None:
-        from bin import llm_judge as _llm_judge
+        config_path = pathlib.Path(config_path)
+        if not config_path.exists():
+            # Config was explicitly requested but file is absent — emit a visible signal.
+            tier3_findings.append(_findings.Finding(
+                tier=3,
+                kind="tier3-unavailable",
+                severity="info",
+                location=_findings.FindingLocation(scope="spec-wide"),
+                message=f"Config file not found at {config_path}",
+                dismissable=False,
+            ))
+        else:
+            from bin import llm_judge as _llm_judge
 
-        config = _load_toml_config(pathlib.Path(config_path))
-        tier3_cfg = config.get("tier3", {})
-        severity_overrides = config.get("severity_overrides", {})
+            config = _load_toml_config(config_path)
+            tier3_cfg = config.get("tier3", {})
+            severity_overrides = config.get("severity_overrides", {})
 
-        if tier3_cfg.get("enabled", False):
-            judge_config = _llm_judge.JudgeConfig(
-                enabled=True,
-                api_key_env=tier3_cfg.get("api_key_env", "DEEPSEEK_API_KEY"),
-                model=tier3_cfg.get("model", DEEPSEEK_MODEL),
-                base_url=tier3_cfg.get("base_url", DEEPSEEK_BASE_URL),
-                budget_tokens_per_spec=tier3_cfg.get("budget_tokens_per_spec", 50_000),
-                timeout_s=tier3_cfg.get("timeout_s", TIER3_TIMEOUT_S),
-            )
-            tier3_findings = _llm_judge.evaluate(bundle.spec_text, config=judge_config)
-            tiers_run = [1, 2, 3]
+            if tier3_cfg.get("enabled", False):
+                judge_config = _llm_judge.JudgeConfig(
+                    enabled=True,
+                    api_key_env=tier3_cfg.get("api_key_env", "DEEPSEEK_API_KEY"),
+                    model=tier3_cfg.get("model", DEEPSEEK_MODEL),
+                    base_url=tier3_cfg.get("base_url", DEEPSEEK_BASE_URL),
+                    budget_tokens_per_spec=tier3_cfg.get("budget_tokens_per_spec", 50_000),
+                    timeout_s=tier3_cfg.get("timeout_s", TIER3_TIMEOUT_S),
+                )
+                tier3_findings = _llm_judge.evaluate(bundle.spec_text, config=judge_config)
+                tiers_run = [1, 2, 3]
 
     # ── Step 6: Aggregate ────────────────────────────────────────────────────
     all_findings = tier1_findings + tier2_findings + tier3_findings
@@ -391,11 +414,19 @@ def evaluate(
     dismissed_fps: set[str] = {d["fingerprint"] for d in dismissals}
 
     # ── Step 8: Filter dismissed (only dismissable=True findings) ────────────
+    # Track pre-filter list to accurately count actually-dismissed findings.
+    all_findings_pre_filter = all_findings
     filtered: list[_findings.Finding] = []
-    for f in all_findings:
+    for f in all_findings_pre_filter:
         if f.dismissable and _findings.fingerprint(f) in dismissed_fps:
             continue
         filtered.append(f)
+
+    # Count findings that were actually suppressed by the dismissal filter.
+    actually_dismissed_count = sum(
+        1 for f in all_findings_pre_filter
+        if f.dismissable and _findings.fingerprint(f) in dismissed_fps
+    )
 
     # ── Step 9: Apply severity overrides (raise-only) ────────────────────────
     filtered = _apply_severity_overrides(filtered, severity_overrides)
@@ -412,7 +443,7 @@ def evaluate(
             "block_count": sum(1 for f in filtered if f.severity == "block"),
             "warn_count": sum(1 for f in filtered if f.severity == "warn"),
             "info_count": sum(1 for f in filtered if f.severity == "info"),
-            "dismissed_t3_count": len(dismissals),
+            "dismissed_t3_count": actually_dismissed_count,
         },
     }
 
@@ -425,13 +456,19 @@ def evaluate(
 
 
 def load_persisted_bundle(
-    bundle_path: pathlib.Path, draft_sha256: str
+    bundle_path: pathlib.Path,
+    draft_sha256: str,
+    *,
+    draft_path: pathlib.Path,
 ) -> ReviewBundle | None:
     """Read persisted bundle and verify it matches the current draft hash.
 
     Returns None if file missing or hash mismatch (caller rebuilds).
+    `draft_path` is required because the bundle JSON deliberately omits it;
+    the caller (/vision §6.5/6.6) always knows the spec file path.
     """
     bundle_path = pathlib.Path(bundle_path)
+    draft_path = pathlib.Path(draft_path)
     if not bundle_path.exists():
         return None
     try:
@@ -440,8 +477,6 @@ def load_persisted_bundle(
         return None
     if data.get("draft_sha256") != draft_sha256:
         return None
-    # Reconstruct draft_path from bundle_path's directory (best effort)
-    draft_path = bundle_path.parent
     try:
         return ReviewBundle.from_dict(data, draft_path)
     except (KeyError, TypeError, ValueError):
