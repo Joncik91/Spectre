@@ -2,6 +2,12 @@
 
 Symbols are dicts with keys: kind, name, file, line, doc.
 Output written to state/local-symbols.json by walk_repo().
+
+Skip behavior: walk_repo skips files whose parent path contains any directory
+in SKIP_DIRS, OR any directory whose name starts with "." (dot-prefix).
+This means .github, .vscode, .idea, .config, etc. are silently skipped along
+with .git. If you need to fingerprint files in a dot-prefixed directory,
+move them or remove the leading dot.
 """
 import ast
 import json
@@ -15,7 +21,7 @@ from typing import Any
 SKIP_DIRS = {".git", "__pycache__", "state", ".venv", "node_modules", ".pytest_cache"}
 
 SHELL_FUNC_RE = re.compile(
-    r"^(?:function\s+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(\)\s*\{",
+    r"^(?:function\s+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(\)\s*\n?\s*\{",
     re.MULTILINE,
 )
 MD_HEADER_RE = re.compile(r"^(#{1,2})\s+(.+?)\s*$", re.MULTILINE)
@@ -38,7 +44,7 @@ def extract_python_symbols(path: Path) -> list[dict[str, Any]]:
         "doc": mod_doc,
     })
     for node in tree.body:
-        if isinstance(node, ast.FunctionDef):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             out.append({
                 "kind": "function",
                 "name": node.name,

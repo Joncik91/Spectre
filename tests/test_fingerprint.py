@@ -212,3 +212,31 @@ def test_cli_emits_summary_to_stdout(tmp_path, monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "FINGERPRINT" in captured.out
     assert "symbols" in captured.out.lower()
+
+
+def test_extract_python_symbols_finds_async_function(tmp_path):
+    f = tmp_path / "mod.py"
+    f.write_text("async def handle_event():\n    return 1\n")
+    syms = fp.extract_python_symbols(f)
+    assert any(s["name"] == "handle_event" and s["kind"] == "function" for s in syms)
+
+
+def test_extract_shell_symbols_finds_multiline_brace_form(tmp_path):
+    f = tmp_path / "s.sh"
+    f.write_text(
+        "do_thing()\n"
+        "{\n"
+        "  echo hi\n"
+        "}\n"
+    )
+    syms = fp.extract_shell_symbols(f)
+    names = [s["name"] for s in syms if s["kind"] == "function"]
+    assert "do_thing" in names
+
+
+def test_walk_repo_skips_arbitrary_dot_dirs(tmp_path):
+    gh = tmp_path / ".github"
+    gh.mkdir()
+    (gh / "deploy.sh").write_text("deploy_fn() { :; }\n")
+    out = fp.walk_repo(tmp_path)
+    assert all(s["name"] != "deploy_fn" for s in out)
