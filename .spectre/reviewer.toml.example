@@ -1,0 +1,62 @@
+# Spectre v0.3+ pre-lock spec evaluator config.
+#
+# Copy this file to ~/.spectre/reviewer.toml to enable Tier 3 (DeepSeek
+# adversarial reviewer) and/or apply severity overrides.
+#
+# Tier 1 (deterministic AST classifier) and Tier 2 (coverage gate) run by
+# default — no config needed. Only Tier 3 is opt-in (paid network call).
+#
+# This file is committed to the repo for discoverability. Real per-user
+# configs live at ~/.spectre/reviewer.toml and are NOT committed.
+
+[tier3]
+# Set enabled = true to opt into the DeepSeek-v4-Pro adversarial reviewer.
+# When enabled, every /vision draft makes 3 API calls (~10-30s, ~$0.01-0.05).
+enabled = false
+
+# Name of the env var holding your DeepSeek API key. The key itself is NOT
+# stored in this file — only the env var name. Spectre reads
+# os.environ[api_key_env] at runtime.
+api_key_env = "DEEPSEEK_API_KEY"
+
+# DeepSeek model identifier. Default = deepseek-v4-pro (current top-tier).
+model = "deepseek-v4-pro"
+
+# Hard ceiling on tokens per spec. Specs estimated to exceed this skip
+# Tier 3 (returns a tier3-unavailable info-severity finding instead of
+# making the call). Tunes the spend-per-spec ceiling.
+budget_tokens_per_spec = 50000
+
+# Per-call timeout. DeepSeek typically responds in 5-15s; 30s is safe.
+timeout_s = 30
+
+
+[severity_overrides]
+# Raise severity above the evaluator's defaults. Strictness is one-way —
+# this section MUST NOT lower severities (block → warn). The evaluator
+# refuses to load a downgrade-config and exits with a clear error.
+#
+# Default severities (from bin/eval_metadata.DEFAULT_SEVERITIES):
+#   missing-why                    = "block"
+#   soft-verification              = "block"
+#   undeclared-resource            = "warn"
+#   undeclared-host-path           = "block"
+#   decision-without-adr           = "warn"
+#   action-not-probed              = "warn"
+#   missing-receiver-calibration   = "block"
+#   cross-step-inconsistency       = "warn"
+#   spec-wide-scope-violation      = "warn"
+#   calibration-hard-violation     = "block"
+#   tier3-context-gap              = "warn"
+#   tier3-attacker-view            = "warn"
+#   tier3-spec-asserts-wrong       = "warn"
+#   tier3-unavailable              = "info"
+#
+# Examples of valid upgrades:
+# missing-receiver-calibration = "block"  # already block, no change
+# undeclared-resource = "block"           # raise warn → block
+# decision-without-adr = "block"          # raise warn → block
+#
+# Invalid (would refuse load):
+# missing-why = "warn"                    # downgrade block → warn
+# soft-verification = "info"              # downgrade block → info
