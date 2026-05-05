@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from bin import _scratchpad as sp
 
 
@@ -25,7 +27,18 @@ def test_atomic_write_creates_file(plugin_root):
 def test_atomic_write_no_tmp_left_behind(plugin_root):
     target = plugin_root / "state" / "scratchpad.json"
     sp.atomic_write(target, {"step": 5})
-    assert not (plugin_root / "state" / "scratchpad.json.tmp").exists()
+    leftovers = list((plugin_root / "state").glob("scratchpad.json*.tmp"))
+    assert leftovers == []
+
+
+def test_atomic_write_cleans_up_tmp_on_failure(plugin_root):
+    target = plugin_root / "state" / "scratchpad.json"
+    # object() is not JSON-serializable -> json.dump raises TypeError -> cleanup branch fires
+    with pytest.raises(TypeError):
+        sp.atomic_write(target, {"bad": object()})
+    leftovers = list((plugin_root / "state").glob("scratchpad.json*.tmp"))
+    assert leftovers == []
+    assert not target.exists()  # original target never created
 
 
 def test_append_failed_hypothesis(initial_scratchpad):
