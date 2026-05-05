@@ -187,3 +187,42 @@ def test_save_graph_cleans_up_tmp_on_failure(tmp_path, monkeypatch):
     leftovers = list(tmp_path.glob("g.md*.tmp"))
     assert leftovers == []
     assert not path.exists()
+
+
+def test_parse_manifest_incomplete_edge_raises_valueerror():
+    text = (
+        "---\n"
+        "id: a\n"
+        "type: invariant\n"
+        "title: A\n"
+        "status: active\n"
+        "edges:\n"
+        "  - target: b\n"
+        "---\n"
+    )
+    with pytest.raises(ValueError, match="edge with target but no type"):
+        graph.parse_manifest(text)
+
+
+def test_parse_manifest_missing_id_raises_valueerror():
+    text = (
+        "---\n"
+        "type: invariant\n"
+        "title: Anonymous\n"
+        "edges: []\n"
+        "---\n"
+    )
+    with pytest.raises(ValueError, match="missing required field 'id'"):
+        graph.parse_manifest(text)
+
+
+def test_parse_manifest_missing_title_raises_valueerror():
+    text = (
+        "---\n"
+        "id: a\n"
+        "type: invariant\n"
+        "edges: []\n"
+        "---\n"
+    )
+    with pytest.raises(ValueError, match="missing required field 'title'"):
+        graph.parse_manifest(text)

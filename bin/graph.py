@@ -72,6 +72,10 @@ def _parse_block(lines: list[str]) -> Node:
             stripped = line.lstrip()
             if stripped.startswith("- target:"):
                 if current_edge:
+                    if "type" not in current_edge:
+                        raise ValueError(
+                            f"manifest block has edge with target but no type: {current_edge!r}"
+                        )
                     edges.append(current_edge)
                 current_edge = {"target": stripped[len("- target:"):].strip()}
             elif stripped.startswith("type:"):
@@ -82,7 +86,16 @@ def _parse_block(lines: list[str]) -> Node:
         key, _, value = line.partition(":")
         fields[key.strip()] = value.strip()
     if current_edge:
+        if "type" not in current_edge:
+            raise ValueError(
+                f"manifest block has edge with target but no type: {current_edge!r}"
+            )
         edges.append(current_edge)
+    for required in ("id", "type", "title"):
+        if required not in fields:
+            raise ValueError(
+                f"manifest block missing required field {required!r}: {fields!r}"
+            )
     n = Node(
         id=str(fields["id"]),
         type=str(fields["type"]),
