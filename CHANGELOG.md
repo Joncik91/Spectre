@@ -2,16 +2,42 @@
 
 All notable changes to the SDL Vision Engine plugin (Spectre).
 
-## [0.2.2] - 2026-05-05
+## v0.2.2 — 2026-05-05
+
+**Plan C — Supervisor + Resource Locks + Multi-Track.**
 
 ### Added
-- Supervisor process for parallel `/implement <track>` execution
-- Resource locks (ports, DB connections, paid-API quotas) with reboot recovery
-- Multi-track scratchpad shape (auto-migrated from v1)
-- Cross-track dependency graph (Resource nodes + `blocks` edges)
+- `bin/supervisor.py` — per-project Unix domain socket daemon. On-demand spawn from first `/implement <track>` call. Idle self-shutdown after 30 min. `/proc/<pid>/stat` actor fingerprinting for reboot-recovery. Single-threaded `select()` loop.
+- `bin/resources.py` — Resource node parsing from graph manifest + heuristic extraction (`port:N` style) from action commands. Defenses against quoted-string false-positives, leading-zero ports, IP:port parsing, port range validation (1-65535).
+- `bin/track.py` — client API: `acquire`, `release`, `status`, `heartbeat`, `ensure_supervisor_running`. Liveness probe + auto-respawn after SIGKILL'd supervisor leaves stale pid+sock on disk.
+- `bin/migrate_scratchpad_v1_to_v2.py` — idempotent, atomic v1→v2 scratchpad migration. Preserves unknown user-authored v1 keys under `_v1_unknown`.
+- `bin/_scratchpad.py` — `DEFAULT_V2`, `track_default()`, `load_track`, `save_track`, `expand_v1_to_v2` (single source of truth for v1→v2 promotion).
+- `specs/template.spec.md` — optional `resources:` field per step.
 
 ### Changed
-- Scratchpad is now per-track. v1 single-track scratchpad auto-migrated on first SessionStart.
+- `bin/hydrate.py` — SessionStart hook auto-migrates v1 scratchpad to v2. `state_line()` reads from `tracks.default` for v2, falls back to top-level for v1. Error signal now includes exception class for debuggability.
+- `skills/implement/SKILL.md`
+  - §0.5 — `/implement <track>` argument selects track in v2 scratchpad's `tracks:` map (default = `"default"`).
+  - §3.6 — Resource lock acquire via supervisor before action execution. Halts with `RESOURCE QUEUED` if at capacity.
+  - §6.7 — Resource lock release on terminal step state (advance OR halt).
+- `skills/vision/SKILL.md`
+  - §6.6 — auto-detects `port:N` Resource nodes from drafted actions. Adds Resource nodes to `specs/.graph.md` if missing, appends `resources:` to spec steps.
+  - §6.7 — scratchpad reset uses v2 multi-track shape.
+- `bin/graph.py` — already supported `resource` node type and `blocks` edge from Plan A; Task 8 adds round-trip + cascade-exclusion test coverage.
+- `.claude-plugin/plugin.json` — version 1.0.1 → 1.0.2.
+
+### Tests
+261 passing (188 from v0.2.1 baseline + 20 resources + 6 scratchpad-v2 + 8 migration + 2 hydrate + 18 supervisor + 10 track + 3 graph + 6 fix-driven regression). Stdlib only. Pragma test-gaming guard satisfied.
+
+### Hardening rounds (review-driven)
+- **resources:** date false-positive (`2026-05:08` → port 08), missing port range validation, leading-zero acceptance.
+- **scratchpad:** auto-expand silently dropped v1 in-flight state; null-tracks corruption; DRY violation between `_expand_v1_to_v2` and migrate.
+- **supervisor:** missing `try/except OSError` around bind (race-loser crashes), blocking `recv()` halts entire daemon, pid file written before bind (race loser corrupts winner's pid file), reconcile non-idempotent (duplicates holders on second call), `_shutdown` sentinel leaked into JSON response, `granted_at` rewritten on every persist (lost original time), `_actor_alive` didn't catch `PermissionError`/`ProcessLookupError`/value parse errors.
+- **track:** stale-socket connect raised `ConnectionRefusedError` instead of documented `RuntimeError`; missing liveness probe in `ensure_supervisor_running` meant SIGKILL'd supervisor wasn't re-spawned; absolute-path resolution before subprocess spawn (was binding to wrong dir when caller passed `Path('.')`).
+
+### Smoke test
+- Two-track contention on `port:8080`: A grants, B queues at position 1, release A promotes B. ✓
+- SIGKILL supervisor → restart → reconcile reaps dead-actor lock. ✓
 
 ## v0.2.1 — 2026-05-05
 
