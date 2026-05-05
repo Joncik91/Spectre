@@ -131,6 +131,25 @@ def save_graph(path: Path, nodes: list[Node]) -> None:
         raise
 
 
+def get_node(nodes: list[Node], node_id: str) -> Node | None:
+    for n in nodes:
+        if n.id == node_id:
+            return n
+    return None
+
+
+def children_by_edge(nodes: list[Node], *, source: str, edge_type: str) -> list[Node]:
+    src = get_node(nodes, source)
+    if src is None:
+        return []
+    targets = {e["target"] for e in src.edges if e["type"] == edge_type}
+    return [n for n in nodes if n.id in targets]
+
+
+def find_stale(nodes: list[Node]) -> list[Node]:
+    return [n for n in nodes if n.status == "stale"]
+
+
 def serialize_node(n: Node) -> str:
     lines = ["---"]
     lines.append(f"id: {n.id}")

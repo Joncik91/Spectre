@@ -226,3 +226,43 @@ def test_parse_manifest_missing_title_raises_valueerror():
     )
     with pytest.raises(ValueError, match="missing required field 'title'"):
         graph.parse_manifest(text)
+
+
+def _build_sample_graph():
+    inv = graph.Node(id="inv-1", type="invariant", title="UserObject schema")
+    inv.add_edge(target="impl-1", edge_type="constrains")
+    inv.add_edge(target="impl-2", edge_type="constrains")
+    impl1 = graph.Node(id="impl-1", type="implementation", title="signup endpoint")
+    impl1.add_edge(target="iface-1", edge_type="satisfies")
+    impl2 = graph.Node(id="impl-2", type="implementation", title="login endpoint", status="stale")
+    iface1 = graph.Node(id="iface-1", type="interface", title="POST /signup")
+    return [inv, impl1, impl2, iface1]
+
+
+def test_children_by_edge_filters_correctly():
+    nodes = _build_sample_graph()
+    children = graph.children_by_edge(nodes, source="inv-1", edge_type="constrains")
+    assert sorted(c.id for c in children) == ["impl-1", "impl-2"]
+
+
+def test_children_by_edge_empty_when_no_match():
+    nodes = _build_sample_graph()
+    assert graph.children_by_edge(nodes, source="iface-1", edge_type="constrains") == []
+
+
+def test_find_stale_returns_only_stale_nodes():
+    nodes = _build_sample_graph()
+    stale = graph.find_stale(nodes)
+    assert [n.id for n in stale] == ["impl-2"]
+
+
+def test_get_node_by_id_returns_match():
+    nodes = _build_sample_graph()
+    n = graph.get_node(nodes, "impl-1")
+    assert n is not None
+    assert n.title == "signup endpoint"
+
+
+def test_get_node_returns_none_when_missing():
+    nodes = _build_sample_graph()
+    assert graph.get_node(nodes, "no-such-id") is None
