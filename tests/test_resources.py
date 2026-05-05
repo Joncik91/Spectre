@@ -1,5 +1,4 @@
 import pytest
-from pathlib import Path
 from bin import resources
 
 
@@ -190,4 +189,42 @@ def test_extract_resources_from_action_skips_quoted_port():
     # Same defense as tier.py: don't fire on echoed text
     cmd = 'git commit -m "fix port 8080 bug"'
     found = resources.extract_resources_from_action(cmd)
+    assert found == []
+
+
+def test_extract_resources_skips_date_like_string():
+    # Date "2026-05:08" must not fire as port 08
+    found = resources.extract_resources_from_action("echo deadline 2026-05:08")
+    assert found == []
+
+
+def test_extract_resources_rejects_leading_zero_port():
+    # Real ports never have leading zeros
+    found = resources.extract_resources_from_action("--port=00080")
+    assert found == []
+
+
+def test_extract_resources_matches_ip_port_pair():
+    # IP:port form must still match (digit-preceded colon)
+    found = resources.extract_resources_from_action("nc 127.0.0.1:8080")
+    assert any(r.identifier == "8080" for r in found)
+
+
+def test_extract_resources_port_above_65535_returns_empty():
+    found = resources.extract_resources_from_action("--port=99999")
+    assert found == []
+
+
+def test_extract_resources_port_zero_returns_empty():
+    found = resources.extract_resources_from_action("--port=0")
+    assert found == []
+
+
+def test_extract_resources_accepts_port_max_65535():
+    found = resources.extract_resources_from_action("--port=65535")
+    assert any(r.identifier == "65535" for r in found)
+
+
+def test_extract_resources_http_server_invalid_port_returns_empty():
+    found = resources.extract_resources_from_action("python3 -m http.server 99999")
     assert found == []

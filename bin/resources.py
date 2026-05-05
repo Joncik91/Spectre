@@ -6,7 +6,7 @@ from typing import Iterable
 KNOWN_KINDS = {"port", "db_connection", "api_quota", "file_lock"}
 
 _QUOTED_STRING_RE = re.compile(r'''(?:"[^"]*"|'[^']*')''')
-_PORT_RE = re.compile(r"\b(?:--port[= ]|:|-p\s+)(\d{2,5})\b")
+_PORT_RE = re.compile(r"(?:--port[= ]|(?<=\d):|(?<!\S)-p\s+)(\d{2,5})\b")
 _HTTP_SERVER_RE = re.compile(r"\bhttp\.server\s+(\d{2,5})\b")
 
 
@@ -62,12 +62,22 @@ def parse_resources(md: str) -> list[Resource]:
     return out
 
 
+def _valid_port(port: str) -> bool:
+    if not port.isdigit():
+        return False
+    if len(port) > 1 and port.startswith("0"):
+        return False
+    return 1 <= int(port) <= 65535
+
+
 def extract_resources_from_action(command: str) -> list[Resource]:
     """Heuristic extraction of Resources from a shell command."""
     scrubbed = _strip_quoted(command)
     out: list[Resource] = []
     for m in _PORT_RE.finditer(scrubbed):
         port = m.group(1)
+        if not _valid_port(port):
+            continue
         out.append(Resource(
             id=f"res-port-{port}",
             kind="port",
@@ -76,6 +86,8 @@ def extract_resources_from_action(command: str) -> list[Resource]:
         ))
     for m in _HTTP_SERVER_RE.finditer(scrubbed):
         port = m.group(1)
+        if not _valid_port(port):
+            continue
         if not any(r.identifier == port for r in out):
             out.append(Resource(
                 id=f"res-port-{port}",
