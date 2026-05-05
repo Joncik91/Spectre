@@ -120,11 +120,67 @@ DRAFT: specs/<slug>.spec.md.draft (N steps). Reply: yes / refine "<change>" / ca
 ```
 
 7. **Wait for the user.**
-   - `yes` → continue to Step 6.5.
-   - `refine "<change>"` → reopen the draft file, apply the requested change, atomically rewrite the .draft file, re-emit the one-line confirmation. Repeat until `yes`.
-   - `cancel` → delete the .draft file, halt, write nothing else.
+   - `yes` → continue to Step 6.4 (evaluator pass).
+   - `refine "<change>"` → reopen the draft file, apply the requested change, atomically rewrite the .draft file, re-run Step 6.4 evaluator (bundle is keyed by draft hash so it auto-rebuilds), re-emit the one-line confirmation. Repeat until `yes`.
+   - `cancel` → delete the .draft file AND clear `state/.eval-bundle.json`, halt, write nothing else.
 
 The draft-to-disk pattern eliminates the double-token-output friction (printing the full spec inline AND writing the file). The user reviews in their editor; we hold the spec in disk-only state until confirmed.
+
+### Step 6.4 — Pre-lock spec evaluator (CDLC Evaluate phase, v0.3+)
+
+After the user replies `yes` (or `refine`), run the spec evaluator over a *review bundle* (preview ADRs + preview Resource nodes + preview tier classifications materialized but not committed). Tiers 1+2 always run (deterministic, local). Tier 3 (DeepSeek v4 Pro adversarial reviewer) runs only if `~/.spectre/reviewer.toml` has `[tier3] enabled = true`.
+
+```bash
+python3 - <<'PY'
+import json, sys
+sys.path.insert(0, ".")
+from pathlib import Path
+from bin import spec_evaluator
+
+CONFIG = Path.home() / ".spectre" / "reviewer.toml"
+result = spec_evaluator.evaluate(
+    Path("specs/<slug>.spec.md.draft"),
+    config_path=CONFIG if CONFIG.exists() else None,
+    bundle_persist_dir=Path("state"),
+)
+out = [{
+    "tier": f.tier, "kind": f.kind, "severity": f.severity,
+    "scope": f.location.scope, "step": f.location.step,
+    "ref": f.location.ref, "message": f.message, "fix": f.suggested_fix,
+    "dismissable": f.dismissable,
+} for f in result.findings]
+print(json.dumps(out, indent=2))
+print(f"MAX_SEVERITY: {result.max_severity}")
+PY
+```
+
+Interpret the result:
+
+- **`MAX_SEVERITY: block`** — list every `block`-severity finding to the user. The spec CANNOT lock until refine resolves them. Halt with:
+
+  ```
+  EVALUATOR HALT: <N> block findings, <M> warn, <K> info.
+    [1] tier <X> · <kind> · step <S> · <message>
+    [2] tier <X> · <kind> · step <S> · <message>
+    ...
+  Reply: refine "<change>" / cancel
+  ```
+
+  Do NOT proceed to §6.5. The bundle stays persisted at `state/.eval-bundle.json` keyed by the current draft hash; on `refine`, the rewritten draft will produce a new bundle automatically.
+
+- **`MAX_SEVERITY: warn`** — surface warnings to the user, ask once: `Proceed to lock with N warn findings? (yes / refine / cancel)`. On `yes`, continue to §6.5.
+
+- **`MAX_SEVERITY: info`** — surface findings briefly (≤3 lines) and proceed to §6.5 silently.
+
+**Tier 3 false-positive dismissal:** if a Tier 3 finding has `dismissable: true` and the user wants to accept the risk, they can append a block at the bottom of the spec body:
+
+```
+# tier3-dismissed: <fingerprint> "one-line reason"
+```
+
+The fingerprint is the SHA-256 hex from `bin.findings.fingerprint(f)` — printable from the JSON output above (compute it via `python3 -c "from bin import findings as F; ..."` if needed). Re-running §6.4 will skip the dismissed finding; the dismissal is recorded in the `.eval.json` sidecar after lock so audits can see what was suppressed and why.
+
+`dismissable: false` findings (Tier 1+2 block-severity) CANNOT be dismissed via this mechanism — they must be fixed via `refine`.
 
 ### Step 6.5 — ADR generation (conditional)
 
@@ -175,21 +231,34 @@ PY
 
 In v0.2.1 the graph manifest may not have ADR nodes yet. The `update_graph_for_supersedes` call is a no-op when nodes are absent, so it is safe to always invoke after a supersede write.
 
-### Step 6.6 — Resource node inference
+### Step 6.6 — Resource node inference (read from bundle)
 
-For each step in the locked spec, run `bin/resources.extract_resources_from_action(<action>)`. Each non-empty result is a Resource the step touches.
+The §6.4 evaluator already computed `preview_resources` in the bundle. Read that list (don't re-compute):
 
 ```bash
 python3 - <<'PY'
-import sys
+import sys, json
 sys.path.insert(0, ".")
-from bin import resources
-# For each step's action: tuple-extract any Resource nodes mentioned
-all_seen = {}
-for step in <parsed steps from draft spec>:
-    for r in resources.extract_resources_from_action(step["action"]):
-        all_seen.setdefault(r.id, r)
-        # Append r.id to step["resources"] in the draft if not already present
+from pathlib import Path
+from bin import spec_evaluator, graph
+
+draft = Path("specs/<slug>.spec.md.draft")
+draft_text = draft.read_text(encoding="utf-8")
+import hashlib
+draft_sha = hashlib.sha256(draft_text.encode()).hexdigest()
+
+bundle = spec_evaluator.load_persisted_bundle(
+    Path("state/.eval-bundle.json"),
+    draft_sha256=draft_sha,
+    draft_path=draft,
+)
+if bundle is None:
+    print("BUNDLE_MISMATCH: rebuilding")
+    # Fallback: rebuild on the fly. Should not happen in normal flow.
+    bundle = spec_evaluator.build_bundle(draft)
+
+for r in bundle.preview_resources:
+    print(f"{r['id']} ({r['kind']}:{r['identifier']})")
 PY
 ```
 
@@ -239,6 +308,39 @@ Now that the user confirmed and ADRs are written:
    ```
 
    If the user invoked `/vision <track>`, use that track name; otherwise use `"default"`. Preserve any other tracks already in the scratchpad (read-modify-write via `bin/_scratchpad.save_track`).
+
+4. **Write the `.eval.json` sidecar** (v0.3+, post-§6.4 evaluator). The evaluator's `result.sidecar_payload` carries the policy hash, tiers run, dismissals, findings summary, and DeepSeek model version. Persist next to the locked spec:
+
+   ```bash
+   python3 - <<'PY'
+   import sys
+   sys.path.insert(0, ".")
+   from pathlib import Path
+   from bin import eval_metadata, spec_evaluator
+
+   draft = Path("specs/<slug>.spec.md.draft")  # already renamed to .spec.md by step 1
+   spec = Path("specs/<slug>.spec.md")
+   # Re-load sidecar_payload from the persisted bundle (or recompute via evaluate())
+   # The cleanest path: the calling code captured `result.sidecar_payload` from §6.4.
+   eval_metadata.write_sidecar(
+       spec,
+       evaluator_version=spec_evaluator.EVALUATOR_VERSION,
+       tiers_run=result.sidecar_payload["tiers_run"],
+       findings=result.findings,
+       dismissals=result.sidecar_payload.get("dismissals", []),
+       config_path=Path.home() / ".spectre" / "reviewer.toml",
+       config_hash=result.sidecar_payload.get("config_hash"),
+       deepseek_model_version=result.sidecar_payload.get("deepseek_model_version"),
+       policy_hash=result.sidecar_payload["policy_hash"],
+   )
+   PY
+   ```
+
+5. **Clear the persisted bundle** — lock is complete, the bundle is no longer needed:
+
+   ```bash
+   python3 -c "from bin import spec_evaluator; from pathlib import Path; spec_evaluator.clear_bundle(Path('state/.eval-bundle.json'))"
+   ```
 
 ### Step 7 — Transition signal
 
