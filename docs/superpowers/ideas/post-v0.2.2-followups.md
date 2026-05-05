@@ -64,6 +64,8 @@ These three items came out of Plan C self-review. Each is worth fixing eventuall
 
 **Trigger to promote to plan:** if the verb-only rule needs per-flag refinement (e.g. `systemctl status` is read-only and harmless — could stay silent — vs `systemctl restart` is host-mutating).
 
+**Related miss (same E2E run, Step 6):** `systemctl enable --now btc-poller.service` was classified as `repo` because the path heuristic matched `btc-poller.service` as a project-relative file. In reality, `.service` is a systemd unit name, not a project path; the action installs a symlink under `/etc/systemd/system/multi-user.target.wants/`. Implementer overrode to host via judgment, which is correct skill behavior (agents may *add* halts, never *skip* them) — but the classifier should not have been wrong in the first place. Fix: when first token is `systemctl` AND the verb is one of `enable/disable/start/stop/restart/reload/mask/unmask`, force host tier regardless of how subsequent tokens look.
+
 ## What's NOT here
 
 These came up during review but are out of scope for any plausible Plan D:
