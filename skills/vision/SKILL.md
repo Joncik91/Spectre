@@ -51,25 +51,30 @@ Then ask **2-3 Refinement Questions** about non-obvious edge cases. Examples of 
 
 **Wait for the user's answers.** Do not continue until they respond.
 
-### Step 4 — Draft Steps with action/verification pairs
+### Step 4 — Draft Steps with why/action/verification triples
 
 Once refinement is settled, draft the **Steps** section using the schema in `specs/template.spec.md`:
 
 ```yaml
 - step: 1
+  why: "<one-line first-principles justification — not analogy>"
   action: "<exact shell command>"
   verification: "<post-condition check command that exits 0 iff action succeeded>"
 ```
 
 Rules for steps:
+- **`why:` is mandatory.** It must be first-principles ("the byte sequence must persist on disk because the alias is invoked across shells") — never analogy ("this is how people usually do it"). If you can't articulate `why:`, the step shouldn't exist.
 - Each `action` is a single shell command (chained with `&&` if atomic).
 - Each `verification` is a separate command that proves the action's side effect. Examples:
-  - `action: ln -s /var/log/syslog /usr/local/bin/quick-log`
+  - `why: "Symlink resolves at kernel level — fastest possible aliasing primitive."`
+    `action: ln -s /var/log/syslog /usr/local/bin/quick-log`
     `verification: "[ -L /usr/local/bin/quick-log ] && [ -e /usr/local/bin/quick-log ]"`
-  - `action: pip install requests`
+  - `why: "HTTP client must be importable in the runtime; pip install is the standard delivery path."`
+    `action: pip install requests`
     `verification: python3 -c 'import requests'`
 - 5-15 steps. If you need more, the spec is too big — decompose first.
 - No "soft" verifications (`echo done`, `true`). They must observably check the action's effect.
+- **Do not lock the spec if any step is missing `why:`.** Reject your own draft and iterate.
 
 ### Step 5 — Confirm with the user
 

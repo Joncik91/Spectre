@@ -13,6 +13,20 @@ def test_load_returns_default_when_missing(plugin_root):
     assert data["last_command"] is None
 
 
+def test_default_includes_paths_touched_empty_list(plugin_root):
+    data = sp.load(plugin_root / "state" / "scratchpad.json")
+    assert data["paths_touched"] == []
+
+
+def test_default_includes_last_drift_check_step_zero(plugin_root):
+    data = sp.load(plugin_root / "state" / "scratchpad.json")
+    assert data["last_drift_check_step"] == 0
+
+
+def test_paths_touched_cap_constant_is_at_least_100():
+    assert sp.PATHS_TOUCHED_CAP >= 100
+
+
 def test_load_returns_existing(initial_scratchpad):
     data = sp.load(initial_scratchpad)
     assert data["step"] == 1

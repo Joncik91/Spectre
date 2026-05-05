@@ -153,3 +153,46 @@ def test_append_redirect_distinct_from_overwrite(plugin_root):
     result = run_compact(plugin_root, make_event("echo hi >> log.txt"))
     ctx = json.loads(result.stdout)["additionalContext"]
     assert "appended log.txt" in ctx
+
+
+def test_paths_touched_records_mkdir_target(plugin_root):
+    run_compact(plugin_root, make_event("mkdir foo"))
+    data = json.loads((plugin_root / "state" / "scratchpad.json").read_text())
+    assert data["paths_touched"] == ["foo"]
+
+
+def test_paths_touched_records_multi_arg_mkdir(plugin_root):
+    run_compact(plugin_root, make_event("mkdir foo bar baz"))
+    data = json.loads((plugin_root / "state" / "scratchpad.json").read_text())
+    assert data["paths_touched"] == ["foo", "bar", "baz"]
+
+
+def test_paths_touched_dedupes_repeat_writes(plugin_root):
+    run_compact(plugin_root, make_event("mkdir foo"))
+    run_compact(plugin_root, make_event("mkdir foo"))
+    data = json.loads((plugin_root / "state" / "scratchpad.json").read_text())
+    assert data["paths_touched"] == ["foo"]
+
+
+def test_paths_touched_unchanged_on_failed_action(plugin_root):
+    run_compact(plugin_root, make_event("mkdir foo", exit_code=1, stderr="Permission denied"))
+    data = json.loads((plugin_root / "state" / "scratchpad.json").read_text())
+    assert data["paths_touched"] == []
+
+
+def test_paths_touched_skips_for_non_filesystem_verbs(plugin_root):
+    run_compact(plugin_root, make_event("systemctl restart nginx"))
+    data = json.loads((plugin_root / "state" / "scratchpad.json").read_text())
+    assert data["paths_touched"] == []
+
+
+def test_paths_touched_records_destination_only_for_mv(plugin_root):
+    run_compact(plugin_root, make_event("mv src dst"))
+    data = json.loads((plugin_root / "state" / "scratchpad.json").read_text())
+    assert data["paths_touched"] == ["dst"]
+
+
+def test_paths_touched_records_redirect_target(plugin_root):
+    run_compact(plugin_root, make_event("echo hi > out.txt"))
+    data = json.loads((plugin_root / "state" / "scratchpad.json").read_text())
+    assert data["paths_touched"] == ["out.txt"]

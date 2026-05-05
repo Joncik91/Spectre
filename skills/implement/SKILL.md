@@ -62,6 +62,45 @@ If the user invoked `/implement check`:
 - Do NOT advance `step`. Do NOT modify scratchpad except for `last_command`/`exit_code`.
 - Halt.
 
+### Step 3.5 — Risk-Gate (Yellow tier)
+
+Before executing `current_action`, scan it case-insensitively for these destructive verb patterns:
+
+- `\brm\s+(-[rRfF]+|--recursive|--force)` — recursive/forced delete
+- `\bsystemctl\s+(start|stop|restart|reload|enable|disable|mask)\b` — service state change
+- `\bsudo\b` — privilege escalation
+- `\bdrop\s+(table|database|schema)\b` — schema destruction
+- `\b(migrate|migration)\b` — schema migration
+- `\bgit\s+push\s+(-f|--force)\b` — history rewrite on remote
+- `\bdeploy\b` — production push
+- `\bchmod\s+777\b` — permission widening
+- `\bdd\s+if=` — raw disk write
+- `\b(reboot|shutdown|halt|poweroff)\b` — host state change
+
+On match, halt with:
+```
+RISK GATE Step <N>: <action>
+Matched verb: <which pattern>
+Reasoning: <one-line first-principles "why this is destructive — what state changes irreversibly">
+Proceed? (yes / halt / skip)
+```
+
+- `yes` → continue to Step 3.7 then Step 4 (execute).
+- `halt` → stop. No scratchpad change.
+- `skip` → advance `step` by 1 (no execution, no verification). Use only when the step was already done out-of-band; rare.
+
+If no match → continue silently to Step 3.7.
+
+### Step 3.7 — Reasoning-in-Public WHY emit
+
+Print the step's `why:` line BEFORE the action so it lands in conversation context AND in the next compact's `additionalContext`:
+
+```
+WHY: <why text from spec>
+```
+
+If the spec step is missing `why:`, halt with `HALT: Step <N> has no why: field. Re-run /vision to add it.` — do not fabricate a justification.
+
 ### Step 4 — Execute action
 
 Print the action and run it via Bash:
@@ -85,6 +124,7 @@ VERIFYING Step <N>: <verification>
 **Path A — verification exits 0:**
 - Print: `VERIFICATION PASSED: Step <N>.`
 - Update scratchpad: increment `step` by 1, clear any retry state.
+- Run §Step 6.5 Drift checkpoint.
 - Print: `Ready for next /implement.`
 - Halt (do not auto-run Step N+1).
 
@@ -112,6 +152,30 @@ VERIFYING Step <N>: <verification>
 - The action's stderr matches `command not found`, `No such file or directory: '<binary>'`, `Permission denied` for the binary itself.
 - The verification command itself errors out structurally (unparseable, missing).
 - Any spec field is missing for the current step.
+
+### Step 6.5 — Drift checkpoint
+
+After advancing `step`, check if a drift audit is due:
+
+- Read `last_drift_check_step` from scratchpad (default 0).
+- Let `new_step = scratchpad.step` (after the increment in Path A).
+- If `(new_step - last_drift_check_step) >= 5` AND `new_step <= total_steps`:
+
+  1. Re-read the spec's `## 1. Hard Problem` section verbatim.
+  2. Read the `action:` and `why:` for steps `new_step .. min(new_step + 4, total_steps)`.
+  3. Self-audit silently: "Do these remaining actions still serve the Hard Problem? Articulate one reason yes and one reason no."
+  4. If you can articulate any plausible "no" — e.g. the actions have drifted into a different subsystem, scope expanded, the Hard Problem is no longer being addressed — halt with:
+     ```
+     DRIFT DETECTED at Step <N>.
+     Hard Problem: <quoted from spec>
+     Concern: <one-line — what drifted, in first-principles terms>
+     Options: (continue / edit-spec)
+     ```
+     - `continue` → update `last_drift_check_step` to `new_step`. Do NOT modify the spec.
+     - `edit-spec` → halt. Tell the user to re-run `/vision` with current scratchpad context so the new spec inherits accumulated state.
+  5. If clean (no drift) → silently update `last_drift_check_step` to `new_step` and proceed.
+
+- If less than 5 steps since last check → no audit, no scratchpad write to `last_drift_check_step`.
 
 ### Step 7 — Failure logging
 

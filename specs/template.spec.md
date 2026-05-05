@@ -22,16 +22,19 @@
 
 ## 6. Steps
 
-Each step is an atomic transaction with two keys:
+Each step is an atomic transaction with three keys:
+- `why:` one-line first-principles justification — *not* analogy. This is the "Reasoning in Public" line that gets printed before the action runs.
 - `action:` the exact shell command to execute (single line, no pipes spanning multiple commands unless necessary).
 - `verification:` the exact shell command that must exit 0 to prove the action succeeded.
 
 ```yaml
 - step: 1
+  why: "<one-line justification grounded in first principles>"
   action: "<command>"
   verification: "<post-condition check command>"
 
 - step: 2
+  why: "<one-line justification grounded in first principles>"
   action: "<command>"
   verification: "<post-condition check command>"
 ```

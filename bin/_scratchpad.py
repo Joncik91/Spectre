@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+PATHS_TOUCHED_CAP = 200
+
 DEFAULT = {
     "active_spec": None,
     "step": 1,
@@ -14,6 +16,8 @@ DEFAULT = {
     "delta": None,
     "timestamp": None,
     "failed_hypotheses": [],
+    "paths_touched": [],
+    "last_drift_check_step": 0,
 }
 
 
