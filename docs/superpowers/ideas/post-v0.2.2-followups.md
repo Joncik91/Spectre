@@ -44,6 +44,16 @@ These three items came out of Plan C self-review. Each is worth fixing eventuall
 2. Heartbeat-based liveness on top (item #1, +15 LOC + protocol bump).
 3. Notifications (item #2) — only after a real workflow demands it.
 
+## 4. External-holder detection for port Resources
+
+**Scope:** the supervisor grants `res-port-N` based on its own internal capacity tracking. It does not check whether port N is *actually free on the host*. Real failure observed during v0.2.2 E2E test (2026-05-05): the spec asked for port 8765, supervisor granted the lock, smoke test failed because `rule-router` daemon already owned 8765 — supervisor had no way to know.
+
+**Fix shape:** when a Resource of `kind=port` is registered, `supervisor.register_resource` should attempt a non-blocking `bind()` probe on `127.0.0.1:<port>`. If the bind fails with `EADDRINUSE`, refuse to register (raise `ResourceConflict`) so the calling track halts before executing. Probe is cheap (~ms) and run-once-per-Resource per supervisor lifetime.
+
+**Why it's not (just) a plan:** ~30 LOC. But it changes the lock semantics from "Spectre-internal mutex" to "Spectre-internal mutex + host-level reality check." That's a small contract bump. Worth its own commit + a `tests/test_supervisor.py` regression test that registers a port, opens an external bind on it, registers again, expects refusal.
+
+**Trigger to promote to plan:** if you also want external-holder detection for non-port Resources (DB pool exhaustion, API quota burned externally) — those have no cheap probe.
+
 ## What's NOT here
 
 These came up during review but are out of scope for any plausible Plan D:
