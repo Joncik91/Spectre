@@ -83,6 +83,19 @@ These items came out of Plan C self-review and the v0.2.2 first-production E2E r
 
 **Trigger to promote to plan:** already met — see `docs/superpowers/specs/2026-05-05-spectre-v0.3-spec-evaluator.md` (when written).
 
+## 7. Pragma integration in `/implement` — actual test-gaming defense
+
+**Scope:** Spectre's `/implement` writes whatever the spec says to build, including tests. The v0.2.2 BTC-poller spec didn't include tests, but a future spec like "build a Python module with pytest coverage" would have `/implement` producing both production code and tests in the same step. Without intervention, an LLM-authored test suite can pass for the wrong reasons (the failure mode `apps/Pragma/` was built to catch). Spectre is in that attack surface today.
+
+**Fix shape:** integrate Pragma directly — do NOT reimplement. Concrete wiring:
+
+- **§5.3 Pragma gate** in `skills/implement/SKILL.md`: after the spec's verification passes, scan `paths_touched` for test-file patterns (`tests/test_*.py`, `*.test.ts`, `*.spec.ts`, `__tests__/*.test.js`, etc.). If any matches, shell out to `pragma check <test-files>`. **Blocking** — failed Pragma = step verification fails, Option B retry kicks in.
+- **§5.4 Pragma Tier 3 (LLM judge) opt-in** via the same `~/.spectre/reviewer.toml` that gates Plan D's spec-evaluator DeepSeek call. One config, two consumers; no duplicated key management.
+
+**Why this belongs in Plan D and not a separate plan:** the same DeepSeek API key, same config file shape, and same JSON-finding output contract serve both the spec evaluator and the Pragma integration. Splitting them creates two configs to manage. Plan D ships with a single `bin/llm_judge.py` that both layers call.
+
+**Trigger to promote to plan:** already met — folded into Plan D / v0.3 as the second of two layers (spec layer + test layer).
+
 ## What's NOT here
 
 These came up during review but are out of scope for any plausible Plan D:
