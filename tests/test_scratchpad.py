@@ -130,3 +130,40 @@ def test_save_track_does_not_clobber_other_tracks(plugin_root):
     data = json.loads(target.read_text())
     assert data["tracks"]["payments"]["step"] == 12
     assert data["tracks"]["auth"]["step"] == 1
+
+
+def test_save_track_v1_expand_preserves_step(plugin_root):
+    # v1 in-flight state must move into tracks.default, not be silently dropped
+    target = plugin_root / "state" / "scratchpad.json"
+    sp.atomic_write(target, {"step": 7, "active_spec": "specs/foo.spec.md", "paths_touched": ["a.txt"]})
+    sp.save_track(target, "newtrack", {"step": 1})
+    import json
+    data = json.loads(target.read_text())
+    assert data["tracks"]["default"]["step"] == 7
+
+
+def test_save_track_v1_expand_preserves_paths_touched(plugin_root):
+    target = plugin_root / "state" / "scratchpad.json"
+    sp.atomic_write(target, {"step": 7, "paths_touched": ["a.txt"]})
+    sp.save_track(target, "newtrack", {"step": 1})
+    import json
+    data = json.loads(target.read_text())
+    assert data["tracks"]["default"]["paths_touched"] == ["a.txt"]
+
+
+def test_save_track_v1_expand_promotes_active_spec_to_mission(plugin_root):
+    target = plugin_root / "state" / "scratchpad.json"
+    sp.atomic_write(target, {"active_spec": "specs/foo.spec.md", "step": 1})
+    sp.save_track(target, "newtrack", {"step": 1})
+    import json
+    data = json.loads(target.read_text())
+    assert data["active_mission"] == "specs/foo.spec.md"
+
+
+def test_load_track_handles_null_tracks(plugin_root):
+    # Corrupted JSON with tracks=null must not raise
+    target = plugin_root / "state" / "scratchpad.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text('{"version": 2, "tracks": null}')
+    td = sp.load_track(target, "auth")
+    assert td["step"] == 1

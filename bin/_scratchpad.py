@@ -86,14 +86,29 @@ def track_default() -> dict[str, Any]:
 
 def load_track(path: Path, track: str) -> dict[str, Any]:
     data = load(path)
-    tracks = data.get("tracks", {})
+    tracks = data.get("tracks") or {}
     return tracks.get(track, track_default())
+
+
+def _expand_v1_to_v2(v1: dict[str, Any]) -> dict[str, Any]:
+    """Promote v1 top-level fields into tracks.default, preserving in-flight state."""
+    new_data = dict(DEFAULT_V2)
+    new_data["tracks"] = {}
+    legacy = track_default()
+    for k in legacy:
+        if k in v1:
+            legacy[k] = v1[k]
+    if v1.get("active_spec"):
+        new_data["active_mission"] = v1["active_spec"]
+    new_data["tracks"]["default"] = legacy
+    return new_data
 
 
 def save_track(path: Path, track: str, track_data: dict[str, Any]) -> None:
     data = load(path)
     if data.get("version") != 2:
-        # First save into a v1 scratchpad → expand to v2 in place
-        data = dict(DEFAULT_V2)
-    data.setdefault("tracks", {})[track] = track_data
+        data = _expand_v1_to_v2(data)
+    if not isinstance(data.get("tracks"), dict):
+        data["tracks"] = {}
+    data["tracks"][track] = track_data
     atomic_write(path, data)
