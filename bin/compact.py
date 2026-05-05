@@ -24,7 +24,7 @@ DELTA_PATTERNS = [
     (re.compile(r"^\s*apt(?:-get)?\s+install\s+(.+)"), "apt install {}"),
     (re.compile(r"^\s*pip\s+install\s+(.+)"), "pip install {}"),
     (re.compile(r"^\s*npm\s+install\s+(.*)"), "npm install {}"),
-    (re.compile(r">\s*(\S+)\s*$"), "wrote {}"),
+    (re.compile(r"(?<![0-9&])>\s*([^\s&]+)\s*$"), "wrote {}"),
 ]
 
 ERR_PATTERN = re.compile(r"^(Error|error|fatal|E:|FAIL|Traceback)", re.MULTILINE)

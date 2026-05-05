@@ -10,6 +10,7 @@ Triggered when the user types `/vision` followed by free-form text describing wh
 
 ## Hard rules (read every invocation)
 
+- **All paths are user-project-cwd-relative.** Spec, scratchpad, and `.active` live under the user's current working directory at session start (e.g. `/home/foo/myproject/specs/...`), NEVER under the plugin's install path (`~/.claude/plugins/...` or `${CLAUDE_PLUGIN_ROOT}`). If you find yourself about to write into a plugin cache directory, STOP — that is a bug. Resolve cwd via `pwd` once at the start of Step 6 and use absolute paths from there.
 - **One spec at a time.** Never write two `.active` files.
 - **Step number is user-driven.** This skill resets `step` to 1; nothing else here writes to it.
 - **No hedging, no "best practices," no industry preambles.** First-principles content only.
@@ -82,17 +83,19 @@ Show the full draft (Hard Problem, First Principles, ..., Steps, Success Criteri
 
 ### Step 6 — Slugify + Write + Lock
 
-1. Slugify the title: lowercase, replace non-alphanumerics with `-`, collapse repeats, strip leading/trailing `-`.
-2. Filename: `specs/<slug>.spec.md`.
-3. Set frontmatter `Generated:` to today's ISO date and `Slug:` to the computed slug.
-4. Write the spec file.
-5. Atomically flip `.active`:
+1. **Anchor to the user's project cwd FIRST.** Run `pwd` to capture the absolute path (e.g. `/home/foo/myproject`). Call this `$PROJECT`. All file paths in the rest of this step are `$PROJECT/specs/...` and `$PROJECT/state/...`. If `$PROJECT` looks like a plugin cache (`/root/.claude/plugins/`, `${CLAUDE_PLUGIN_ROOT}`, or contains `plugins/cache/`), HALT and tell the user to restart Claude Code from their project directory.
+2. `mkdir -p "$PROJECT/specs" "$PROJECT/state"` to ensure the dirs exist.
+3. Slugify the title: lowercase, replace non-alphanumerics with `-`, collapse repeats, strip leading/trailing `-`.
+4. Filename: `$PROJECT/specs/<slug>.spec.md`.
+5. Set frontmatter `Generated:` to today's ISO date and `Slug:` to the computed slug.
+6. Write the spec file at the absolute path.
+7. Atomically flip `.active`:
 
    ```bash
-   printf 'specs/<slug>.spec.md\n' > specs/.active.tmp && mv specs/.active.tmp specs/.active
+   printf 'specs/<slug>.spec.md\n' > "$PROJECT/specs/.active.tmp" && mv "$PROJECT/specs/.active.tmp" "$PROJECT/specs/.active"
    ```
 
-6. Reset `state/scratchpad.json` to:
+8. Reset `$PROJECT/state/scratchpad.json` to:
 
    ```json
    {

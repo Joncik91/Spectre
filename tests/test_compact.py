@@ -121,3 +121,17 @@ def test_additional_context_under_500_chars_for_typical_command(plugin_root):
     result = run_compact(plugin_root, make_event("ls -la"))
     ctx = json.loads(result.stdout)["additionalContext"]
     assert len(ctx) <= 500
+
+
+def test_stderr_merge_redirect_does_not_match_redirect_rule(plugin_root):
+    result = run_compact(plugin_root, make_event("ls 2>&1"))
+    ctx = json.loads(result.stdout)["additionalContext"]
+    assert "wrote &1" not in ctx
+    assert "wrote 2>&1" not in ctx
+
+
+def test_mkdir_with_stderr_merge_keeps_mkdir_delta(plugin_root):
+    result = run_compact(plugin_root, make_event("mkdir -p foo/bar 2>&1"))
+    ctx = json.loads(result.stdout)["additionalContext"]
+    assert "wrote &1" not in ctx
+    assert "foo/bar" in ctx

@@ -10,6 +10,7 @@ Triggered when the user types `/implement` (run next step) or `/implement check`
 
 ## Hard rules (read every invocation)
 
+- **All paths are user-project-cwd-relative.** Read `specs/.active` and `state/scratchpad.json` from the user's `pwd`, never from the plugin install dir (`${CLAUDE_PLUGIN_ROOT}` or `~/.claude/plugins/...`). If `pwd` looks like a plugin cache, HALT and tell the user to restart from their project directory.
 - **Verification is the gate, not the action.** A non-zero `action:` exit is a failure; a zero-exit `action:` followed by a non-zero `verification:` is **also** a failure. Both halt or retry per Option B.
 - **One step per invocation.** Never auto-chain `step N → N+1 → ...`. The user runs `/implement` once per step. This is the human's pause point.
 - **One retry, then halt.** Option B retry policy (see §Retry below).
