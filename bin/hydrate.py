@@ -38,7 +38,7 @@ def main() -> int:
         print(state_line())
         return 0
 
-    target = ACTIVE.read_text().strip()
+    target = ACTIVE.read_text(encoding="utf-8").strip()
     target_path = Path(target)
     if not target_path.exists():
         print(f"ERROR: stale .active pointer ({target})")
@@ -47,9 +47,10 @@ def main() -> int:
         print(state_line())
         return 0
 
+    body = target_path.read_text(encoding="utf-8")
     print(f"--- ACTIVE SPEC: {target} ---")
-    print(target_path.read_text(), end="")
-    if not target_path.read_text().endswith("\n"):
+    print(body, end="")
+    if not body.endswith("\n"):
         print()
     print("--- END ACTIVE SPEC ---")
     print(state_line())
