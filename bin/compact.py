@@ -15,16 +15,27 @@ SPECS_ACTIVE = Path("specs") / ".active"
 SCRATCH = Path("state") / "scratchpad.json"
 
 DELTA_PATTERNS = [
-    (re.compile(r"^\s*mkdir(?:\s+-\w+)*\s+(.+)$"), "mkdir {}"),
-    (re.compile(r"^\s*touch(?:\s+-\w+)*\s+(.+)$"), "touch {}"),
-    (re.compile(r"^\s*rm(?:\s+-\w+)*\s+(.+)$"), "rm {}"),
-    (re.compile(r"^\s*mv\s+(\S+)\s+(\S+)"), "mv {} -> {}"),
-    (re.compile(r"^\s*cp(?:\s+-\w+)*\s+(\S+)\s+(\S+)"), "cp {} -> {}"),
+    (re.compile(r"^\s*mkdir(?:\s+-\w+)*\s+(.+?)(?:\s+2?>&?\d*)?$"), "mkdir {0}"),
+    (re.compile(r"^\s*touch(?:\s+-\w+)*\s+(.+?)(?:\s+2?>&?\d*)?$"), "touch {0}"),
+    (re.compile(r"^\s*rm(?:\s+-\w+)*\s+(.+?)(?:\s+2?>&?\d*)?$"), "rm {0}"),
+    (re.compile(r"^\s*mv\s+(\S+)\s+(\S+)"), "mv {0} -> {1}"),
+    (re.compile(r"^\s*cp(?:\s+-\w+)*\s+(\S+)\s+(\S+)"), "cp {0} -> {1}"),
+    (re.compile(r"^\s*ln\s+(?:-\w+\s+)*(\S+)\s+(\S+)"), "ln {0} -> {1}"),
+    (re.compile(r"^\s*chmod\s+(\S+)\s+(.+)$"), "chmod {0} {1}"),
+    (re.compile(r"^\s*chown\s+(\S+)\s+(.+)$"), "chown {0} {1}"),
     (re.compile(r"^\s*git\s+commit\b"), "git commit"),
-    (re.compile(r"^\s*apt(?:-get)?\s+install\s+(.+)"), "apt install {}"),
-    (re.compile(r"^\s*pip\s+install\s+(.+)"), "pip install {}"),
-    (re.compile(r"^\s*npm\s+install\s+(.*)"), "npm install {}"),
-    (re.compile(r"(?<![0-9&])>\s*([^\s&]+)\s*$"), "wrote {}"),
+    (re.compile(r"^\s*git\s+(add|push|pull|checkout|merge|rebase|reset|tag)\b"), "git {0}"),
+    (re.compile(r"^\s*apt(?:-get)?\s+install\s+(.+)"), "apt install {0}"),
+    (re.compile(r"^\s*pip\s+install\s+(.+)"), "pip install {0}"),
+    (re.compile(r"^\s*npm\s+(install|i|run|start|test|build)\b\s*(.*)"), "npm {0} {1}"),
+    (re.compile(r"^\s*systemctl\s+(start|stop|restart|reload|enable|disable)\s+(.+)"), "systemctl {0} {1}"),
+    (re.compile(r"^\s*docker\s+(run|build|stop|rm|exec)\b"), "docker {0}"),
+    (re.compile(r"(?<![0-9&])>>\s*([^\s&]+)\s*$"), "appended {0}"),
+    (re.compile(r"(?<![0-9&])>\s*([^\s&]+)\s*$"), "wrote {0}"),
+    (re.compile(r"^\s*(?:bash|sh)\s+(\S+\.sh)"), "ran {0}"),
+    (re.compile(r"^\s*(/[\w/.-]+\.sh)\b"), "ran {0}"),
+    (re.compile(r"^\s*python3?\s+(\S+\.py)"), "python {0}"),
+    (re.compile(r"^\s*pytest\b"), "pytest"),
 ]
 
 ERR_PATTERN = re.compile(r"^(Error|error|fatal|E:|FAIL|Traceback)", re.MULTILINE)

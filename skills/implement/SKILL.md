@@ -30,10 +30,18 @@ cat state/scratchpad.json   # → step, exit_code, failed_hypotheses
 If `.active` is missing or stale → halt: `ERROR: no active spec. Run /vision first.`
 
 Parse the active spec's `## 6. Steps` YAML block. Identify:
+- `total_steps` = highest `step:` number in the YAML
 - `current_step` = `scratchpad.step`
 - `current_action` = the `action:` value at that step
 - `current_verification` = the `verification:` value at that step
 - `prev_verification` = the `verification:` from step `current_step - 1` (if any)
+
+**Terminal state check:** if `current_step > total_steps`, halt:
+```
+SPEC COMPLETE: specs/<slug>.spec.md (all <N> steps verified).
+To start a new mission, run /vision.
+```
+Do not execute anything further; do not modify the scratchpad.
 
 ### Step 2 — Pre-flight: re-verify previous step
 

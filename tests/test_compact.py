@@ -135,3 +135,21 @@ def test_mkdir_with_stderr_merge_keeps_mkdir_delta(plugin_root):
     ctx = json.loads(result.stdout)["additionalContext"]
     assert "wrote &1" not in ctx
     assert "foo/bar" in ctx
+
+
+def test_chmod_delta_extracts_mode_and_target(plugin_root):
+    result = run_compact(plugin_root, make_event("chmod +x /tmp/x.sh"))
+    ctx = json.loads(result.stdout)["additionalContext"]
+    assert "chmod +x /tmp/x.sh" in ctx
+
+
+def test_script_invocation_delta_says_ran(plugin_root):
+    result = run_compact(plugin_root, make_event("/tmp/x.sh"))
+    ctx = json.loads(result.stdout)["additionalContext"]
+    assert "ran /tmp/x.sh" in ctx
+
+
+def test_append_redirect_distinct_from_overwrite(plugin_root):
+    result = run_compact(plugin_root, make_event("echo hi >> log.txt"))
+    ctx = json.loads(result.stdout)["additionalContext"]
+    assert "appended log.txt" in ctx
