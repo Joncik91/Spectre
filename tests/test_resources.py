@@ -198,7 +198,7 @@ def test_extract_resources_skips_date_like_string():
     assert found == []
 
 
-def test_extract_resources_rejects_leading_zero_port():
+def test_extract_resources_leading_zero_port_returns_empty():
     # Real ports never have leading zeros
     found = resources.extract_resources_from_action("--port=00080")
     assert found == []
