@@ -27,6 +27,7 @@ Each step is an atomic transaction with three required keys plus one optional:
 - `action:` the exact shell command to execute (single line, no pipes spanning multiple commands unless necessary).
 - `verification:` the exact shell command that must exit 0 to prove the action succeeded.
 - `properties:` (optional) — list of PBT-lite assertions the State Auditor will check after `verification` passes. Each property has `kind:` (one of `type` / `schema` / `length` / `range`), `target:` (path to a JSON file), and kind-specific fields. See `bin/auditor.py` for supported shapes. Auditor verdicts are informational, not blocking — they land in scratchpad and the next compact's additionalContext.
+- `resources:` (optional) — list of Resource node IDs this step needs to acquire before executing. Each entry is a string matching a Resource node in `specs/.graph.md`. The supervisor grants access; if at capacity, the track queues. Released automatically after the step's verification passes (or on terminal halt).
 
 ```yaml
 - step: 1
@@ -47,6 +48,13 @@ Each step is an atomic transaction with three required keys plus one optional:
   why: "<one-line justification grounded in first principles>"
   action: "<command>"
   verification: "<post-condition check command>"
+
+- step: 3
+  why: "Server must bind a known TCP port; lock prevents two tracks racing for it."
+  action: "python3 -m http.server 8080"
+  verification: "curl -sf http://127.0.0.1:8080 > /dev/null"
+  resources:
+    - res-port-8080
 ```
 
 ## 7. Success Criteria
