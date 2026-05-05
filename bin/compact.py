@@ -15,11 +15,11 @@ SPECS_ACTIVE = Path("specs") / ".active"
 SCRATCH = Path("state") / "scratchpad.json"
 
 DELTA_PATTERNS = [
-    (re.compile(r"^\s*mkdir\b.*?(\S+)\s*$"), "mkdir {}"),
-    (re.compile(r"^\s*touch\s+(\S+)"), "touch {}"),
-    (re.compile(r"^\s*rm\s+(?:-\w+\s+)?(\S+)"), "rm {}"),
+    (re.compile(r"^\s*mkdir(?:\s+-\w+)*\s+(.+)$"), "mkdir {}"),
+    (re.compile(r"^\s*touch(?:\s+-\w+)*\s+(.+)$"), "touch {}"),
+    (re.compile(r"^\s*rm(?:\s+-\w+)*\s+(.+)$"), "rm {}"),
     (re.compile(r"^\s*mv\s+(\S+)\s+(\S+)"), "mv {} -> {}"),
-    (re.compile(r"^\s*cp\s+(?:-\w+\s+)?(\S+)\s+(\S+)"), "cp {} -> {}"),
+    (re.compile(r"^\s*cp(?:\s+-\w+)*\s+(\S+)\s+(\S+)"), "cp {} -> {}"),
     (re.compile(r"^\s*git\s+commit\b"), "git commit"),
     (re.compile(r"^\s*apt(?:-get)?\s+install\s+(.+)"), "apt install {}"),
     (re.compile(r"^\s*pip\s+install\s+(.+)"), "pip install {}"),
@@ -101,10 +101,15 @@ def main() -> int:
             "ts": data["timestamp"],
         })
 
-    sp.atomic_write(SCRATCH, data)
+    write_warning = ""
+    try:
+        sp.atomic_write(SCRATCH, data)
+    except OSError as exc:
+        write_warning = f"COMPACT_WARN: scratchpad write failed: {exc}\n"
 
     failed_count = len(data.get("failed_hypotheses", []))
     ctx = (
+        f"{write_warning}"
         f"COMMAND_RESULT: {exit_code}\n"
         f"STATE_DELTA: {delta}\n"
         f"ANCHOR: {anchor} Step {step}.\n"
