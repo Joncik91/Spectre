@@ -90,24 +90,43 @@ def load_track(path: Path, track: str) -> dict[str, Any]:
     return tracks.get(track, track_default())
 
 
-def _expand_v1_to_v2(v1: dict[str, Any]) -> dict[str, Any]:
-    """Promote v1 top-level fields into tracks.default, preserving in-flight state."""
+_V2_RESERVED_TOP_KEYS = {"version", "active_mission", "tracks", "decisions_index", "graph_snapshot"}
+
+
+def expand_v1_to_v2(v1: dict[str, Any]) -> dict[str, Any]:
+    """Promote v1 top-level fields into tracks.default, preserving in-flight state.
+
+    Unknown v1 keys (not in track_default and not v2-reserved) survive under
+    tracks.default._v1_unknown so user-authored fields are not silently dropped.
+    """
     new_data = dict(DEFAULT_V2)
     new_data["tracks"] = {}
     legacy = track_default()
+    consumed: set[str] = set()
     for k in legacy:
         if k in v1:
             legacy[k] = v1[k]
+            consumed.add(k)
     if v1.get("active_spec"):
         new_data["active_mission"] = v1["active_spec"]
+    unknown = {
+        k: v for k, v in v1.items()
+        if k not in consumed and k not in _V2_RESERVED_TOP_KEYS and k != "active_spec"
+    }
+    if unknown:
+        legacy["_v1_unknown"] = unknown
     new_data["tracks"]["default"] = legacy
     return new_data
+
+
+# Backward-compat alias (was the private name in earlier commits)
+_expand_v1_to_v2 = expand_v1_to_v2
 
 
 def save_track(path: Path, track: str, track_data: dict[str, Any]) -> None:
     data = load(path)
     if data.get("version") != 2:
-        data = _expand_v1_to_v2(data)
+        data = expand_v1_to_v2(data)
     if not isinstance(data.get("tracks"), dict):
         data["tracks"] = {}
     data["tracks"][track] = track_data

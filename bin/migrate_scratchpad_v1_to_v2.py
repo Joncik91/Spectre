@@ -16,21 +16,7 @@ def migrate(path: Path) -> str:
         raise ValueError(f"cannot parse scratchpad at {path}: {e}") from e
     if data.get("version") == 2:
         return "noop"
-    # v1 shape: move top-level fields to tracks.default
-    track_data = sp.track_default()
-    for k in track_data:
-        if k in data:
-            track_data[k] = data[k]
-    new_data = {
-        "version": 2,
-        "active_mission": None,
-        "tracks": {},
-        "decisions_index": "decisions/",
-        "graph_snapshot": "specs/.graph.md",
-    }
-    new_data["tracks"]["default"] = track_data
-    if "active_spec" in data:
-        new_data["active_mission"] = data["active_spec"]
+    new_data = sp.expand_v1_to_v2(data)
     sp.atomic_write(path, new_data)
     return "migrated"
 

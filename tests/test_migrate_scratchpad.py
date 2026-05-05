@@ -68,3 +68,21 @@ def test_migrate_corrupt_v1_raises(tmp_path):
     import pytest
     with pytest.raises(ValueError, match="cannot parse"):
         mig.migrate(p)
+
+
+def test_migrate_preserves_unknown_v1_keys(tmp_path):
+    # User-authored v1 fields that aren't in track_default must survive under _v1_unknown
+    p = tmp_path / "scratchpad.json"
+    p.write_text(json.dumps({"step": 3, "notes": "hand-authored", "custom_id": 42}))
+    mig.migrate(p)
+    data = json.loads(p.read_text())
+    unknown = data["tracks"]["default"]["_v1_unknown"]
+    assert unknown == {"notes": "hand-authored", "custom_id": 42}
+
+
+def test_migrate_no_v1_unknown_when_only_default_keys_present(tmp_path):
+    p = tmp_path / "scratchpad.json"
+    p.write_text(json.dumps({"step": 3}))
+    mig.migrate(p)
+    data = json.loads(p.read_text())
+    assert "_v1_unknown" not in data["tracks"]["default"]
