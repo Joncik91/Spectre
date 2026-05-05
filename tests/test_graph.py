@@ -283,11 +283,8 @@ def test_mark_stale_cascades_through_constrains_edges():
     assert graph.get_node(nodes, "impl-2").status == "stale"
 
 
-def test_mark_stale_cascade_does_not_propagate_through_unrelated_edges():
-    # iface-1 has no incoming constrains/satisfies edge from inv-1's reachable set
-    # Wait — impl-1 satisfies iface-1, and impl-1 is reachable from inv-1.
-    # So iface-1 IS reachable through inv-1 -> impl-1 (constrains) -> iface-1 (satisfies).
-    # Both constrains and satisfies are CASCADE_EDGES. So iface-1 SHOULD become stale.
+def test_mark_stale_cascade_propagates_through_satisfies_edges():
+    # impl-1 satisfies iface-1; satisfies is in CASCADE_EDGES, so iface-1 becomes stale.
     nodes = _build_sample_graph()
     graph.mark_stale_cascade(nodes, root_id="inv-1")
     assert graph.get_node(nodes, "iface-1").status == "stale"

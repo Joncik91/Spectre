@@ -28,6 +28,12 @@ class Node:
             raise ValueError(f"unknown status: {self.status!r}")
 
     def add_edge(self, *, target: str, edge_type: str) -> None:
+        """Append an edge to this node.
+
+        Note: kwarg is named `edge_type` (not `type`) to avoid shadowing the
+        Python builtin. The on-disk dict key in self.edges remains "type"
+        — that's the manifest schema and is independent of the Python kwarg.
+        """
         if edge_type not in EDGE_TYPES:
             raise ValueError(f"unknown edge type: {edge_type!r}")
         self.edges.append({"target": target, "type": edge_type})
@@ -150,6 +156,8 @@ def find_stale(nodes: list[Node]) -> list[Node]:
     return [n for n in nodes if n.status == "stale"]
 
 
+# Edges traversed by mark_stale_cascade. Excludes invalidates (already-invalid by definition),
+# supersedes (ADR replacement, not architectural cascade), and blocks (resource lock, not state-dep).
 CASCADE_EDGES = ("constrains", "satisfies")
 
 
