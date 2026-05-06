@@ -617,3 +617,83 @@ def test_init_walk_pending_starts_with_seed_assumption_then_four_receiver_clarif
         spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
     )
     assert len(state.pending) == 5
+
+
+def test_full_walk_with_revise_and_stop_persists_correctly(tmp_path):
+    """E2E: answer seed-1, add three downstream concerns, answer them,
+    revise seed-1, confirm c2+c3 invalidated (NOT c4 — it doesn't depend
+    on seed-1), stop, persist, reload, confirm invalidation set survived."""
+    walk_path = tmp_path / "walk.json"
+
+    # Round 0 (init) — pending = [seed-1, seed-mutates, seed-never-touches, seed-decision-budget, seed-reboot-survival]
+    state = walker.init_walk(
+        spec_intent="build a btc poller",
+        spec_draft_path=tmp_path / "btc.spec.md.draft",
+    )
+    walker.persist(state, walk_path)
+
+    # Round 1: answer seed-1
+    state = walker.record_answer(
+        state, concern_id="seed-1", answer="assumes coingecko reachable"
+    )
+
+    # Add three downstream concerns by hand (in v0.4.1 the walker generates these
+    # automatically). c2 depends on seed-1; c3 depends on c2; c4 is independent.
+    state.pending.extend([
+        walker.Concern(
+            id="c2",
+            kind="edge-case",
+            receivers=["implement"],
+            depends_on=["seed-1"],
+            summary="rate limit handling",
+        ),
+        walker.Concern(
+            id="c3",
+            kind="edge-case",
+            receivers=["implement"],
+            depends_on=["c2"],
+            summary="429 backoff",
+        ),
+        walker.Concern(
+            id="c4",
+            kind="receiver-clarification",
+            receivers=["tier3"],
+            depends_on=[],
+            summary="adversarial review surface",
+        ),
+    ])
+    walker.persist(state, walk_path)
+
+    # Rounds 2-4: answer the three new concerns
+    state = walker.record_answer(state, concern_id="c2", answer="exponential")
+    state = walker.record_answer(state, concern_id="c3", answer="cap at 60s")
+    state = walker.record_answer(state, concern_id="c4", answer="check egress")
+    walker.persist(state, walk_path)
+
+    # Revise round 1 — should invalidate c2 and c3 transitively, NOT c4
+    state, invalidated = walker.revise_answer(
+        state,
+        concern_id="seed-1",
+        new_answer="assumes BOTH coingecko and binance reachable",
+    )
+    assert set(invalidated) == {"c2", "c3"}
+
+    # Stop + persist
+    state.stop_reason = "author-arbitrated"
+    walker.persist(state, walk_path)
+
+    # Reload — confirm stale set survived round-trip
+    loaded = walker.load(walk_path)
+    assert loaded.stale == {"c2", "c3"}
+
+
+def test_should_stop_after_full_walk_returns_author_arbitrated(tmp_path):
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=tmp_path / "x.spec.md.draft",
+    )
+    state = walker.record_answer(state, concern_id="seed-1", answer="x")
+    state.stop_reason = "author-arbitrated"
+    stop, reason = walker.should_stop(state)
+    assert stop is True
+    assert reason == "author-arbitrated"
