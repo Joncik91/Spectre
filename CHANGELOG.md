@@ -21,7 +21,7 @@ All notable changes to the SDL Vision Engine plugin (Spectre).
 - `.claude-plugin/marketplace.json` plugin version 0.4.1 → 0.4.2.
 
 ### Tests
-~660 passing (614 v0.4.1 baseline + ~14 cdlc_ledger + ~14 templates + ~12 template_patcher + 2 scratchpad + 4 hydrate + 4 setup_wizard).
+**664 passing** (614 v0.4.1 baseline + 11 cdlc_ledger + 14 templates + 12 template_patcher + 2 scratchpad + 5 hydrate + 4 setup_wizard + 2 observations/personal_rules wire-up). Audit fixes during build: clear pending_adoption_prompt FIRST in §3.5b (prevent replay), ledger write non-blocking in §3.5, step number ambiguity in §6 Path A pinned to pre-increment, hydrate idempotency regression test for slug-parity contract.
 
 ### Architecture references
 - Design: `docs/superpowers/specs/2026-05-06-spectre-v0.4-cdlc-closure.md`

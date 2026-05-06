@@ -6,7 +6,7 @@
 
 > SDL Vision Engine — a deterministic spec-driven Claude Code plugin. Vision → Spec → Evaluate → Lock → Implement → Verify, with three-tier pre-lock review and per-project resource locking.
 
-[![tests](https://img.shields.io/badge/tests-614%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![tests](https://img.shields.io/badge/tests-664%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## Table of Contents
 
@@ -101,6 +101,28 @@ The key value is never copied into `reviewer.toml` — only the env-var name is 
 - **Project-locked §8.1 rules are immune.** A spec's `mutates:` / `never-touches:` block always overrides personal-rules — adoptions cannot weaken a project's hard contract.
 
 The setup wizard provisions an empty `personal-rules.toml` at first run.
+
+### Templates (v0.4.2+) — Distribute leg
+
+`~/.spectre/templates/` holds reusable spec drafts and skills you can import into new projects.
+
+```bash
+# Export a project spec as a reusable template
+python3 -c "from bin import templates; templates.export_template(source_path='specs/my-spec.spec.md', target_name='my-spec-base')"
+
+# Import in a fresh project (also surfaced in /vision Step 0 if templates exist)
+python3 -c "from bin import templates; templates.import_template(source_name='my-spec-base', target_name='my-new-spec')"
+```
+
+Imported specs land at `./specs/<target>.spec.md.draft` so the existing /vision interrogation walk still gates the lock. Imported skills land at `./skills/<target>.md`.
+
+The setup wizard provisions `~/.spectre/templates/{specs,skills}/` + `~/.spectre/template-patches/{proposed,accepted,rejected}/` at first run. Local-only — no remote sync in v0.4.2.
+
+### Template-patches (v0.4.2+) — Adapt's auto-proposals
+
+When a TIER GATE halt fingerprint recurs ≥3 times across your projects without being adopted as a personal-rule, Spectre auto-proposes a markdown patch to your project's `specs/template.spec.md`. Patches land at `~/.spectre/template-patches/proposed/<slug>.md`. SessionStart surfaces the count.
+
+Manual workflow: `cat` the proposed patch, decide. Move to `accepted/` to mark applied, `rejected/` to dismiss. Spectre never auto-merges.
 
 ## Usage
 

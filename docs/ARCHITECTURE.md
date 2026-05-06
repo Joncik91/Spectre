@@ -200,6 +200,22 @@ Reference:
 - Design: `docs/superpowers/specs/2026-05-06-spectre-v0.4-cdlc-closure.md` §6.3, §6.4
 - Plan: `docs/superpowers/plans/2026-05-06-v0.4.1-observe-adapt.md`
 
+## CDLC Ledger + Distribute + Adapt-Patches (v0.4.2)
+
+`bin/cdlc_ledger.py`, `bin/templates.py`, and `bin/template_patcher.py` close the third leg of the CDLC.
+
+**Ledger.** Every Generate→Test→Lock→Implement→Halt→Adapt transition is appended to per-project `state/cdlc-ledger.json` via atomic write. Read-only audit surface — no user-facing command. Call sites: `/vision` §6.7 (lock=generate), `/implement` §6 Path A (implement) and §3.5 (halt), `bin/observations.record_halt` (halt), `bin/personal_rules.append_adoption` (adapt).
+
+**Distribute.** `~/.spectre/templates/{specs,skills}/` is the per-user template store. `bin/templates.import_template` copies a stored template into a new project (specs land at `./specs/<name>.spec.md.draft` so the /vision flow still gates the lock; skills land at `./skills/<name>.md`). `bin/templates.export_template` is the reverse. Local-only — remote sync deferred to v0.5+.
+
+**Adapt-patches.** When `observations.find_recurrences(threshold=3)` returns recurring halt fingerprints AND those fingerprints aren't already covered by `personal_rules`, `bin/template_patcher.detect_patch_candidates` lists them and `template_patcher.propose_patch` writes a markdown patch to `~/.spectre/template-patches/proposed/<slug>.md`. SessionStart's `bin/hydrate.surface_pending_template_patches` reports the count; `bin/hydrate.detect_and_propose_patches` writes new proposals at session start. Manual accept/reject only.
+
+**Deferred-prompt durability.** `bin/_scratchpad.track_default()` gains `pending_adoption_prompt: dict | None`. /implement §3.5 writes this on TIER GATE halt + user=yes; §3.5b reads it post-Path-A and clears FIRST (before adopt-write) so an adopt-write failure does not strand the prompt for replay next session.
+
+Reference:
+- Design: `docs/superpowers/specs/2026-05-06-spectre-v0.4-cdlc-closure.md` §6.5, §6.6
+- Plan: `docs/superpowers/plans/2026-05-06-v0.4.2-cdlc-distribute.md`
+
 ## Resource-lock supervisor (v0.2.2)
 
 For multi-track projects (`/implement payments`, `/implement notifications`), Spectre runs a per-project Unix domain socket daemon at `runtime/supervisor.sock`:
