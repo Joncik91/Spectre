@@ -153,3 +153,38 @@ def revise_answer(
         queue.extend(children.get(nxt, []))
 
     return state, invalidated
+
+
+def should_stop(
+    state: WalkState,
+    *,
+    max_rounds: int = DEFAULT_MAX_ROUNDS,
+    yield_threshold: int = DEFAULT_YIELD_THRESHOLD,
+    yield_converge_rounds: int = DEFAULT_YIELD_CONVERGE_ROUNDS,
+) -> tuple[bool, str | None]:
+    """Check all four stop conditions. Returns (stop, reason).
+
+    Order of evaluation: author-arbitrated > tier3-yield-converged >
+    max-rounds > per-receiver-exhausted. The first match wins so the
+    reason field is deterministic.
+    """
+    if state.stop_reason == "author-arbitrated":
+        return (True, "author-arbitrated")
+
+    # Tier 3 yield convergence: last `yield_converge_rounds` deltas all below threshold.
+    if (
+        len(state.yield_history) >= yield_converge_rounds
+        and all(
+            d < yield_threshold for d in state.yield_history[-yield_converge_rounds:]
+        )
+    ):
+        return (True, "tier3-yield-converged")
+
+    if state.round_count >= max_rounds:
+        return (True, "max-rounds")
+
+    # Per-receiver exhaustion: nothing left to ask any receiver.
+    if not any(c.id not in state.stale for c in state.pending):
+        return (True, "per-receiver-exhausted")
+
+    return (False, None)

@@ -347,3 +347,90 @@ def test_revise_answer_raises_for_unanswered_concern():
     )
     with pytest.raises(KeyError, match="not in answered"):
         walker.revise_answer(state, concern_id="seed-1", new_answer="x")
+
+
+def test_should_stop_returns_true_when_author_arbitrated():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    state.stop_reason = "author-arbitrated"
+    stop, reason = walker.should_stop(state)
+    assert stop is True
+    assert reason == "author-arbitrated"
+
+
+def test_should_stop_returns_true_when_max_rounds_hit():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    state.round_count = walker.DEFAULT_MAX_ROUNDS
+    stop, reason = walker.should_stop(state)
+    assert stop is True
+    assert reason == "max-rounds"
+
+
+def test_should_stop_returns_false_when_round_count_below_max():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    state.round_count = 1
+    stop, _ = walker.should_stop(state)
+    assert stop is False
+
+
+def test_should_stop_returns_true_on_per_receiver_exhaustion():
+    """All pending concerns marked stale AND no answered concerns yet
+    is the seed-only-and-skipped edge — exhausted for every receiver."""
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    state.pending = []  # no pending concerns at all
+    stop, reason = walker.should_stop(state)
+    assert stop is True
+    assert reason == "per-receiver-exhausted"
+
+
+def test_should_stop_returns_true_on_tier3_yield_converged():
+    """Three consecutive rounds with <2 new T3 fingerprints each."""
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    state.round_count = 5
+    state.yield_history = [5, 4, 1, 1, 0]  # last 3 rounds: 1, 1, 0 — all <2
+    state.pending.append(walker.Concern(
+        id="c2", kind="edge-case", receivers=["implement"],
+        depends_on=[], summary="not exhausted",
+    ))
+    stop, reason = walker.should_stop(state)
+    assert stop is True
+    assert reason == "tier3-yield-converged"
+
+
+def test_should_stop_yield_not_converged_when_only_two_low_rounds():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    state.round_count = 5
+    state.yield_history = [5, 4, 3, 1, 1]  # last 3: 3, 1, 1 — not all <2
+    state.pending.append(walker.Concern(
+        id="c2", kind="edge-case", receivers=["implement"],
+        depends_on=[], summary="x",
+    ))
+    stop, _ = walker.should_stop(state)
+    assert stop is False
+
+
+def test_should_stop_returns_false_with_pending_concerns_and_low_rounds():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    stop, reason = walker.should_stop(state)
+    assert stop is False
+    assert reason is None
