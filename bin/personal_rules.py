@@ -85,6 +85,37 @@ def _atomic_write_toml(path: pathlib.Path, body: str) -> None:
         raise
 
 
+_TOML_ESCAPES = {
+    "\\": "\\\\",
+    '"': '\\"',
+    "\n": "\\n",
+    "\r": "\\r",
+    "\t": "\\t",
+    "\b": "\\b",
+    "\f": "\\f",
+}
+
+
+def _escape_toml_string(s: str) -> str:
+    """Escape a string for use inside a TOML basic-string ('"..."').
+
+    Handles \\ " and the five control-char escape sequences. Per TOML spec,
+    basic strings forbid raw 0x00-0x1F except via these escapes. Other
+    control chars (0x00-0x07, 0x0B, 0x0E-0x1F, 0x7F) get \\u escaped.
+    """
+    out_chars: list[str] = []
+    for ch in s:
+        if ch in _TOML_ESCAPES:
+            out_chars.append(_TOML_ESCAPES[ch])
+            continue
+        cp = ord(ch)
+        if cp < 0x20 or cp == 0x7F:
+            out_chars.append(f"\\u{cp:04X}")
+            continue
+        out_chars.append(ch)
+    return "".join(out_chars)
+
+
 def append_adoption(*, classifier_label: str, fingerprint: str, reason: str) -> None:
     """Add an entry to personal-rules.toml. Increments the session counter.
 
@@ -115,8 +146,8 @@ def append_adoption(*, classifier_label: str, fingerprint: str, reason: str) -> 
         '[overrides]',
     ]
     for key, entry in sorted(overrides.items()):
-        escaped_key = key.replace("\\", "\\\\").replace('"', '\\"')
-        escaped_reason = entry["reason"].replace("\\", "\\\\").replace('"', '\\"')
+        escaped_key = _escape_toml_string(key)
+        escaped_reason = _escape_toml_string(entry["reason"])
         escaped_at = entry["adopted_at"]
         lines.append(
             f'"{escaped_key}" = '

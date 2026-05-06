@@ -138,3 +138,40 @@ def test_append_adoption_writes_mode_0600(tmp_path, monkeypatch):
     target = tmp_path / ".spectre" / "personal-rules.toml"
     mode = target.stat().st_mode & 0o777
     assert mode == 0o600
+
+
+def test_append_adoption_handles_newline_in_reason(tmp_path, monkeypatch):
+    """Reasons containing literal newlines must round-trip cleanly via the
+    TOML writer. Without proper control-char escaping, the inline table
+    would be malformed and load_personal_rules would silently lose the
+    entry on next read."""
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    fp = "a" * 64
+    multiline_reason = "first line\nsecond line\twith tab"
+    personal_rules.append_adoption(
+        classifier_label="permission-change: chmod",
+        fingerprint=fp,
+        reason=multiline_reason,
+    )
+    # Round-trip: the next is_classifier_halt_overridden must succeed.
+    result = personal_rules.is_classifier_halt_overridden(
+        classifier_label="permission-change: chmod",
+        fingerprint=fp,
+    )
+    assert result is True
+
+
+def test_append_adoption_handles_quote_in_reason(tmp_path, monkeypatch):
+    """Reasons with literal double-quotes must round-trip via TOML escape."""
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    fp = "b" * 64
+    personal_rules.append_adoption(
+        classifier_label="x",
+        fingerprint=fp,
+        reason='reason with "quotes" and \\backslashes\\',
+    )
+    result = personal_rules.is_classifier_halt_overridden(
+        classifier_label="x",
+        fingerprint=fp,
+    )
+    assert result is True
