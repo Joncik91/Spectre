@@ -19,6 +19,22 @@ Triggered when the user types `/vision` followed by free-form text describing wh
 
 ## Protocol
 
+### Step 0 — Codebase Fingerprint (silent, internal)
+
+Before treating the user's text as a Spark, run the fingerprinter to surface prior art in the user's codebase:
+
+```bash
+python3 bin/fingerprint.py 2>&1 | tail -5
+```
+
+This writes `state/local-symbols.json`. Read the first 50 entries:
+
+```bash
+python3 -c "import json; d=json.load(open('state/local-symbols.json')); print(json.dumps(d[:50], indent=2))"
+```
+
+When the walker surfaces concerns in Step 4, scan the symbol map for any function/class/module conceptually related to the user's intent (e.g. intent says "fetch BTC price" → search for `fetch`, `price`, `http`, `bitcoin`, `btc`, `requests`). If you find a candidate, surface it via a `branch-resolution` concern: "We will NOT reinvent `<symbol_name>` at `<file>:<line>` — reuse it as the basis for step N." The "never reinvent the wheel" rule is enforced by construction here. Skipping Step 0 violates the rule silently.
+
 ### Step 1 — Receive intent
 
 The user has typed `/vision <free-form text>`. Treat the text as **intent**, not as a spec. Anchor cwd via `pwd` to capture `$PROJECT`. If `$PROJECT` looks like a plugin cache (`/root/.claude/plugins/...`), HALT.
