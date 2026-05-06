@@ -20,7 +20,7 @@ LOC reduction in `skills/vision/SKILL.md`: ~62 LOC of heredoc-Python removed; ~1
 
 Audit targets #11 (`skills/implement/SKILL.md` §3.5 Persistence-Tier classifier, 33 LOC heredoc) and #19 (§5.5 State Auditor, 25 LOC heredoc) are deferred to Phase 2C. Both require new CLI entry points on `bin/tier.py` and `bin/auditor.py` that Phase 2A did not ship; extending the CLI surface mid-Phase-2B would have retroactively broken Phase 2A's "additive only" guarantee. Phase 2C will land those CLIs alongside the §3.5 / §5.5 prose replacements in a single coherent PR.
 
-15 of the 20 audited heredocs remain (3 vision + 12 implement). Phase 2C handles the medium-leverage targets, Phase 2D the cleanup tail.
+20 heredocs remain (7 vision + 13 implement) per `grep -c "python3 - <<"` against both skill files; of the 5 high-leverage audit targets, 3 are closed and 2 are deferred to Phase 2C. Phase 2C handles the medium-leverage targets, Phase 2D the cleanup tail.
 
 ### Tests
 
