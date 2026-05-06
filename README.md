@@ -24,7 +24,7 @@
 
 Default Claude Code auto-memory drifts during long sessions: spec-level intent gets buried under terminal scroll-back, "what did I just change on disk" answers require re-reading logs that have already aged out of context, and the agent will happily power through a half-broken plan when nobody re-grounds it.
 
-Spectre overrides this with a deterministic state machine that drives an unbroken **vision → spec → evaluate → lock → implement → verify** chain. Two hooks own the context plane, two skills own the agent plane, and ~17 stdlib-only Python modules own the state plane.
+Spectre overrides this with a deterministic state machine that drives an unbroken **vision → spec → evaluate → lock → implement → verify** chain. Two hooks own the context plane, two skills own the agent plane, and ~26 stdlib-only Python modules own the state plane (v0.4 added the interrogation walker, observations log, personal-rules overrides, CDLC ledger, templates registry, and template-patcher).
 
 **The four invariants:**
 
