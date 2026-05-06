@@ -2,6 +2,24 @@
 
 All notable changes to the SDL Vision Engine plugin (Spectre).
 
+## v0.4.2.6 — 2026-05-06
+
+**Patch release — fix #13 audit finding (State Auditor silent no-op on v2 scratchpads).**
+
+### Fixed
+- **State Auditor schema level** — `skills/implement/SKILL.md` §5.5 heredoc was reading `paths_touched` via `sp.get("paths_touched", [])` directly from the scratchpad root. After the v1→v2 migration `paths_touched` moved to `data["tracks"][track]["paths_touched"]`, so the auditor silently received `[]` on every post-migration run and `auditor.audit_action` was a no-op for all v2 scratchpads. (Discovered during issue #13 audit: `docs/superpowers/audits/2026-05-06-issue-13-heredoc-audit.md`, occurrence #19.)
+- Heredoc now uses `_scratchpad.get_paths_touched(sp, track="<current_track>")` which falls back to the v1 top-level key for mixed-version transitions.
+- Heredoc now writes audit results back via `_scratchpad.atomic_write` instead of raw `json.dump`, eliminating the data-corruption risk on interrupted writes (also flagged in #19).
+
+### Tests
+**693 passing** (690 baseline + 3 new). New tests in `tests/test_auditor.py`:
+- `test_paths_touched_resolved_from_v2_schema_level` — v2 fixture; assert auditor sees actual paths under `tracks.default.paths_touched`.
+- `test_paths_touched_falls_back_to_v1_schema_level` — v1-style fixture (top-level key); assert lookup still returns the list.
+- `test_paths_touched_returns_empty_for_missing_field` — neither key present → `[]`, no crash.
+
+### References
+- Issue #13 audit: `docs/superpowers/audits/2026-05-06-issue-13-heredoc-audit.md` (occurrence #19)
+
 ## v0.4.2.5 — 2026-05-06
 
 **Patch release — closes #12 P2 (Tier 3 prong timeouts on deepseek-reasoner).**
