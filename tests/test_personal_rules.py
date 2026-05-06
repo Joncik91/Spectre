@@ -88,6 +88,7 @@ def test_is_classifier_halt_overridden_distinct_fingerprints_independent(tmp_pat
 
 def test_append_adoption_creates_file_with_entry(tmp_path, monkeypatch):
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
     fp = "a" * 64
     personal_rules.append_adoption(
         classifier_label="permission-change: chmod",
@@ -100,6 +101,7 @@ def test_append_adoption_creates_file_with_entry(tmp_path, monkeypatch):
 
 def test_append_adoption_makes_subsequent_lookups_return_true(tmp_path, monkeypatch):
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
     fp = "deadbeef" * 8
     personal_rules.append_adoption(
         classifier_label="permission-change: chmod",
@@ -115,6 +117,7 @@ def test_append_adoption_makes_subsequent_lookups_return_true(tmp_path, monkeypa
 
 def test_append_adoption_preserves_existing_entries(tmp_path, monkeypatch):
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
     fp_a = "a" * 64
     fp_b = "b" * 64
     personal_rules.append_adoption(
@@ -132,6 +135,7 @@ def test_append_adoption_preserves_existing_entries(tmp_path, monkeypatch):
 
 def test_append_adoption_writes_mode_0600(tmp_path, monkeypatch):
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
     personal_rules.append_adoption(
         classifier_label="x", fingerprint="a"*64, reason="r"
     )
@@ -146,6 +150,7 @@ def test_append_adoption_handles_newline_in_reason(tmp_path, monkeypatch):
     would be malformed and load_personal_rules would silently lose the
     entry on next read."""
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
     fp = "a" * 64
     multiline_reason = "first line\nsecond line\twith tab"
     personal_rules.append_adoption(
@@ -164,6 +169,7 @@ def test_append_adoption_handles_newline_in_reason(tmp_path, monkeypatch):
 def test_append_adoption_handles_quote_in_reason(tmp_path, monkeypatch):
     """Reasons with literal double-quotes must round-trip via TOML escape."""
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
     fp = "b" * 64
     personal_rules.append_adoption(
         classifier_label="x",
@@ -185,6 +191,7 @@ def test_adoption_count_this_session_starts_at_zero(monkeypatch, tmp_path):
 
 def test_adoption_count_this_session_increments_on_append_adoption(monkeypatch, tmp_path):
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
     personal_rules.reset_session_counter()
     personal_rules.append_adoption(
         classifier_label="x", fingerprint="a"*64, reason="r1"
@@ -194,6 +201,7 @@ def test_adoption_count_this_session_increments_on_append_adoption(monkeypatch, 
 
 def test_adoption_count_this_session_counts_multiple_adoptions(monkeypatch, tmp_path):
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
     personal_rules.reset_session_counter()
     personal_rules.append_adoption(classifier_label="x", fingerprint="a"*64, reason="r")
     personal_rules.append_adoption(classifier_label="y", fingerprint="b"*64, reason="r")
@@ -226,6 +234,7 @@ def test_append_adoption_increments_persistent_counter(tmp_path, monkeypatch):
     """append_adoption must bump the on-disk counter so the next forked
     Python process sees the incremented value (the SKILL.md production path)."""
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
     scratchpad_path = tmp_path / "state" / "scratchpad.json"
     assert personal_rules.adoption_count_this_session_persistent(scratchpad_path) == 0
     personal_rules.append_adoption(
@@ -251,6 +260,7 @@ def test_persistent_counter_survives_module_reload(tmp_path, monkeypatch):
     import importlib
 
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
     scratchpad_path = tmp_path / "state" / "scratchpad.json"
     personal_rules.append_adoption(
         classifier_label="x",
@@ -269,6 +279,7 @@ def test_persistent_counter_resets_via_helper(tmp_path, monkeypatch):
     """reset_session_adoption_count_persistent zeroes the on-disk value so
     test fixtures can assert on a fresh state without hand-editing JSON."""
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
     scratchpad_path = tmp_path / "state" / "scratchpad.json"
     personal_rules.append_adoption(
         classifier_label="x", fingerprint="a"*64, reason="r",

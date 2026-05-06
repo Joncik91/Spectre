@@ -310,6 +310,7 @@ def test_should_halt_consults_personal_rules_when_no_spec_lock(tmp_path, monkeyp
     §8.1 doesn't touch the same paths."""
     from bin import personal_rules
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
     personal_rules.reset_session_counter() if hasattr(personal_rules, "reset_session_counter") else None
 
     fp = tier.fingerprint_for_action(
@@ -337,6 +338,7 @@ def test_should_halt_personal_rule_cannot_override_when_path_in_spec_lock(tmp_pa
     active spec's §8.1 has /etc/foo.conf in mutates/never-touches."""
     from bin import personal_rules
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
     personal_rules.reset_session_counter() if hasattr(personal_rules, "reset_session_counter") else None
 
     fp = tier.fingerprint_for_action(

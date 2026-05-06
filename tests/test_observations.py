@@ -40,6 +40,7 @@ def test_observations_path_default_returns_dotspectre_observations_jsonl():
 
 def test_record_halt_creates_jsonl_file_when_missing(tmp_path, monkeypatch):
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
     observations.record_halt(
         kind="tier-gate",
         fingerprint="a" * 64,
@@ -53,6 +54,7 @@ def test_record_halt_creates_jsonl_file_when_missing(tmp_path, monkeypatch):
 
 def test_record_halt_appends_one_line_per_call(tmp_path, monkeypatch):
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
     observations.record_halt(
         kind="tier-gate", fingerprint="a"*64,
         project_path="/p", spec_slug="s", action="x",
@@ -68,6 +70,7 @@ def test_record_halt_appends_one_line_per_call(tmp_path, monkeypatch):
 
 def test_record_halt_includes_required_fields(tmp_path, monkeypatch):
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
     observations.record_halt(
         kind="tier-gate", fingerprint="abcd" * 16,
         project_path="/home/foo/proj", spec_slug="my-spec",
@@ -81,6 +84,7 @@ def test_record_halt_includes_required_fields(tmp_path, monkeypatch):
 
 def test_record_halt_timestamp_is_iso_8601_utc(tmp_path, monkeypatch):
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
     observations.record_halt(
         kind="tier-gate", fingerprint="a"*64,
         project_path="/p", spec_slug="s", action="x",
@@ -98,6 +102,7 @@ def test_find_recurrences_returns_empty_when_no_jsonl(tmp_path, monkeypatch):
 
 def test_find_recurrences_filters_below_threshold(tmp_path, monkeypatch):
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
     for _ in range(2):
         observations.record_halt(
             kind="tier-gate", fingerprint="abc" * 21 + "a",
@@ -109,6 +114,7 @@ def test_find_recurrences_filters_below_threshold(tmp_path, monkeypatch):
 
 def test_find_recurrences_returns_fingerprints_at_or_above_threshold(tmp_path, monkeypatch):
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
     target_fp = "deadbeef" * 8
     for _ in range(3):
         observations.record_halt(
@@ -122,6 +128,7 @@ def test_find_recurrences_returns_fingerprints_at_or_above_threshold(tmp_path, m
 
 def test_find_recurrences_filters_by_kind_when_specified(tmp_path, monkeypatch):
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
     for _ in range(3):
         observations.record_halt(
             kind="tier-gate", fingerprint="a"*64,
