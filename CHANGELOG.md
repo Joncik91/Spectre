@@ -2,6 +2,23 @@
 
 All notable changes to the SDL Vision Engine plugin (Spectre).
 
+## v0.4.2.4 — 2026-05-06
+
+**Patch release — closes #12 P3 (sidecar path inconsistency).**
+
+### Fixed
+- **#12 P3** — `bin/eval_metadata.py` now exposes `sidecar_path_for(spec_path) -> Path` as the single source of truth for the sidecar filename convention. The sidecar is always the spec filename with `.eval.json` appended (append-suffix: `foo.spec.md.eval.json`), never replace-suffix (`foo.eval.json`). `write_sidecar()` is updated to call `sidecar_path_for()` internally. `skills/vision/SKILL.md` prose updated in three places to show the full append-suffix form and reference `eval_metadata.sidecar_path_for()` so future skill-prose drift is immediately visible.
+
+### Tests
+**681 passing** (675 baseline + 6 new). New test file `tests/test_vision_sidecar_path_consistency.py`: asserts `sidecar_path_for` produces append-suffix, not replace-suffix; checks parent-directory preservation; verifies `write_sidecar` return value equals `sidecar_path_for`; pins `SIDECAR_EXTENSION == ".eval.json"`.
+
+### Changed
+- `bin/spec_evaluator.py:EVALUATOR_VERSION` 0.4.2.3 → 0.4.2.4.
+- `.claude-plugin/marketplace.json` plugin version 0.4.2.3 → 0.4.2.4.
+
+### References
+- Issue: https://github.com/Joncik91/Spectre/issues/12
+
 ## v0.4.2.3 — 2026-05-06
 
 **Patch release — closes #12 P1 (Tier 3 silently skipped when key is in secrets.env).**

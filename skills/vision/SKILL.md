@@ -250,7 +250,7 @@ Interpret the result:
 # tier3-dismissed: <fingerprint> "one-line reason"
 ```
 
-The fingerprint is the SHA-256 hex from `bin.findings.fingerprint(f)` — printable from the JSON output above (compute it via `python3 -c "from bin import findings as F; ..."` if needed). Re-running §6.4 will skip the dismissed finding; the dismissal is recorded in the `.eval.json` sidecar after lock so audits can see what was suppressed and why.
+The fingerprint is the SHA-256 hex from `bin.findings.fingerprint(f)` — printable from the JSON output above (compute it via `python3 -c "from bin import findings as F; ..."` if needed). Re-running §6.4 will skip the dismissed finding; the dismissal is recorded in the `<slug>.spec.md.eval.json` sidecar after lock so audits can see what was suppressed and why.
 
 `dismissable: false` findings (Tier 1+2 block-severity) CANNOT be dismissed via this mechanism — they must be fixed via `refine`.
 
@@ -381,7 +381,7 @@ Now that the user confirmed and ADRs are written:
 
    If the user invoked `/vision <track>`, use that track name; otherwise use `"default"`. Preserve any other tracks already in the scratchpad (read-modify-write via `bin/_scratchpad.save_track`).
 
-4. **Write the `.eval.json` sidecar** (v0.3+, post-§6.4 evaluator). The evaluator's `result.sidecar_payload` carries the policy hash, tiers run, dismissals, findings summary, and DeepSeek model version. Persist next to the locked spec:
+4. **Write the `<slug>.spec.md.eval.json` sidecar** (v0.3+, post-§6.4 evaluator). The sidecar filename is always the spec filename with `.eval.json` appended (append-suffix, not replace-suffix — `eval_metadata.sidecar_path_for(spec)` returns the canonical path). The evaluator's `result.sidecar_payload` carries the policy hash, tiers run, dismissals, findings summary, and DeepSeek model version. Persist next to the locked spec:
 
    ```bash
    python3 - <<'PY'
@@ -426,7 +426,7 @@ cdlc_ledger.append_transition(
     payload={
         "spec_slug": "<slug>",
         "round_count": "<walker round_count from state/.walk.json>",
-        "tiers_run": "<tiers_run from .eval.json sidecar>",
+        "tiers_run": "<tiers_run from <slug>.spec.md.eval.json sidecar>",
     },
     project_path=pathlib.Path.cwd(),
 )
