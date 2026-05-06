@@ -188,3 +188,76 @@ def should_stop(
         return (True, "per-receiver-exhausted")
 
     return (False, None)
+
+
+def _serialize_concern(c: Concern) -> dict[str, Any]:
+    return {
+        "id": c.id,
+        "kind": c.kind,
+        "receivers": list(c.receivers),
+        "depends_on": list(c.depends_on),
+        "summary": c.summary,
+    }
+
+
+def _deserialize_concern(d: dict[str, Any]) -> Concern:
+    return Concern(
+        id=d["id"],
+        kind=d["kind"],
+        receivers=list(d["receivers"]),
+        depends_on=list(d["depends_on"]),
+        summary=d["summary"],
+    )
+
+
+def persist(state: WalkState, path: pathlib.Path) -> None:
+    """Atomically write WalkState to JSON at path.
+
+    Uses tempfile.mkstemp + os.replace for crash-safety — same pattern as
+    bin/_scratchpad.atomic_write. Sets only stay encodable by serializing
+    as sorted lists.
+    """
+    payload: dict[str, Any] = {
+        "walker_version": WALKER_VERSION,
+        "spec_intent": state.spec_intent,
+        "spec_draft_path": str(state.spec_draft_path),
+        "asked": [_serialize_concern(c) for c in state.asked],
+        "answered": dict(state.answered),
+        "pending": [_serialize_concern(c) for c in state.pending],
+        "stale": sorted(state.stale),
+        "stop_reason": state.stop_reason,
+        "round_count": state.round_count,
+        "yield_history": list(state.yield_history),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        os.replace(tmp, path)
+    except Exception:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def load(path: pathlib.Path) -> WalkState | None:
+    """Load WalkState from JSON. Returns None if file missing.
+
+    Caller is responsible for handling JSON-decode errors (don't silently
+    eat — bad walk state should halt with a clear message, not be ignored).
+    """
+    if not path.is_file():
+        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return WalkState(
+        spec_intent=data["spec_intent"],
+        spec_draft_path=pathlib.Path(data["spec_draft_path"]),
+        asked=[_deserialize_concern(c) for c in data.get("asked", [])],
+        answered=dict(data.get("answered", {})),
+        pending=[_deserialize_concern(c) for c in data.get("pending", [])],
+        stale=set(data.get("stale", [])),
+        stop_reason=data.get("stop_reason"),
+        round_count=data.get("round_count", 0),
+        yield_history=list(data.get("yield_history", [])),
+    )

@@ -434,3 +434,99 @@ def test_should_stop_returns_false_with_pending_concerns_and_low_rounds():
     stop, reason = walker.should_stop(state)
     assert stop is False
     assert reason is None
+
+
+def test_persist_creates_file_at_path(tmp_path):
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    target = tmp_path / "walk.json"
+    walker.persist(state, target)
+    assert target.exists()
+
+
+def test_persist_writes_valid_json(tmp_path):
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    target = tmp_path / "walk.json"
+    walker.persist(state, target)
+    data = json.loads(target.read_text(encoding="utf-8"))
+    assert data["walker_version"] == walker.WALKER_VERSION
+
+
+def test_persist_includes_spec_intent(tmp_path):
+    state = walker.init_walk(
+        spec_intent="my unique intent string",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    target = tmp_path / "walk.json"
+    walker.persist(state, target)
+    data = json.loads(target.read_text(encoding="utf-8"))
+    assert data["spec_intent"] == "my unique intent string"
+
+
+def test_load_returns_none_when_file_missing(tmp_path):
+    missing = tmp_path / "nope.json"
+    assert walker.load(missing) is None
+
+
+def test_persist_load_round_trip_preserves_intent(tmp_path):
+    state = walker.init_walk(
+        spec_intent="round-trip intent",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    target = tmp_path / "walk.json"
+    walker.persist(state, target)
+    loaded = walker.load(target)
+    assert loaded is not None
+    assert loaded.spec_intent == "round-trip intent"
+
+
+def test_persist_load_round_trip_preserves_pending_concerns(tmp_path):
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    target = tmp_path / "walk.json"
+    walker.persist(state, target)
+    loaded = walker.load(target)
+    assert len(loaded.pending) == len(state.pending)
+
+
+def test_persist_load_round_trip_preserves_stale_set(tmp_path):
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    state.stale.add("c-stale-1")
+    state.stale.add("c-stale-2")
+    target = tmp_path / "walk.json"
+    walker.persist(state, target)
+    loaded = walker.load(target)
+    assert loaded.stale == {"c-stale-1", "c-stale-2"}
+
+
+def test_persist_load_round_trip_preserves_yield_history(tmp_path):
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    state.yield_history = [3, 2, 1, 0]
+    target = tmp_path / "walk.json"
+    walker.persist(state, target)
+    loaded = walker.load(target)
+    assert loaded.yield_history == [3, 2, 1, 0]
+
+
+def test_persist_uses_atomic_write_no_tmp_leftover(tmp_path):
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    target = tmp_path / "walk.json"
+    walker.persist(state, target)
+    leftovers = [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
+    assert leftovers == []
