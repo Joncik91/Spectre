@@ -182,6 +182,24 @@ Reference:
 - Design: `docs/superpowers/specs/2026-05-06-spectre-v0.4-cdlc-closure.md`
 - Plan: `docs/superpowers/plans/2026-05-06-v0.4.0-walker.md`
 
+## Observe + Adapt (v0.4.1)
+
+`bin/observations.py` and `bin/personal_rules.py` close two of the three remaining CDLC legs (Distribute is v0.4.2).
+
+**Observe.** Every TIER GATE halt in `/implement` records a structured row to `~/.spectre/observations.jsonl`: timestamp, fingerprint, classifier_label, project_path, spec_slug, action. The log is append-only and per-user (not per-project) so recurring halt patterns surface across all the user's Spectre projects. `find_recurrences(threshold=N)` returns fingerprints recurring ≥N times — consumed by v0.4.2's Adapt template-patch flow.
+
+**Adapt.** `~/.spectre/personal-rules.toml` is the per-user TOML override store. The `/implement` post-halt-success prompt (§3.5b) is the only sanctioned writer. `bin/tier.should_halt()` consults `personal_rules.is_classifier_halt_overridden()` for every host/network-tier halt:
+
+1. `never_autonomous_match` is non-overridable — those rules are never downgraded.
+2. If the action's classifier reasons reference any path in the active spec's §8.1 hard contract (`spec_locked_paths`, parsed via `bin/coverage_gate.parse_81_block`), the personal-rule cannot override — spec rules are immune.
+3. Otherwise, if the `(classifier_label, fingerprint)` pair has an entry in personal-rules.toml, the halt is downgraded.
+
+**Sandbox-paradox brake.** Per `research/developing-a-safe.md` (vault), HITL approval gates create permission-fatigue (users rage-bypass safety). v0.4.1 caps adoptions at 3 per session before the post-halt prompt stops firing, requiring the user to manually review `personal-rules.toml`. The counter is **persisted per-track** in `state/scratchpad.json["tracks"][<track>]["session_adoption_count"]` — surviving the per-heredoc Python subprocess fork that would otherwise reset module-state. Reset only by manually clearing the field or via the test helper `personal_rules.reset_session_adoption_count_persistent()`.
+
+Reference:
+- Design: `docs/superpowers/specs/2026-05-06-spectre-v0.4-cdlc-closure.md` §6.3, §6.4
+- Plan: `docs/superpowers/plans/2026-05-06-v0.4.1-observe-adapt.md`
+
 ## Resource-lock supervisor (v0.2.2)
 
 For multi-track projects (`/implement payments`, `/implement notifications`), Spectre runs a per-project Unix domain socket daemon at `runtime/supervisor.sock`:

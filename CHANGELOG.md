@@ -19,7 +19,7 @@ All notable changes to the SDL Vision Engine plugin (Spectre).
 - `.claude-plugin/marketplace.json` plugin version 0.4.0 → 0.4.1.
 
 ### Tests
-~600 passing (569 v0.4.0 baseline + ~12 observations + ~16 personal_rules + 3 wizard + 4 tier integration).
+**614 passing** (569 v0.4.0 baseline + 14 observations + 22 personal_rules + 5 setup_wizard + 4 tier integration). The personal_rules count includes 4 audit-fix tests for the persistent brake counter and the TOML escape hardening.
 
 ### Architecture references
 - Design: `docs/superpowers/specs/2026-05-06-spectre-v0.4-cdlc-closure.md`
