@@ -6,7 +6,7 @@
 
 > SDL Vision Engine — a deterministic spec-driven Claude Code plugin. Vision → Spec → Evaluate → Lock → Implement → Verify, with three-tier pre-lock review and per-project resource locking.
 
-[![tests](https://img.shields.io/badge/tests-500%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![tests](https://img.shields.io/badge/tests-569%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## Table of Contents
 
@@ -31,6 +31,7 @@ Spectre overrides this with a deterministic state machine that drives an unbroke
 - **Spec is law.** `specs/.active` is an explicit instruction-pointer file. The hydrator re-injects exactly one spec on every session start — no mtime guessing, no scrollback archaeology.
 - **Steps are atomic transactions.** Every step has `why:` (first-principles justification, printed before execution), `action:` (the command), and `verification:` (a separate command that must exit 0 to prove the side effect). Soft verifications (`true`, `echo done`) are forbidden by the evaluator.
 - **Pre-lock review is mandatory.** Three tiers of validation run before a draft becomes the active spec: deterministic AST classifier (Tier 1, always), structural coverage gate (Tier 2, always), DeepSeek `deepseek-reasoner` adversarial reviewer (Tier 3, opt-in). Block-severity findings prevent lock. Tier 3 status is always surfaced — when it skips, the skip is visible (see "First-run setup" below).
+- **Spec authorship is interrogation, not transcription.** v0.4 introduces an interrogation walker: the human supplies intent, the LLM walks the possibility-graph one concern at a time. The walker (`bin/walker.py`) refuses to prune branches biology lets humans skip and stops only when the author says so OR when adversarial review (Tier 3) stops finding new things. Output: a complete-enough spec authored in ~10 min instead of ~60 min.
 - **Risky steps halt by default.** A persistence-tier classifier gates every action: `silent` and `repo` execute freely; `host` and `network` halt and ask. The Never Autonomous list (sudo, rm -rf, systemctl mask, …) is a hard halt regardless of tier.
 
 Five named v1 failure modes — broad matcher, hydrator bloat, recursive failure, torn writes, log inflation — each have a code-level mitigation and a test. The v0.2.x and v0.3.0 releases added five more first-class concerns: drift detection, resource contention, ADR provenance, host-state coverage, and adversarial review.
@@ -96,16 +97,20 @@ The key value is never copied into `reviewer.toml` — only the env-var name is 
 # 1. Lock a spec.
 /vision Build a real-time order sync between Shopify and our warehouse
 # → Codebase fingerprint scan, then Feasibility Audit (silent).
-# → First-Principles Summary printed: Hard Problem, Algorithm Audit (Delete/Simplify/Accelerate),
-#   Speed-of-Light Limit, Physics Guardrails.
-# → 2-3 refinement questions about non-obvious edge cases.
-# → After answers: full draft with why:/action:/verification: per step + §8 Receiver Calibration.
+# → Walker initialized with five seed concerns (1 assumption-surface + 4 §8.1
+#   receiver-clarification: mutates / never-touches / decision-budget / reboot-survival).
+# → Round 1: walker emits the next concern; skill phrases as a natural-language question.
+# → User answers; walker records answer, queues dependent concerns per receiver.
+# → Loop continues until: user types `stop`, OR Tier 3 yield-delta converges
+#   (3 rounds with <2 new findings), OR max-rounds (30), OR per-receiver-exhausted.
+# → After stop: skill renders the draft from accumulated answers.
 # → Confirm: yes / refine "<change>" / cancel.
 # → On yes: pre-lock evaluator runs Tier 1 (AST) + Tier 2 (coverage) + Tier 3 if configured.
 #   Block findings halt; warn/info pass through.
 # → ADRs auto-generated for each Decision marker; Resource nodes inferred for port:N etc.
 # → Atomic flip: <slug>.spec.md.draft → <slug>.spec.md, .active updated, scratchpad reset,
 #   .eval.json sidecar written with policy hash + tier metadata.
+#   state/.walk.json retained as audit trail.
 
 # 2. Run the active spec.
 /implement
