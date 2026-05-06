@@ -109,7 +109,7 @@ Repeat until the walker reports stop:
    PY
    ```
 
-5. **Check stop conditions.** `should_stop(state)`. If `True`, persist and proceed to Step 5. If `False`, loop back to Step 4.1.
+5. **Check stop conditions.** `stop, reason = walker.should_stop(state)`. If `True`, set `state.stop_reason = reason` (the function is pure — does not mutate), persist, and proceed to Step 5. If `False`, loop back to Step 4.1.
 
 ### Step 5 — Materialize draft + confirm
 
