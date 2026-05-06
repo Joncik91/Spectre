@@ -97,3 +97,17 @@ def next_concern(state: WalkState) -> Concern | None:
         if c.id not in state.stale:
             return c
     return None
+
+
+def record_answer(state: WalkState, *, concern_id: str, answer: str) -> WalkState:
+    """Move concern from pending to asked, store the answer, bump round_count.
+    Mutates state in place AND returns it (chainable).
+    """
+    for i, c in enumerate(state.pending):
+        if c.id == concern_id:
+            state.asked.append(c)
+            state.answered[concern_id] = answer
+            del state.pending[i]
+            state.round_count += 1
+            return state
+    raise KeyError(f"concern_id {concern_id!r} not in pending")

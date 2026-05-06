@@ -213,3 +213,48 @@ def test_next_concern_returns_none_when_all_pending_are_stale():
     for c in state.pending:
         state.stale.add(c.id)
     assert walker.next_concern(state) is None
+
+
+def test_record_answer_moves_concern_from_pending_to_asked():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    state2 = walker.record_answer(state, concern_id="seed-1", answer="my answer")
+    assert any(c.id == "seed-1" for c in state2.asked)
+
+
+def test_record_answer_removes_concern_from_pending():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    state2 = walker.record_answer(state, concern_id="seed-1", answer="my answer")
+    assert all(c.id != "seed-1" for c in state2.pending)
+
+
+def test_record_answer_stores_answer_text():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    state2 = walker.record_answer(state, concern_id="seed-1", answer="my answer")
+    assert state2.answered["seed-1"] == "my answer"
+
+
+def test_record_answer_increments_round_count():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    state2 = walker.record_answer(state, concern_id="seed-1", answer="x")
+    assert state2.round_count == 1
+
+
+def test_record_answer_raises_for_unknown_concern_id():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    with pytest.raises(KeyError, match="not in pending"):
+        walker.record_answer(state, concern_id="nonexistent", answer="x")
