@@ -1,6 +1,7 @@
 """Tests for bin/llm_judge.py — Tier 3 DeepSeek client. All HTTP mocked."""
 import json
 import os
+import pathlib
 import socket
 from unittest import mock
 from urllib import error as url_error
@@ -377,3 +378,95 @@ def test_evaluate_handles_unexpected_exception_as_tier3_unavailable(mock_urlopen
     mock_urlopen.side_effect = Exception("unexpected chaos")
     result = llm_judge.evaluate(_SPEC, config=_CFG)
     assert result[0].kind == "tier3-unavailable"
+
+
+# ---------------------------------------------------------------------------
+# 21. secrets.env fallback — key found in file when env var unset
+# ---------------------------------------------------------------------------
+
+
+@mock.patch("urllib.request.urlopen")
+def test_tier3_reads_secrets_env_when_envvar_unset(mock_urlopen, monkeypatch, tmp_path):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    secrets_file = tmp_path / "secrets.env"
+    secrets_file.write_text("DEEPSEEK_API_KEY=test-key-value\n", encoding="utf-8")
+    monkeypatch.setenv("SPECTRE_SECRETS_FILE", str(secrets_file))
+
+    mock_urlopen.side_effect = [
+        _make_fake_resp("tier3-context-gap"),
+        _make_fake_resp("tier3-spec-asserts-wrong"),
+        _make_fake_resp("tier3-attacker-view"),
+    ]
+    cfg = llm_judge.JudgeConfig(enabled=True, api_key_env="DEEPSEEK_API_KEY", model="deepseek-reasoner")
+    result = llm_judge.evaluate(_SPEC, config=cfg)
+    # Tier 3 ran — no no-api-key sentinel among results.
+    assert not any(f.kind == "tier3-unavailable" for f in result)
+
+
+# ---------------------------------------------------------------------------
+# 22. secrets.env fallback — quoted values are stripped
+# ---------------------------------------------------------------------------
+
+
+@mock.patch("urllib.request.urlopen")
+def test_tier3_strips_quotes_from_secrets_env_value(mock_urlopen, monkeypatch, tmp_path):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    secrets_file = tmp_path / "secrets.env"
+    secrets_file.write_text('DEEPSEEK_API_KEY="quoted-value"\n', encoding="utf-8")
+    monkeypatch.setenv("SPECTRE_SECRETS_FILE", str(secrets_file))
+
+    mock_urlopen.side_effect = [
+        _make_fake_resp("tier3-context-gap"),
+        _make_fake_resp("tier3-spec-asserts-wrong"),
+        _make_fake_resp("tier3-attacker-view"),
+    ]
+    cfg = llm_judge.JudgeConfig(enabled=True, api_key_env="DEEPSEEK_API_KEY", model="deepseek-reasoner")
+    # Verify the resolved key value is unquoted.
+    key_result = llm_judge.resolve_api_key("DEEPSEEK_API_KEY")
+    assert key_result is not None and key_result[0] == "quoted-value"
+
+
+# ---------------------------------------------------------------------------
+# 23. no-api-key when neither env nor file has the key
+# ---------------------------------------------------------------------------
+
+
+def test_tier3_skipped_no_api_key_when_neither_env_nor_file_has_key(monkeypatch, tmp_path):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    nonexistent = tmp_path / "does_not_exist.env"
+    monkeypatch.setenv("SPECTRE_SECRETS_FILE", str(nonexistent))
+
+    cfg = llm_judge.JudgeConfig(enabled=True, api_key_env="DEEPSEEK_API_KEY", model="deepseek-reasoner")
+    result = llm_judge.evaluate(_SPEC, config=cfg)
+    assert result[0].kind == "tier3-unavailable"
+
+
+# ---------------------------------------------------------------------------
+# 24. env var takes precedence over secrets file (env wins)
+# ---------------------------------------------------------------------------
+
+
+@mock.patch("urllib.request.urlopen")
+def test_tier3_envvar_takes_precedence_over_secrets_file(mock_urlopen, monkeypatch, tmp_path):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "env-key-wins")
+    secrets_file = tmp_path / "secrets.env"
+    secrets_file.write_text("DEEPSEEK_API_KEY=file-key-loses\n", encoding="utf-8")
+    monkeypatch.setenv("SPECTRE_SECRETS_FILE", str(secrets_file))
+
+    key_result = llm_judge.resolve_api_key("DEEPSEEK_API_KEY")
+    assert key_result is not None and key_result == ("env-key-wins", "env")
+
+
+# ---------------------------------------------------------------------------
+# 25. no-api-key sentinel message contains "no-api-key"
+# ---------------------------------------------------------------------------
+
+
+def test_tier3_renders_distinct_no_api_key_skip_reason(monkeypatch, tmp_path):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    nonexistent = tmp_path / "does_not_exist.env"
+    monkeypatch.setenv("SPECTRE_SECRETS_FILE", str(nonexistent))
+
+    cfg = llm_judge.JudgeConfig(enabled=True, api_key_env="DEEPSEEK_API_KEY", model="deepseek-reasoner")
+    result = llm_judge.evaluate(_SPEC, config=cfg)
+    assert "no-api-key" in result[0].message

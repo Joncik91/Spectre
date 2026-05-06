@@ -1,6 +1,7 @@
 """Tier 3 DeepSeek client — three-prompt adversarial spec reviewer. Stdlib only."""
 import json
 import os
+import pathlib
 import socket
 import urllib.error
 import urllib.request
@@ -17,6 +18,63 @@ _CHARS_PER_TOKEN = 4
 
 # Spec-wide sentinel location
 _SPEC_WIDE = FindingLocation(scope="spec-wide")
+
+
+def _secrets_path_default() -> pathlib.Path:
+    """Return the canonical ~/.spectre/secrets.env path (mirrors setup_wizard)."""
+    return pathlib.Path.home() / ".spectre" / "secrets.env"
+
+
+def _resolve_secrets_file_path(explicit: pathlib.Path | None = None) -> pathlib.Path:
+    """Resolve secrets file path: explicit > SPECTRE_SECRETS_FILE env > default.
+
+    Mirrors setup_wizard._resolve_secrets_file_path — kept here to decouple
+    llm_judge from wizard internals (_resolve_secrets_file_path is private).
+    """
+    if explicit is not None:
+        return explicit
+    env_path = os.environ.get("SPECTRE_SECRETS_FILE")
+    if env_path:
+        return pathlib.Path(env_path)
+    return _secrets_path_default()
+
+
+def resolve_api_key(api_key_env: str) -> tuple[str, str] | None:
+    """Return (value, source) for *api_key_env*, or None if not found.
+
+    Probe order:
+      1. os.environ[api_key_env] — fast path, no disk I/O.
+      2. SPECTRE_SECRETS_FILE / ~/.spectre/secrets.env — KEY=value lines,
+         with or without surrounding quotes.
+
+    Source strings: "env" | "secrets-file".
+    Never logs or returns the key value in an error message.
+    """
+    # 1. Live environment variable.
+    value = os.environ.get(api_key_env)
+    if value:
+        return (value, "env")
+
+    # 2. Secrets file fallback.
+    secrets_path = _resolve_secrets_file_path()
+    if secrets_path.is_file():
+        try:
+            content = secrets_path.read_text(encoding="utf-8")
+        except (OSError, PermissionError):
+            return None
+        prefix = f"{api_key_env}="
+        for line in content.splitlines():
+            stripped = line.strip()
+            if stripped.startswith(prefix):
+                raw_value = stripped[len(prefix):]
+                # Strip surrounding quotes (single or double).
+                if len(raw_value) >= 2 and raw_value[0] in ('"', "'") and raw_value[-1] == raw_value[0]:
+                    raw_value = raw_value[1:-1]
+                if raw_value:
+                    return (raw_value, "secrets-file")
+
+    return None
+
 
 # Three prompt templates (per Plan Decision 2)
 _PROMPTS = [
@@ -66,11 +124,20 @@ class JudgeConfig:
     timeout_s: int = 30
 
 
+class _NoApiKeyError(Exception):
+    """Raised when neither env var nor secrets file provides the API key."""
+
+    def __init__(self, api_key_env: str) -> None:
+        self.api_key_env = api_key_env
+        super().__init__(f"no-api-key: {api_key_env} not found in env or secrets file")
+
+
 def _call_deepseek(prompts: dict, *, config: JudgeConfig) -> str:
     """Single API call. Returns response content string. Raises on HTTP / auth errors."""
-    api_key = os.environ.get(config.api_key_env)
-    if not api_key:
-        raise RuntimeError(f"missing API key in env var {config.api_key_env}")
+    key_result = resolve_api_key(config.api_key_env)
+    if not key_result:
+        raise _NoApiKeyError(config.api_key_env)
+    api_key, _source = key_result
     body = json.dumps(
         {
             "model": config.model,
@@ -154,6 +221,9 @@ def _run_prompt(prompt_template: dict, spec_text: str, *, config: JudgeConfig) -
     try:
         content = _call_deepseek(prompts, config=config)
         return _parse_findings(content, expected_kind)
+    except _NoApiKeyError:
+        # Distinct skip reason: neither env var nor secrets file has the key.
+        return [_unavailable(f"Tier 3 skipped (no-api-key): {config.api_key_env} not found")]
     except urllib.error.HTTPError as exc:
         return [_unavailable(f"Tier 3 unavailable: HTTP {exc.code}")]
     except urllib.error.URLError as exc:

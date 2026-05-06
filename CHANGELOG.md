@@ -2,6 +2,24 @@
 
 All notable changes to the SDL Vision Engine plugin (Spectre).
 
+## v0.4.2.3 — 2026-05-06
+
+**Patch release — closes #12 P1 (Tier 3 silently skipped when key is in secrets.env).**
+
+### Fixed
+- **#12** — `bin/llm_judge._call_deepseek()` now falls back to `~/.spectre/secrets.env` (or the path in `SPECTRE_SECRETS_FILE`) when `DEEPSEEK_API_KEY` is absent from the live environment. `resolve_api_key()` (new public helper) mirrors the probe order documented in `setup_wizard.detect_api_key()`: env var first, secrets file second. Quoted values (`KEY="value"` and `KEY='value'`) are stripped. The key is never logged. Users who follow the documented setup flow (add key to `secrets.env`, run `/vision`) no longer get Tier 3 silently downgraded.
+- Skip-reason rendering distinguished: `_run_prompt` now catches `_NoApiKeyError` before the generic `RuntimeError` handler and emits `"Tier 3 skipped (no-api-key): …"` — separate from `"Tier 3 skipped (disabled-in-config): …"` already emitted by `spec_evaluator.evaluate()`.
+
+### Tests
+**675 passing** (670 baseline + 5 new). New tests in `tests/test_llm_judge.py`: `test_tier3_reads_secrets_env_when_envvar_unset`, `test_tier3_strips_quotes_from_secrets_env_value`, `test_tier3_skipped_no_api_key_when_neither_env_nor_file_has_key`, `test_tier3_envvar_takes_precedence_over_secrets_file`, `test_tier3_renders_distinct_no_api_key_skip_reason`.
+
+### Changed
+- `bin/spec_evaluator.py:EVALUATOR_VERSION` 0.4.2.2 → 0.4.2.3.
+- `.claude-plugin/marketplace.json` plugin version 0.4.2.2 → 0.4.2.3.
+
+### References
+- Issue: https://github.com/Joncik91/Spectre/issues/12
+
 ## v0.4.2.2 — 2026-05-06
 
 **Patch release — closes #10 (v0.4.2.1 regression).**
