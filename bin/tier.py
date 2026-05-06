@@ -256,3 +256,155 @@ def should_halt(
     if _personal.is_classifier_halt_overridden(classifier_label=label, fingerprint=fp):
         return False
     return base_should_halt
+
+
+# ── CLI entrypoint ────────────────────────────────────────────────────────────
+
+def _read_locked_paths(spec_path) -> frozenset:
+    """Read §8.1 locked paths from a spec file. Returns empty set if missing.
+
+    Mirrors the §3.5 heredoc body: combines `mutates` + `never_touches` from
+    `coverage_gate.parse_81_block`. Lazy import so the classify() hot path
+    doesn't pay for the regex compile in coverage_gate at module import.
+    """
+    import pathlib as _pathlib
+    from bin import coverage_gate as _coverage_gate
+
+    p = _pathlib.Path(spec_path)
+    if not p.is_file():
+        return frozenset()
+    text = p.read_text(encoding="utf-8")
+    parsed = _coverage_gate.parse_81_block(text)
+    locked: set[str] = set()
+    locked.update(parsed.get("mutates", []))
+    locked.update(parsed.get("never_touches", []))
+    return frozenset(locked)
+
+
+if __name__ == "__main__":
+    import argparse
+    import json
+    import pathlib
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="tier",
+        description="Persistence-tier classifier CLI — classify, should-halt, evaluate-action.",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    # ── classify ──────────────────────────────────────────────────────────────
+    p_cls = sub.add_parser(
+        "classify",
+        help=(
+            "Classify a command into a persistence tier. Prints `TIER: <t>`, "
+            "one `reason: <r>` line per reason, and (if matched) "
+            "`NEVER_AUTONOMOUS: <label>`."
+        ),
+    )
+    p_cls.add_argument(
+        "--action",
+        required=True,
+        help="The shell command / action text to classify.",
+    )
+
+    # ── should-halt ───────────────────────────────────────────────────────────
+    p_sh = sub.add_parser(
+        "should-halt",
+        help=(
+            "Run classify + should_halt for an action. Prints `HALT: true` / "
+            "`HALT: false` to stdout. Exit 0 always (parse stdout for the "
+            "answer; non-zero indicates a runtime error)."
+        ),
+    )
+    p_sh.add_argument("--action", required=True, help="The action text to evaluate.")
+    p_sh.add_argument(
+        "--spec",
+        default=None,
+        help="Active spec path; §8.1 locked paths are loaded from it.",
+    )
+
+    # ── evaluate-action ───────────────────────────────────────────────────────
+    p_eval = sub.add_parser(
+        "evaluate-action",
+        help=(
+            "Single-call orchestration for §3.5: classify the action, read "
+            "§8.1 locked paths from --spec (if given), decide should_halt, and "
+            "print the §3.5 prose-format output (`TIER:`, `reason:`, "
+            "`NEVER_AUTONOMOUS:`, `HALT:` lines). With --json, prints a single "
+            "JSON object instead."
+        ),
+    )
+    p_eval.add_argument("--action", required=True, help="The action text to evaluate.")
+    p_eval.add_argument(
+        "--spec",
+        default=None,
+        help="Active spec path; §8.1 locked paths are loaded from it.",
+    )
+    p_eval.add_argument(
+        "--json",
+        action="store_true",
+        help='Emit JSON: {"tier","reasons","never_autonomous","halt","spec_locked_paths"}.',
+    )
+
+    args = parser.parse_args()
+
+    if args.cmd == "classify":
+        try:
+            t, reasons, na = classify(args.action)
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(f"TIER: {t}")
+        for r in reasons:
+            print(f"  reason: {r}")
+        if na:
+            print(f"NEVER_AUTONOMOUS: {na}")
+
+    elif args.cmd == "should-halt":
+        try:
+            t, reasons, na = classify(args.action)
+            locked = _read_locked_paths(args.spec) if args.spec else frozenset()
+            halt = should_halt(
+                t,
+                na,
+                action=args.action,
+                reasons=reasons,
+                spec_locked_paths=locked,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(f"HALT: {'true' if halt else 'false'}")
+
+    elif args.cmd == "evaluate-action":
+        try:
+            t, reasons, na = classify(args.action)
+            locked = _read_locked_paths(args.spec) if args.spec else frozenset()
+            halt = should_halt(
+                t,
+                na,
+                action=args.action,
+                reasons=reasons,
+                spec_locked_paths=locked,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        if args.json:
+            payload = {
+                "tier": t,
+                "reasons": reasons,
+                "never_autonomous": na,
+                "halt": halt,
+                "spec_locked_paths": sorted(locked),
+            }
+            print(json.dumps(payload, indent=2))
+        else:
+            print(f"TIER: {t}")
+            for r in reasons:
+                print(f"  reason: {r}")
+            if na:
+                print(f"NEVER_AUTONOMOUS: {na}")
+            print(f"HALT: {'true' if halt else 'false'}")

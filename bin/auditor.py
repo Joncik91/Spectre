@@ -249,3 +249,181 @@ def audit_action(
                 continue
             results.append(check(prop))
     return results
+
+
+# ── CLI entrypoint ────────────────────────────────────────────────────────────
+
+def _results_to_summary(results: list[AuditResult]) -> dict[str, Any]:
+    """Shape AuditResult list into the §5.5 prose-format summary dict."""
+    return {
+        "kinds": [r.kind for r in results],
+        "passed": all(r.passed for r in results),
+        "failures": [
+            {"kind": r.kind, "message": r.message} for r in results if not r.passed
+        ],
+    }
+
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="auditor",
+        description="State Auditor CLI — audit-action, audit-and-clear.",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    # ── audit-action ──────────────────────────────────────────────────────────
+    p_aa = sub.add_parser(
+        "audit-action",
+        help=(
+            "Run audit_action(action, paths_touched, properties) and emit the "
+            "result. Pure check — does NOT touch the scratchpad."
+        ),
+    )
+    p_aa.add_argument("--action", required=True, help="The current action text.")
+    p_aa.add_argument(
+        "--paths",
+        default="[]",
+        help='JSON array of paths_touched, e.g. \'["foo.json", "bar.py"]\'.',
+    )
+    p_aa.add_argument(
+        "--properties",
+        default=None,
+        help="JSON array of property dicts (PBT-lite). Omit / null for none.",
+    )
+    p_aa.add_argument(
+        "--prose",
+        action="store_true",
+        help=(
+            "Emit the §5.5 prose-format output (AUDIT: N checks, passed=... + "
+            "FAIL lines) instead of JSON."
+        ),
+    )
+
+    # ── audit-and-clear ───────────────────────────────────────────────────────
+    p_ac = sub.add_parser(
+        "audit-and-clear",
+        help=(
+            "Single-call orchestration for §5.5: load scratchpad, read "
+            "paths_touched for --track, run audit_action, persist last_audit_* "
+            "fields back to the track, atomic-write the scratchpad. Emits the "
+            "§5.5 prose-format output (or JSON with --json)."
+        ),
+    )
+    p_ac.add_argument("--action", required=True, help="The current action text.")
+    p_ac.add_argument(
+        "--scratchpad",
+        default="state/scratchpad.json",
+        help="Path to scratchpad.json (default: state/scratchpad.json).",
+    )
+    p_ac.add_argument(
+        "--track",
+        default="default",
+        help="Track name to read paths_touched from / write last_audit_* to.",
+    )
+    p_ac.add_argument(
+        "--properties",
+        default=None,
+        help="JSON array of property dicts (PBT-lite). Omit / null for none.",
+    )
+    p_ac.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit JSON summary instead of the §5.5 prose-format output.",
+    )
+
+    args = parser.parse_args()
+
+    def _parse_properties(raw: str | None):
+        if raw is None or raw == "" or raw == "null":
+            return None
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            print(f"ERROR: bad --properties JSON: {exc}", file=sys.stderr)
+            sys.exit(1)
+        if parsed is None:
+            return None
+        if not isinstance(parsed, list):
+            print(
+                "ERROR: --properties must be a JSON array of dicts (or null).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        return parsed
+
+    if args.cmd == "audit-action":
+        try:
+            paths = json.loads(args.paths)
+        except json.JSONDecodeError as exc:
+            print(f"ERROR: bad --paths JSON: {exc}", file=sys.stderr)
+            sys.exit(1)
+        if not isinstance(paths, list):
+            print("ERROR: --paths must be a JSON array of strings.", file=sys.stderr)
+            sys.exit(1)
+        properties = _parse_properties(args.properties)
+
+        try:
+            results = audit_action(
+                args.action, paths_touched=paths, properties=properties
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        summary = _results_to_summary(results)
+        if args.prose:
+            print(f"AUDIT: {len(results)} checks, passed={summary['passed']}")
+            for failure in summary["failures"]:
+                print(f"  FAIL: {failure['kind']} — {failure['message']}")
+        else:
+            print(json.dumps(summary, indent=2))
+
+    elif args.cmd == "audit-and-clear":
+        # Lazy import — keeps audit_action callable without _scratchpad.
+        from bin import _scratchpad as _sp
+
+        sp_path = Path(args.scratchpad)
+        try:
+            sp = _sp.load(sp_path)
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: scratchpad load failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+        paths = _sp.get_paths_touched(sp, track=args.track)
+        properties = _parse_properties(args.properties)
+
+        try:
+            results = audit_action(
+                args.action, paths_touched=paths, properties=properties
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        summary = _results_to_summary(results)
+
+        # Persist last_audit_* on the track. Mirror the §5.5 heredoc shape.
+        if "tracks" not in sp or not isinstance(sp.get("tracks"), dict):
+            sp["tracks"] = {}
+        track_data = sp["tracks"].get(args.track, {})
+        if not isinstance(track_data, dict):
+            track_data = {}
+        track_data["last_audit_kinds"] = summary["kinds"]
+        track_data["last_audit_passed"] = summary["passed"]
+        track_data["last_audit_failures"] = summary["failures"]
+        sp["tracks"][args.track] = track_data
+
+        try:
+            _sp.atomic_write(sp_path, sp)
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: scratchpad write failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        if args.json:
+            print(json.dumps(summary, indent=2))
+        else:
+            print(f"AUDIT: {len(results)} checks, passed={summary['passed']}")
+            for failure in summary["failures"]:
+                print(f"  FAIL: {failure['kind']} — {failure['message']}")

@@ -1,16 +1,19 @@
 """
-test_skill_prose_no_heredoc_python.py — issue #13 Phase 2B drift guard.
+test_skill_prose_no_heredoc_python.py — issue #13 Phase 2B + 2C drift guard.
 
 Phase 2B replaced 3 high-leverage `python3 - <<'PY' ... PY` blocks in
 `skills/vision/SKILL.md` (§6.4 evaluator, §6.6 resource node inference, §6.7
-sidecar write) with Phase 2A CLI invocations + native harness tools.  These
-tests guard against the heredocs creeping back in, and against new heredocs
-being added in those exact sections.
+sidecar write) with Phase 2A CLI invocations + native harness tools.
 
-Targets 4 (implement §3.5 tier classifier) and 5 (implement §5.5 State Auditor)
-were deferred to Phase 2C — they need new CLI surface that Phase 2A did not
-ship.  This file deliberately does NOT assert global heredoc absence; that is
-the Phase 2D check once all 20 heredocs are gone.
+Phase 2C replaced the remaining 2 high-leverage heredocs in
+`skills/implement/SKILL.md` (§3.5 Persistence-Tier classifier, §5.5 State
+Auditor) with new `bin.tier evaluate-action` and `bin.auditor audit-and-clear`
+CLI invocations landed in the same PR.
+
+These tests guard against the heredocs creeping back in, and against new
+heredocs being added in those exact sections.  This file deliberately does NOT
+assert global heredoc absence; that is the Phase 2D check once all 18
+remaining heredocs are gone.
 """
 import pathlib
 import re
@@ -103,36 +106,85 @@ def test_vision_step_6_7_sidecar_write_block_has_no_python_heredoc():
     )
 
 
-# ── Phase 2B count ceiling — guard against regression in vision SKILL.md ──────
+# ── Phase 2C replacements: implement §3.5, §5.5 ───────────────────────────────
 
 
-def test_vision_skill_total_heredoc_count_at_or_below_phase_2b_ceiling():
-    """After Phase 2B, vision/SKILL.md has 7 remaining heredoc-python blocks.
+def test_implement_step_3_5_tier_classifier_block_has_no_python_heredoc():
+    """§3.5 classifier block (between the Step 3.5 header and the next prose
+    sub-section `**Record observation`) must invoke `bin.tier` via CLI.
 
-    Phase 2C/2D will reduce this further. This test asserts the count never
-    rises above 7 — adding a new heredoc to vision/SKILL.md should be a
-    deliberate, reviewed action, not an accident.
+    Scoped to the classifier-specific block — other heredocs further down §3.5
+    (audit occurrences #12 record-halt, #13 cdlc-halt, #14 persist-pending-
+    adoption-prompt) are out of scope for Phase 2C and are tracked as
+    deferrals on the audit's medium-leverage list (Phase 2D).
+    """
+    text = _IMPLEMENT_SKILL.read_text()
+    body = _section_text(
+        text,
+        r"^### Step 3\.5 — Persistence-Tier classifier.*$",
+        r"^\*\*Record observation BEFORE accepting input:\*\*.*$",
+    )
+    assert _heredoc_count(body) == 0, (
+        "§3.5 classifier block must use the Phase 2C "
+        "`python3 -m bin.tier evaluate-action` CLI — heredoc-python was "
+        "removed in Phase 2C (issue #13)."
+    )
+    assert "python3 -m bin.tier evaluate-action" in body, (
+        "§3.5 classifier block must invoke "
+        "`python3 -m bin.tier evaluate-action` (Phase 2C surface)."
+    )
+
+
+def test_implement_step_5_5_state_auditor_has_no_python_heredoc():
+    """§5.5 (State Auditor) must invoke `bin.auditor` via CLI."""
+    text = _IMPLEMENT_SKILL.read_text()
+    body = _section_text(
+        text,
+        r"^### Step 5\.5 — State Auditor.*$",
+        r"^### Step 6 — Branch on verification result.*$",
+    )
+    assert _heredoc_count(body) == 0, (
+        "§5.5 must use the Phase 2C `python3 -m bin.auditor audit-and-clear` "
+        "CLI — heredoc-python was removed in Phase 2C (issue #13)."
+    )
+    assert "python3 -m bin.auditor audit-and-clear" in body, (
+        "§5.5 must invoke `python3 -m bin.auditor audit-and-clear` (Phase 2C surface)."
+    )
+
+
+# ── Phase 2C count ceilings — guard against regression in skill files ─────────
+
+
+def test_vision_skill_total_heredoc_count_at_or_below_phase_2c_ceiling():
+    """After Phase 2C, vision/SKILL.md still has 7 remaining heredoc-python
+    blocks (Phase 2C did not touch vision; it replaced the two implement-only
+    targets deferred from Phase 2B).
+
+    Phase 2D will reduce this further. This test asserts the count never rises
+    above 7 — adding a new heredoc to vision/SKILL.md should be a deliberate,
+    reviewed action, not an accident.
     """
     text = _VISION_SKILL.read_text()
     count = _heredoc_count(text)
     assert count <= 7, (
         f"vision/SKILL.md has {count} heredoc-python blocks; "
-        "Phase 2B set the ceiling at 7 (down from 10). "
+        "Phase 2B/2C set the ceiling at 7 (down from 10). "
         "Adding more should require an intentional update to this test."
     )
 
 
-def test_implement_skill_total_heredoc_count_at_or_below_phase_2b_ceiling():
-    """implement/SKILL.md still has its full 13 heredocs after Phase 2B.
+def test_implement_skill_total_heredoc_count_at_or_below_phase_2c_ceiling():
+    """After Phase 2C, implement/SKILL.md has 11 remaining heredoc-python blocks
+    (down from 13 before Phase 2C; §3.5 and §5.5 replaced).
 
-    Targets 4 (§3.5 tier classifier) and 5 (§5.5 State Auditor) were deferred
-    to Phase 2C because they need new CLI surface (`bin.tier`, `bin.auditor`)
-    that Phase 2A did not ship. This ceiling falls in Phase 2C/2D.
+    Phase 2D will reduce this further. This test asserts the count never rises
+    above 11 — adding a new heredoc to implement/SKILL.md should be a
+    deliberate, reviewed action, not an accident.
     """
     text = _IMPLEMENT_SKILL.read_text()
     count = _heredoc_count(text)
-    assert count <= 13, (
+    assert count <= 11, (
         f"implement/SKILL.md has {count} heredoc-python blocks; "
-        "Phase 2B set the ceiling at 13 (no implement/ replacements in 2B). "
+        "Phase 2C set the ceiling at 11 (down from 13: §3.5 + §5.5 replaced). "
         "Adding more should require an intentional update to this test."
     )

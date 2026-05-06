@@ -2,6 +2,55 @@
 
 All notable changes to the SDL Vision Engine plugin (Spectre).
 
+## v0.5.0-rc3 — 2026-05-07
+
+**Third prerelease toward v0.5.0. Phase 2C of issue #13 (heredoc replacement) — the two high-leverage targets in `skills/implement/SKILL.md` deferred from Phase 2B (because they needed new CLI surface). No behavioral changes to /vision or /implement flow.**
+
+### Added
+
+CLI entrypoints (`if __name__ == "__main__":`) on two `bin/` modules. All subcommands wrap existing public functions; no new business logic added. The `audit-and-clear` orchestration also fixes the §5.5 heredoc's structural bugs (raw `json.dump` write-back, v2-schema-blind `paths_touched` read).
+
+- **`bin/tier.py`** — 3 subcommands:
+  - `classify --action <text>` — runs `tier.classify(action)` and prints `TIER: <t>` + one `reason: <r>` line per reason + (if matched) `NEVER_AUTONOMOUS: <label>`.
+  - `should-halt --action <text> [--spec <path>]` — runs classify + `tier.should_halt`; prints `HALT: true|false`. `--spec`, when given, feeds §8.1 locked paths (via `coverage_gate.parse_81_block`) into `should_halt` so personal-rules cannot override locked-path halts.
+  - `evaluate-action --action <text> [--spec <path>] [--json]` — single orchestrated call collapsing the §3.5 SKILL.md heredoc body. Emits the §3.5 prose-format output (or a structured JSON payload with `--json`).
+
+- **`bin/auditor.py`** — 2 subcommands:
+  - `audit-action --action <text> --paths <json-array> [--properties <json>] [--prose]` — pure check; wraps `auditor.audit_action`. Default JSON summary; `--prose` emits the §5.5 `AUDIT: N checks, ...` format.
+  - `audit-and-clear --action <text> [--scratchpad <path>] [--track <name>] [--properties <json>] [--json]` — single orchestrated call collapsing the §5.5 SKILL.md heredoc body: load scratchpad via `_scratchpad.load`, read `paths_touched` via `_scratchpad.get_paths_touched` (v1+v2 schema-aware), run `auditor.audit_action`, persist `last_audit_*` back to the track, atomic-write the scratchpad. Sibling tracks preserved.
+
+### Changed
+
+The 2 high-leverage `python3 - <<'PY' ... PY` heredocs in `skills/implement/SKILL.md` deferred from Phase 2B have been replaced:
+
+- **§3.5 — Persistence-Tier classifier** (audit occurrence #11, the longest heredoc in the repo at 33 LOC) → `python3 -m bin.tier evaluate-action --action "<current_action verbatim>" --spec "specs/<active spec name>.spec.md"`. The CLI runs classify → parse §8.1 → should_halt → emit prose-format output in one invocation. Same on-screen contract: `TIER:` / `reason:` / optional `NEVER_AUTONOMOUS:` / `HALT: true|false` lines.
+- **§5.5 — State Auditor (informational)** (audit occurrence #19, 25 LOC) → `python3 -m bin.auditor audit-and-clear --action "<current_action>" --scratchpad state/scratchpad.json --track "<current_track>"`. The CLI runs the load → audit → write-back cycle as a single atomic operation. The heredoc body's two latent bugs — v1-schema-only `paths_touched` read on v2 scratchpads (silent no-op, partially fixed by v0.4.2.6 `get_paths_touched`) and raw `json.dump` write-back (corruption risk on interrupt) — are now structurally impossible from the CLI side.
+
+LOC reduction in `skills/implement/SKILL.md`: ~58 LOC of heredoc-Python removed; ~31 LOC of CLI invocations + prose added. Net: ~27 LOC reduction.
+
+Heredoc count: `vision/SKILL.md` unchanged at 7; `implement/SKILL.md` drops 13 → 11. 18 heredocs remain across both skill files (7 vision + 11 implement) — Phase 2D handles the remaining cleanup tail toward v0.5.0 final.
+
+### Tests
+
+**814 passing** (770 baseline + 44 new). Two new test files + one extension:
+
+- `tests/test_tier_cli.py` — 12 subprocess-based tests covering `classify` (silent/host/never-autonomous + missing-flag), `should-halt` (silent/host/locked-path immunity + missing-flag), `evaluate-action` (prose format, JSON parseability, JSON `halt` field, locked-paths list, never-autonomous in JSON, missing-spec graceful, round-trip parity vs heredoc body, missing-flag, unknown-subcommand).
+- `tests/test_auditor_cli.py` — 21 subprocess-based tests covering `audit-action` (empty paths → noop, missing path fail, existing path pass, prose format, prose `passed=True`, bad JSON, non-list paths, bad properties, missing action) and `audit-and-clear` (happy path, persisted `last_audit_passed`, persisted `last_audit_kinds`, v2 paths_touched drives audit, persisted failures, atomic-write preserves siblings, JSON flag, prose default, on-disk parity vs heredoc, missing scratchpad fallback, missing action, unknown subcommand).
+- `tests/test_skill_prose_no_heredoc_python.py` — extended with 2 new scope-limited drift guards (§3.5 classifier block + §5.5 State Auditor) and tightened ceilings: `vision/SKILL.md` ≤ 7 (unchanged), `implement/SKILL.md` ≤ 11 (down from 13).
+
+Smoke-tested both replacements against a fixture spec (`/tmp/spectre-phase2c-test/`): byte-identical on-disk track state and identical prose-format output between the heredoc reference run and the new CLI invocation.
+
+### Notes
+
+Phase 2C of issue #13 closes all 5 high-leverage audit targets. The remaining 18 heredocs (7 vision + 11 implement) are medium-/low-leverage — Phase 2D handles the cleanup tail. CDLC ledger transitions, walker yield-check, ADR writes, observation/track/personal-rules/scratchpad sub-section heredocs are still in place pending their own CLI surface.
+
+### References
+
+- Issue #13: https://github.com/Joncik91/Spectre/issues/13
+- Audit: `docs/superpowers/audits/2026-05-06-issue-13-heredoc-audit.md`
+
+---
+
 ## v0.5.0-rc2 — 2026-05-07
 
 **Second prerelease toward v0.5.0. Phase 2B of issue #13 (heredoc replacement) — high-leverage prose surgery in `skills/vision/SKILL.md`. No behavioral changes to /vision or /implement flow.**
