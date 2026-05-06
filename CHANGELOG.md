@@ -2,6 +2,35 @@
 
 All notable changes to the SDL Vision Engine plugin (Spectre).
 
+## v0.4.2.5 — 2026-05-06
+
+**Patch release — closes #12 P2 (Tier 3 prong timeouts on deepseek-reasoner).**
+
+### Fixed
+- **#12 P2** — Default `timeout_s` raised from 30s to 180s in `JudgeConfig` (`bin/llm_judge.py`) and `TIER3_TIMEOUT_S` (`bin/spec_evaluator.py`). New installs provisioned by `setup_wizard.write_config` also default to 180s. Existing `~/.spectre/reviewer.toml` is untouched (wizard is idempotent).
+- **Retry-with-backoff** — `_call_deepseek` now retries up to 3 times (4 total attempts) on `socket.timeout`, `TimeoutError`, `urllib.error.URLError`, HTTP 429, and HTTP 5xx. Backoff: 2s, 4s, 8s (capped at 60s) plus 0–1s random jitter. Fail-fast on HTTP 400, 401, 403. Stdlib only (`time.sleep`, `random.uniform`).
+- **Prong name + attempt count in error message** — On final failure, `_run_prompt` now emits: `Tier 3 unavailable: timeout in <prong_name> after 4 attempts (last error: <kind>)` where `<kind>` is `socket-timeout`, `http-<code>`, or `connection-error`.
+
+### Tests
+**690 passing** (683 baseline + 7 new). New tests in `tests/test_llm_judge.py`:
+- `test_call_deepseek_retries_on_socket_timeout` — 2 timeouts then success; assert 3 attempts.
+- `test_call_deepseek_retries_on_http_503` — 2 × 503 then success; assert 3 attempts.
+- `test_call_deepseek_does_not_retry_on_http_401` — single attempt, error propagates.
+- `test_call_deepseek_gives_up_after_3_retries` — always fails; assert 4 attempts, exception bubbles.
+- `test_run_prompt_includes_prong_name_in_timeout_message` — assert `"context-gap"` in message.
+- `test_default_timeout_s_is_180` — `JudgeConfig().timeout_s == 180`.
+- `test_backoff_capped_at_60_seconds` — sleep durations all ≤ 60s.
+
+### Migration
+Existing users with `~/.spectre/reviewer.toml` keep their current `timeout_s` value (wizard never overwrites). To pick up the new 180s default: `rm ~/.spectre/reviewer.toml` and re-run `/vision` (wizard regenerates), or edit `timeout_s` manually.
+
+### Changed
+- `bin/spec_evaluator.py:EVALUATOR_VERSION` 0.4.2.4 → 0.4.2.5.
+- `.claude-plugin/marketplace.json` plugin version 0.4.2.4 → 0.4.2.5.
+
+### References
+- Issue: https://github.com/Joncik91/Spectre/issues/12
+
 ## v0.4.2.4 — 2026-05-06
 
 **Patch release — closes #12 P3 (sidecar path inconsistency).**
