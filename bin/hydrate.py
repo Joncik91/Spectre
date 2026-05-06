@@ -47,6 +47,8 @@ def main() -> int:
         print("Available specs:")
         print(list_specs())
         print(state_line())
+        detect_and_propose_patches()
+        surface_pending_template_patches()
         return 0
 
     target = ACTIVE.read_text(encoding="utf-8").strip()
@@ -56,6 +58,8 @@ def main() -> int:
         print("Available specs:")
         print(list_specs())
         print(state_line())
+        detect_and_propose_patches()
+        surface_pending_template_patches()
         return 0
 
     body = target_path.read_text(encoding="utf-8")
@@ -65,7 +69,52 @@ def main() -> int:
         print()
     print("--- END ACTIVE SPEC ---")
     print(state_line())
+    detect_and_propose_patches()
+    surface_pending_template_patches()
     return 0
+
+
+def surface_pending_template_patches() -> None:
+    """Emit a single-line signal at SessionStart if proposed patches exist.
+
+    v0.4.2: tells the user how many unaccepted template-patches are
+    queued in ~/.spectre/template-patches/proposed/. Manual review only —
+    no auto-merge.
+    """
+    from bin import template_patcher
+    proposals = template_patcher.list_proposed_patches()
+    print(f"PENDING_TEMPLATE_PATCHES: {len(proposals)}")
+    if proposals:
+        print(
+            "Review with: cat ~/.spectre/template-patches/proposed/<file>; "
+            "then mv to .accepted/ or .rejected/."
+        )
+
+
+def detect_and_propose_patches() -> None:
+    """At SessionStart, scan observations for recurrence patterns and
+    write template-patch proposals for any new candidates.
+
+    Idempotent — if a candidate's patch file already exists in proposed/,
+    it's not rewritten.
+    """
+    import re as _re
+    from bin import template_patcher
+    candidates = template_patcher.detect_patch_candidates()
+    existing = {p.stem for p in template_patcher.list_proposed_patches()}
+    for c in candidates:
+        # Reuse the same filename heuristic as propose_patch.
+        fp_short = c["fingerprint"][:8]
+        label = (c.get("classifier_label") or "unknown").lower()
+        safe = _re.sub(r"[^a-z0-9-]+", "-", label).strip("-")[:40]
+        candidate_stem = f"{safe}-{fp_short}"
+        if candidate_stem in existing:
+            continue
+        try:
+            template_patcher.propose_patch(c)
+        except Exception:
+            # Patch proposal must never block hydration.
+            pass
 
 
 if __name__ == "__main__":
