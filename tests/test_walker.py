@@ -530,3 +530,21 @@ def test_persist_uses_atomic_write_no_tmp_leftover(tmp_path):
     walker.persist(state, target)
     leftovers = [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
     assert leftovers == []
+
+
+def test_should_stop_raises_when_yield_converge_rounds_is_zero():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    with pytest.raises(ValueError, match="yield_converge_rounds must be >= 1"):
+        walker.should_stop(state, yield_converge_rounds=0)
+
+
+def test_should_stop_raises_when_yield_converge_rounds_is_negative():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    with pytest.raises(ValueError, match="yield_converge_rounds must be >= 1"):
+        walker.should_stop(state, yield_converge_rounds=-1)

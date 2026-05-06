@@ -168,6 +168,9 @@ def should_stop(
     max-rounds > per-receiver-exhausted. The first match wins so the
     reason field is deterministic.
     """
+    if yield_converge_rounds <= 0:
+        raise ValueError("yield_converge_rounds must be >= 1")
+
     if state.stop_reason == "author-arbitrated":
         return (True, "author-arbitrated")
 
