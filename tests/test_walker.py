@@ -76,15 +76,43 @@ def test_concern_rejects_empty_receivers_list():
         )
 
 
-def test_walk_state_default_fields_are_empty():
+def test_walk_state_asked_defaults_to_empty_list():
     state = walker.WalkState(
-        spec_intent="build a thing",
+        spec_intent="x",
         spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
     )
     assert state.asked == []
+
+
+def test_walk_state_answered_defaults_to_empty_dict():
+    state = walker.WalkState(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
     assert state.answered == {}
+
+
+def test_walk_state_pending_defaults_to_empty_list():
+    state = walker.WalkState(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
     assert state.pending == []
+
+
+def test_walk_state_stale_defaults_to_empty_set():
+    state = walker.WalkState(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
     assert state.stale == set()
+
+
+def test_walk_state_stop_reason_defaults_to_none():
+    state = walker.WalkState(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
     assert state.stop_reason is None
 
 
