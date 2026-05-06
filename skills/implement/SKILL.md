@@ -180,13 +180,102 @@ PY
 
 The fingerprint is what personal-rules.toml keys against. Future runs with the same fingerprint may skip the halt automatically (per v0.4.1 personal-rules consultation in `tier.should_halt`).
 
+**Append to CDLC ledger (v0.4.2+).** Every TIER GATE halt — regardless of yes/halt/skip — also records a `halt` transition in `state/cdlc-ledger.json`:
+
+```bash
+python3 - <<'PY'
+import sys, pathlib
+sys.path.insert(0, ".")
+from bin import cdlc_ledger
+cdlc_ledger.append_transition(
+    kind="halt",
+    payload={
+        "fingerprint": "<fp from observation block>",
+        "label": "<label>",
+        "action": """<current_action>""",
+        "user_answer": "<yes|halt|skip>",
+    },
+    project_path=pathlib.Path.cwd(),
+)
+PY
+```
+
 - `yes` → continue to Step 3.6 then 3.7 then Step 4 (execute). After §6 Path A succeeds, run §Step 3.5b (post-halt-success prompt).
 - `halt` → stop. No scratchpad change.
 - `skip` → advance `step` by 1 (no execution, no verification). Use only when the step was already done out-of-band; rare.
 
-### Step 3.5b — Post-halt-success prompt (v0.4.1+)
+**Persist pending_adoption_prompt for §3.5b durability (v0.4.2+).**
 
-If §3.5 fired a TIER GATE halt AND the user replied `yes`, schedule a **deferred prompt** to run AFTER §6 Path A (verification passes). If §3.5 didn't halt, or the user said `halt` / `skip`, this step does nothing.
+```bash
+python3 - <<'PY'
+import sys, json, pathlib
+sys.path.insert(0, ".")
+from bin import _scratchpad as sp
+
+scratchpad_path = pathlib.Path("state/scratchpad.json")
+data = sp.load(scratchpad_path)
+track = "<active track from invocation, default 'default'>"
+tracks = data.get("tracks") or {}
+track_state = tracks.get(track) or sp.track_default()
+track_state["pending_adoption_prompt"] = {
+    "fingerprint": "<fp from §3.5 observation block>",
+    "label": "<label from §3.5 observation block>",
+    "action": """<current_action>""",
+    "recorded_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+}
+tracks[track] = track_state
+data["tracks"] = tracks
+sp.atomic_write(scratchpad_path, data)
+print(f"PENDING_ADOPTION_PROMPT_PERSISTED: {track_state['pending_adoption_prompt']['fingerprint'][:12]}...")
+PY
+```
+
+This survives session restart and any mid-execution compact between §3.5 and §6 Path A. §3.5b reads and clears the field.
+
+### Step 3.5b — Post-halt-success prompt (v0.4.1+; v0.4.2 durability hardening)
+
+After §6 Path A (verification passes) completes successfully, READ `pending_adoption_prompt` from `state/scratchpad.json` for the active track. If `None`, skip §3.5b entirely — no halt was queued. If present, fire the prompt using the persisted structured fields (fingerprint, label, action). The field is read once and CLEARED immediately after the prompt runs (regardless of adopt/once-only/never-ask-again). This survives compact/restart since scratchpad.json is durable across sessions.
+
+```bash
+python3 - <<'PY'
+import sys, pathlib
+sys.path.insert(0, ".")
+from bin import _scratchpad as sp
+
+scratchpad_path = pathlib.Path("state/scratchpad.json")
+data = sp.load(scratchpad_path)
+track = "<active track from invocation, default 'default'>"
+tracks = data.get("tracks") or {}
+track_state = tracks.get(track) or sp.track_default()
+prompt = track_state.get("pending_adoption_prompt")
+if not prompt:
+    print("NO_PENDING_PROMPT")
+    sys.exit(0)
+print(f"PROMPT: fp={prompt['fingerprint'][:12]}... label={prompt['label']}")
+PY
+```
+
+If the prompt fires (per the existing v0.4.1 §3.5b logic), AFTER the user's answer is processed (whether `adopt`, `once-only`, or `never-ask-again`), CLEAR the field:
+
+```bash
+python3 - <<'PY'
+import sys, pathlib
+sys.path.insert(0, ".")
+from bin import _scratchpad as sp
+
+scratchpad_path = pathlib.Path("state/scratchpad.json")
+data = sp.load(scratchpad_path)
+track = "<active track>"
+tracks = data.get("tracks") or {}
+if track in tracks:
+    tracks[track]["pending_adoption_prompt"] = None
+    data["tracks"] = tracks
+    sp.atomic_write(scratchpad_path, data)
+    print("PROMPT_CLEARED")
+PY
+```
+
+The rest of §3.5b (the adopt / once-only / never-ask-again branches + sandbox-paradox brake from v0.4.1) is unchanged.
 
 After §6 Path A completes successfully — i.e. the action ran AND verification confirmed it worked — emit:
 
@@ -327,6 +416,26 @@ If audits fail repeatedly across multiple steps in the same spec, halt and tell 
 **Path A — verification exits 0:**
 - Print: `VERIFICATION PASSED: Step <N>.`
 - Update scratchpad: increment `step` by 1, clear any retry state.
+
+**Append CDLC ledger transition (v0.4.2+).** Record an `implement` transition for this successful step:
+
+```bash
+python3 - <<'PY'
+import sys, pathlib
+sys.path.insert(0, ".")
+from bin import cdlc_ledger
+cdlc_ledger.append_transition(
+    kind="implement",
+    payload={
+        "step": "<step number from scratchpad>",
+        "spec_slug": "<active spec slug from .active>",
+        "action": """<current_action>""",
+    },
+    project_path=pathlib.Path.cwd(),
+)
+PY
+```
+
 - Run §Step 6.5 Drift checkpoint.
 - Print: `Ready for next /implement.`
 - Halt (do not auto-run Step N+1).
