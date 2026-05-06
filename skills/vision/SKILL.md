@@ -75,10 +75,12 @@ Repeat until the walker reports stop:
 
    Render format:
    ```
-   ROUND <N> · receiver: <receivers> · kind: <kind>
+   ROUND <N> · id: <concern_id> · receiver: <receivers> · kind: <kind>
    <natural-language question derived from concern.summary>
    (answer, or `revise <concern_id>` to amend an earlier answer, or `stop` to lock the walk)
    ```
+
+   On `revise` without an id, list every concern in `state.asked` as `<id> | <one-line summary> | <answer-truncated>` so the user can pick which to amend.
 
 3. **Capture user input.** Three branches:
 
