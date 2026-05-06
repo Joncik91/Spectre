@@ -2,6 +2,7 @@
 eval_metadata.py — .eval.json sidecar writer, policy hash, no-downgrade enforcement.
 
 Public API (per Decision 8 of the v0.3 Plan A brief):
+  - sidecar_path_for(spec_path) -> pathlib.Path
   - compute_policy_hash(config, severity_overrides) -> str
   - write_sidecar(spec_path, *, ...) -> pathlib.Path
   - validate_no_severity_downgrade(default_severity, override_severity) -> None
@@ -117,6 +118,31 @@ def load_severity_overrides_from_config(config_path: pathlib.Path) -> dict[str, 
 
 
 # ---------------------------------------------------------------------------
+# sidecar_path_for
+# ---------------------------------------------------------------------------
+
+#: Suffix appended to the spec filename to form the sidecar filename.
+#: e.g.  specs/foo.spec.md  →  specs/foo.spec.md.eval.json
+SIDECAR_EXTENSION = ".eval.json"
+
+
+def sidecar_path_for(spec_path: pathlib.Path) -> pathlib.Path:
+    """Return the canonical sidecar path for *spec_path*.
+
+    The sidecar is always the spec filename with ``.eval.json`` appended
+    (append-suffix, not replace-suffix).  Example::
+
+        specs/my-feature.spec.md  →  specs/my-feature.spec.md.eval.json
+
+    This is the single source of truth for the sidecar filename convention.
+    Both ``write_sidecar`` and callers that need to *read* the sidecar should
+    use this function so they stay in sync.
+    """
+    spec_path = pathlib.Path(spec_path)
+    return spec_path.parent / (spec_path.name + SIDECAR_EXTENSION)
+
+
+# ---------------------------------------------------------------------------
 # write_sidecar
 # ---------------------------------------------------------------------------
 
@@ -137,7 +163,7 @@ def write_sidecar(
     Returns the sidecar path. Raises on write failure (caller handles).
     """
     spec_path = pathlib.Path(spec_path)
-    sidecar_path = spec_path.parent / (spec_path.name + ".eval.json")
+    sidecar_path = sidecar_path_for(spec_path)
 
     # Aggregate findings_summary
     block_count = sum(1 for f in findings if f.severity == "block")

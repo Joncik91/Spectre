@@ -40,12 +40,11 @@ from bin import eval_metadata as _eval_metadata
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-EVALUATOR_VERSION = "0.4.2.3"
+EVALUATOR_VERSION = "0.4.2.4"
 TIER1_TIMEOUT_MS = 100
 TIER2_TIMEOUT_S = 2
 TIER3_TIMEOUT_S = 30
 DEFAULT_FINDING_CAP = 20
-SIDECAR_SUFFIX = ".eval.json"
 # Note: DeepSeek's v1 API accepts `deepseek-chat` and `deepseek-reasoner`. The
 # v0.3.0 README/docs mentioned a non-existent "v4-pro" alias; v0.3.1 standardizes
 # on `deepseek-reasoner` because reasoning > chat for adversarial spec critique.
