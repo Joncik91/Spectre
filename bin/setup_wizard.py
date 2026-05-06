@@ -276,3 +276,63 @@ def maybe_provision_template_patches_dir() -> None:
     (base / "proposed").mkdir(parents=True, exist_ok=True)
     (base / "accepted").mkdir(parents=True, exist_ok=True)
     (base / "rejected").mkdir(parents=True, exist_ok=True)
+
+
+# ── CLI entrypoint ────────────────────────────────────────────────────────────
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="setup_wizard",
+        description="Setup wizard CLI — provision reviewer.toml on first /vision.",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_p = sub.add_parser(
+        "provision",
+        help=(
+            "Run maybe_provision against the canonical reviewer.toml path "
+            "(or --target). Prints `WIZARD: <result> (<target>)`. "
+            "Outcomes: 'exists' / 'enabled' / 'setup-skipped'."
+        ),
+    )
+    p_p.add_argument(
+        "--target",
+        default=None,
+        help="Override the reviewer.toml target path (default: ~/.spectre/reviewer.toml).",
+    )
+    p_p.add_argument(
+        "--secrets-file",
+        default=None,
+        help=(
+            "Override the secrets file probed for DEEPSEEK_API_KEY "
+            "(default: $SPECTRE_SECRETS_FILE or ~/.spectre/secrets.env)."
+        ),
+    )
+    p_p.add_argument(
+        "--api-key-env",
+        default="DEEPSEEK_API_KEY",
+        help='API key env var name to detect (default: "DEEPSEEK_API_KEY").',
+    )
+
+    args = parser.parse_args()
+
+    if args.cmd == "provision":
+        target = (
+            pathlib.Path(args.target) if args.target is not None else config_path_default()
+        )
+        secrets_file = (
+            pathlib.Path(args.secrets_file) if args.secrets_file is not None else None
+        )
+        try:
+            result = maybe_provision(
+                target,
+                secrets_file_path=secrets_file,
+                api_key_env=args.api_key_env,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(f"WIZARD: {result} ({target})")

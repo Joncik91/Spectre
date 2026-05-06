@@ -183,3 +183,50 @@ class TestInitOrResumeCli:
             "--state-path", str(state),
         )
         assert r.stderr != ""
+
+
+# ── yield-check (Phase 2D) ────────────────────────────────────────────────────
+
+
+class TestYieldCheckCli:
+    def test_no_state_skipped(self, tmp_path):
+        draft = tmp_path / "x.spec.md.draft"
+        draft.write_text("# x\n")
+        r = _run(
+            "yield-check",
+            "--draft", str(draft),
+            "--state-path", str(tmp_path / ".walk.json"),
+        )
+        assert "YIELD: skipped" in r.stdout
+
+    def test_no_draft_skipped(self, tmp_path):
+        from bin import walker
+        sp = tmp_path / ".walk.json"
+        state = walker.init_walk(spec_intent="x", spec_draft_path=tmp_path / "missing.draft")
+        state.round_count = 2
+        walker.persist(state, sp)
+        r = _run(
+            "yield-check",
+            "--draft", str(tmp_path / "missing.draft"),
+            "--state-path", str(sp),
+        )
+        assert "YIELD: skipped (draft missing)" in r.stdout
+
+    def test_zero_round_skipped(self, tmp_path):
+        from bin import walker
+        sp = tmp_path / ".walk.json"
+        draft = tmp_path / "x.spec.md.draft"
+        draft.write_text("# x\n")
+        state = walker.init_walk(spec_intent="x", spec_draft_path=draft)
+        # round_count default 0
+        walker.persist(state, sp)
+        r = _run(
+            "yield-check",
+            "--draft", str(draft),
+            "--state-path", str(sp),
+        )
+        assert "YIELD: skipped (round_count=0)" in r.stdout
+
+    def test_missing_draft_flag_exits_2(self):
+        r = _run("yield-check", "--state-path", "state/.walk.json")
+        assert r.returncode == 2
