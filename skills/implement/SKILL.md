@@ -200,6 +200,8 @@ cdlc_ledger.append_transition(
 PY
 ```
 
+**Ledger write is non-blocking.** If the ledger write fails (disk full, JSON corruption, etc.), the skill MUST continue to the user-answer dispatch and the pending_adoption_prompt persistence. The cdlc_ledger.append_transition call is already wrapped in a try/except in the call sites of bin/observations and bin/personal_rules; here the wrapping is structural — the ledger write is one heredoc, the persist is another, and a failure of the first does not abort the skill. If a downstream write to scratchpad.json is what fails, that's a separate halt — but ledger failures are silent.
+
 - `yes` → continue to Step 3.6 then 3.7 then Step 4 (execute). After §6 Path A succeeds, run §Step 3.5b (post-halt-success prompt).
 - `halt` → stop. No scratchpad change.
 - `skip` → advance `step` by 1 (no execution, no verification). Use only when the step was already done out-of-band; rare.
@@ -255,7 +257,7 @@ print(f"PROMPT: fp={prompt['fingerprint'][:12]}... label={prompt['label']}")
 PY
 ```
 
-If the prompt fires (per the existing v0.4.1 §3.5b logic), AFTER the user's answer is processed (whether `adopt`, `once-only`, or `never-ask-again`), CLEAR the field:
+**Clear pending_adoption_prompt FIRST (v0.4.2+).** As soon as §3.5b reads the field successfully and BEFORE running the adopt/once-only/never-ask-again branches, clear the field unconditionally:
 
 ```bash
 python3 - <<'PY'
@@ -265,7 +267,7 @@ from bin import _scratchpad as sp
 
 scratchpad_path = pathlib.Path("state/scratchpad.json")
 data = sp.load(scratchpad_path)
-track = "<active track>"
+track = "<active track from invocation, default 'default'>"
 tracks = data.get("tracks") or {}
 if track in tracks:
     tracks[track]["pending_adoption_prompt"] = None
@@ -274,6 +276,8 @@ if track in tracks:
     print("PROMPT_CLEARED")
 PY
 ```
+
+Clearing FIRST means: if the user's chosen branch (adopt) raises an exception during personal_rules.append_adoption (e.g. permissions error on ~/.spectre/personal-rules.toml), the field is already cleared. The user sees the adopt-write error and can fix their config, but next /implement will not re-prompt for the same already-handled halt. Loss-of-clear was the v0.4.1 failure mode the durability hardening was meant to prevent — clearing first preserves that property.
 
 The rest of §3.5b (the adopt / once-only / never-ask-again branches + sandbox-paradox brake from v0.4.1) is unchanged.
 
@@ -427,7 +431,7 @@ from bin import cdlc_ledger
 cdlc_ledger.append_transition(
     kind="implement",
     payload={
-        "step": "<step number from scratchpad>",
+        "step": "<step number that just succeeded — the pre-increment value, i.e. current_step from §1>",
         "spec_slug": "<active spec slug from .active>",
         "action": """<current_action>""",
     },
@@ -435,6 +439,8 @@ cdlc_ledger.append_transition(
 )
 PY
 ```
+
+**Why the ledger fires AFTER the increment.** The increment must be durable before any audit write — if the ledger write fails (disk full), we'd rather have the step advanced (so the user re-runs and sees the action already succeeded) than not advanced (replaying a successful action). Ledger writes are advisory; step advancement is load-bearing.
 
 - Run §Step 6.5 Drift checkpoint.
 - Print: `Ready for next /implement.`
