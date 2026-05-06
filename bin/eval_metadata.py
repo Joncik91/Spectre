@@ -157,19 +157,31 @@ def write_sidecar(
     config_hash: str | None,
     deepseek_model_version: str | None,
     policy_hash: str,
+    findings_summary: dict | None = None,
 ) -> pathlib.Path:
     """Atomic write of <spec>.eval.json next to the spec file.
 
     Returns the sidecar path. Raises on write failure (caller handles).
+
+    If *findings_summary* is provided it is used verbatim (round-trip from a
+    caller-supplied payload).  When omitted (``None``) the summary is
+    recomputed from *findings* and *dismissals* as before.
     """
     spec_path = pathlib.Path(spec_path)
     sidecar_path = sidecar_path_for(spec_path)
 
-    # Aggregate findings_summary
-    block_count = sum(1 for f in findings if f.severity == "block")
-    warn_count = sum(1 for f in findings if f.severity == "warn")
-    info_count = sum(1 for f in findings if f.severity == "info")
-    dismissed_t3_count = len(dismissals)
+    if findings_summary is None:
+        # Aggregate findings_summary
+        block_count = sum(1 for f in findings if f.severity == "block")
+        warn_count = sum(1 for f in findings if f.severity == "warn")
+        info_count = sum(1 for f in findings if f.severity == "info")
+        dismissed_t3_count = len(dismissals)
+        findings_summary = {
+            "block_count": block_count,
+            "warn_count": warn_count,
+            "info_count": info_count,
+            "dismissed_t3_count": dismissed_t3_count,
+        }
 
     locked_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -179,12 +191,7 @@ def write_sidecar(
         "policy_hash": policy_hash,
         "config_path": str(config_path) if config_path is not None else None,
         "config_hash": config_hash,
-        "findings_summary": {
-            "block_count": block_count,
-            "warn_count": warn_count,
-            "info_count": info_count,
-            "dismissed_t3_count": dismissed_t3_count,
-        },
+        "findings_summary": findings_summary,
         "dismissals": dismissals,
         "deepseek_model_version": deepseek_model_version,
         "locked_at": locked_at,
@@ -204,3 +211,141 @@ def write_sidecar(
         raise
 
     return sidecar_path
+
+
+# ── CLI entrypoint ────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="eval_metadata",
+        description="eval_metadata CLI — policy-hash, sidecar-path, write-sidecar, sha256.",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    # ── policy-hash ───────────────────────────────────────────────────────────
+    p_ph = sub.add_parser(
+        "policy-hash",
+        help="Compute and print the policy hash hex string.",
+    )
+    p_ph.add_argument("--config", default=None, help="Path to reviewer TOML config.")
+    p_ph.add_argument(
+        "--severity-overrides",
+        default=None,
+        help="JSON object of severity overrides, e.g. '{\"missing-why\":\"block\"}'.",
+    )
+
+    # ── sidecar-path ──────────────────────────────────────────────────────────
+    p_sp = sub.add_parser(
+        "sidecar-path",
+        help="Print the canonical .eval.json sidecar path for a spec file.",
+    )
+    p_sp.add_argument("--spec", required=True, help="Path to the spec file.")
+
+    # ── write-sidecar ─────────────────────────────────────────────────────────
+    p_ws = sub.add_parser(
+        "write-sidecar",
+        help=(
+            "Write the .eval.json sidecar. Payload JSON is read from --payload <file> "
+            "or stdin when --payload is '-' or omitted."
+        ),
+    )
+    p_ws.add_argument("--spec", required=True, help="Path to the spec file (.spec.md, already locked).")
+    p_ws.add_argument(
+        "--payload",
+        default=None,
+        help="Path to JSON payload file, or '-' / omitted to read from stdin.",
+    )
+
+    # ── sha256 ────────────────────────────────────────────────────────────────
+    p_sha = sub.add_parser(
+        "sha256",
+        help="Compute SHA-256 of a file (or stdin) and print the hex digest.",
+    )
+    sha_src = p_sha.add_mutually_exclusive_group()
+    sha_src.add_argument("--file", default=None, help="Path to file to hash.")
+    sha_src.add_argument("--stdin", action="store_true", help="Read content from stdin.")
+
+    args = parser.parse_args()
+
+    if args.cmd == "policy-hash":
+        config_dict: dict = {}
+        if args.config is not None:
+            config_path = pathlib.Path(args.config)
+            if not config_path.exists():
+                print(f"ERROR: config not found: {config_path}", file=sys.stderr)
+                sys.exit(1)
+            with config_path.open("rb") as _f:
+                config_dict = tomllib.load(_f)
+        severity_overrides: dict = {}
+        if args.severity_overrides is not None:
+            try:
+                severity_overrides = json.loads(args.severity_overrides)
+            except json.JSONDecodeError as exc:
+                print(f"ERROR: bad --severity-overrides JSON: {exc}", file=sys.stderr)
+                sys.exit(1)
+        print(compute_policy_hash(config_dict, severity_overrides))
+
+    elif args.cmd == "sidecar-path":
+        spec_path = pathlib.Path(args.spec)
+        print(str(sidecar_path_for(spec_path)))
+
+    elif args.cmd == "write-sidecar":
+        spec_path = pathlib.Path(args.spec)
+        # Read payload JSON
+        if args.payload is None or args.payload == "-":
+            raw = sys.stdin.read()
+        else:
+            payload_path = pathlib.Path(args.payload)
+            if not payload_path.exists():
+                print(f"ERROR: payload file not found: {payload_path}", file=sys.stderr)
+                sys.exit(1)
+            raw = payload_path.read_text(encoding="utf-8")
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            print(f"ERROR: bad payload JSON: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        # Map payload keys to write_sidecar kwargs.
+        # Payload is expected to match the sidecar_payload dict from EvaluatorResult.
+        try:
+            sidecar = write_sidecar(
+                spec_path,
+                evaluator_version=payload["evaluator_version"],
+                tiers_run=payload["tiers_run"],
+                findings=[],  # findings are not re-serialized from CLI; summary comes from payload
+                dismissals=payload.get("dismissals", []),
+                config_path=(
+                    pathlib.Path(payload["config_path"])
+                    if payload.get("config_path")
+                    else None
+                ),
+                config_hash=payload.get("config_hash"),
+                deepseek_model_version=payload.get("deepseek_model_version"),
+                policy_hash=payload["policy_hash"],
+                findings_summary=payload.get("findings_summary"),
+            )
+        except KeyError as exc:
+            print(f"ERROR: missing required payload field: {exc}", file=sys.stderr)
+            sys.exit(1)
+        except OSError as exc:
+            print(f"ERROR: write failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(str(sidecar))
+
+    elif args.cmd == "sha256":
+        if args.stdin:
+            data = sys.stdin.buffer.read()
+        elif args.file is not None:
+            fp = pathlib.Path(args.file)
+            if not fp.exists():
+                print(f"ERROR: file not found: {fp}", file=sys.stderr)
+                sys.exit(1)
+            data = fp.read_bytes()
+        else:
+            print("ERROR: provide --file <path> or --stdin", file=sys.stderr)
+            sys.exit(1)
+        print(hashlib.sha256(data).hexdigest())

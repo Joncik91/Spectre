@@ -40,7 +40,7 @@ from bin import eval_metadata as _eval_metadata
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-EVALUATOR_VERSION = "0.4.2.6"
+EVALUATOR_VERSION = "0.5.0-rc1"
 TIER1_TIMEOUT_MS = 100
 TIER2_TIMEOUT_S = 2
 TIER3_TIMEOUT_S = 180
@@ -522,3 +522,103 @@ def clear_bundle(bundle_path: pathlib.Path) -> None:
         bundle_path.unlink()
     except FileNotFoundError:
         pass
+
+
+# ── CLI entrypoint ────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="spec_evaluator",
+        description="Spec evaluator CLI — wraps evaluate() and slug-to-path helpers.",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    # ── evaluate ──────────────────────────────────────────────────────────────
+    p_eval = sub.add_parser(
+        "evaluate",
+        help="Run the full evaluator over a spec file. Writes JSON result to stdout.",
+    )
+    p_eval.add_argument("--spec", required=True, help="Path to the spec file (draft or locked).")
+    p_eval.add_argument("--config", default=None, help="Path to reviewer TOML config.")
+    p_eval.add_argument("--bundle-dir", default=None, help="Bundle persist directory (default: state/ next to spec).")
+    p_eval.add_argument("--output", default=None, help="Write JSON to this file instead of stdout.")
+
+    # ── slug-to-path ──────────────────────────────────────────────────────────
+    p_slug = sub.add_parser(
+        "slug-to-path",
+        help="Convert a spec slug to the canonical specs/<slug>.spec.md path.",
+    )
+    p_slug.add_argument("--slug", required=True, help="Spec slug (no extension).")
+
+    # ── clear-bundle ──────────────────────────────────────────────────────────
+    p_clear = sub.add_parser(
+        "clear-bundle",
+        help="Remove the persisted eval bundle file (idempotent).",
+    )
+    p_clear.add_argument(
+        "--bundle",
+        default="state/.eval-bundle.json",
+        help="Path to the bundle JSON file (default: state/.eval-bundle.json).",
+    )
+
+    args = parser.parse_args()
+
+    if args.cmd == "evaluate":
+        spec_path = pathlib.Path(args.spec)
+        config_path = pathlib.Path(args.config) if args.config else None
+        bundle_dir = pathlib.Path(args.bundle_dir) if args.bundle_dir else None
+        try:
+            result = evaluate(spec_path, config_path=config_path, bundle_persist_dir=bundle_dir)
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        out_data = {
+            "findings": [
+                {
+                    "tier": f.tier,
+                    "kind": f.kind,
+                    "severity": f.severity,
+                    "location": {
+                        "scope": f.location.scope,
+                        "step": f.location.step,
+                        "ref": f.location.ref,
+                    },
+                    "message": f.message,
+                    "suggested_fix": f.suggested_fix,
+                    "dismissable": f.dismissable,
+                }
+                for f in result.findings
+            ],
+            "max_severity": result.max_severity,
+            "sidecar_payload": result.sidecar_payload,
+        }
+        output_text = json.dumps(out_data, indent=2)
+        if args.output:
+            pathlib.Path(args.output).write_text(output_text, encoding="utf-8")
+        else:
+            print(output_text)
+
+    elif args.cmd == "slug-to-path":
+        # Canonical slug → spec path: specs/<slug>.spec.md
+        slug = args.slug
+        slugified = _adr.slugify(slug)
+        if slugified != slug:
+            print(
+                f"Error: {slug!r} is not a valid slug — did you mean {slugified!r}?",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        canonical = pathlib.Path("specs") / f"{slug}.spec.md"
+        print(str(canonical))
+
+    elif args.cmd == "clear-bundle":
+        bundle_path = pathlib.Path(args.bundle)
+        try:
+            clear_bundle(bundle_path)
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)

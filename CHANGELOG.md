@@ -2,6 +2,51 @@
 
 All notable changes to the SDL Vision Engine plugin (Spectre).
 
+## v0.5.0-rc1 — 2026-05-06
+
+**First prerelease toward v0.5.0. Phase 2A of issue #13 (heredoc replacement). Pure additive infrastructure — no behavioral changes to existing flows.**
+
+### Added
+
+CLI entrypoints (`if __name__ == "__main__":`) on three `bin/` modules. All subcommands wrap existing public functions; no new business logic added. No `skills/**/SKILL.md` changes (Phase 2B does that).
+
+- **`bin/spec_evaluator.py`** — 3 subcommands:
+  - `evaluate --spec <path> [--config <path>] [--bundle-dir <path>] [--output <path>]` — runs `evaluate()`, writes JSON result (findings + max_severity + sidecar_payload) to stdout or file.
+  - `slug-to-path --slug <slug>` — prints canonical `specs/<slug>.spec.md` path.
+  - `clear-bundle --bundle <path>` — removes the persisted eval bundle (idempotent).
+
+- **`bin/eval_metadata.py`** — 4 subcommands:
+  - `policy-hash [--config <path>] [--severity-overrides <json>]` — calls `compute_policy_hash()`, prints 64-char hex.
+  - `sidecar-path --spec <path>` — calls `sidecar_path_for()`, prints the `.eval.json` path.
+  - `write-sidecar --spec <path> --payload <file-or-stdin>` — calls `write_sidecar()` from a JSON payload (keys match `sidecar_payload` dict from `EvaluatorResult`). Payload via file path or `-`/omitted for stdin.
+  - `sha256 --file <path> | --stdin` — SHA-256 of a file or stdin; prints hex digest. Resource-node helper (audit occurrence #8).
+
+- **`bin/walker.py`** — 1 subcommand:
+  - `init-or-resume --intent <text> --draft <path> [--state-path <path>]` — loads existing walk state or initialises via `init_walk()`, persists it, prints `WALK: N rounds, M pending, stop=<reason|none>`. Covers audit occurrence #2.
+
+### Tests
+
+**760 passing** (695 baseline + 65 new). Three new test files (subprocess-based CLI tests, one assertion per test):
+- `tests/test_spec_evaluator_cli.py` — 19 tests covering `evaluate`, `slug-to-path`, `clear-bundle` (happy paths + error cases + output-file flag + JSON validity).
+- `tests/test_eval_metadata_cli.py` — 33 tests covering `policy-hash` (TOML + severity-overrides + error), `sidecar-path`, `write-sidecar` (file + stdin + error cases), `sha256` (file + stdin + error cases).
+- `tests/test_walker_cli.py` — 13 tests covering `init-or-resume` (fresh init, resume, round-count persistence, error cases, missing flags).
+
+### Fixed
+
+- `write-sidecar` CLI now preserves caller-supplied `findings_summary` (was silently zeroed when `findings=[]` was passed to `write_sidecar()`; counts came from the empty list instead of the payload).
+
+### Notes
+
+- This is the first prerelease toward v0.5.0.
+- Phase 2A of issue #13 (heredoc-python replacement audit). No heredocs replaced yet — Phase 2B replaces the high-leverage targets using these CLIs.
+- `bin/walker.py` defers `yield-check` subcommand — that orchestration path has no single existing function to wrap (compound: load → evaluate → update yield_history → persist). It will land in Phase 2B alongside the heredoc replacement.
+- Stdlib only: `argparse`, `json`, `tomllib`, `hashlib`, `pathlib`, `sys`. No new dependencies.
+
+### References
+
+- Issue #13: heredoc-python replacement
+- Audit: `docs/superpowers/audits/2026-05-06-issue-13-heredoc-audit.md`
+
 ## v0.4.2.6 — 2026-05-06
 
 **Patch release — fix #13 audit finding (State Auditor silent no-op on v2 scratchpads).**
