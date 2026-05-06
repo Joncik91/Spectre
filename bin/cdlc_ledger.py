@@ -87,3 +87,125 @@ def read_ledger(*, project_path: pathlib.Path) -> list[dict]:
     except (json.JSONDecodeError, OSError):
         return []
     return list(data.get("transitions", []))
+
+
+# ── CLI entrypoint ────────────────────────────────────────────────────────────
+
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="cdlc_ledger",
+        description="CDLC ledger CLI — append transitions, read transitions.",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_app = sub.add_parser(
+        "append",
+        help=(
+            "Append a transition to state/cdlc-ledger.json under --project. "
+            "Payload is read from --payload (JSON file path or '-' for stdin) "
+            "or built from --payload-key=value flags. Prints the appended "
+            "transition's timestamp on success."
+        ),
+    )
+    p_app.add_argument(
+        "--kind",
+        required=True,
+        choices=KNOWN_TRANSITION_KINDS,
+        help=f"Transition kind (one of: {', '.join(KNOWN_TRANSITION_KINDS)}).",
+    )
+    p_app.add_argument(
+        "--project",
+        default=".",
+        help="Project root (default: cwd '.'). Ledger is at <project>/state/cdlc-ledger.json.",
+    )
+    p_app.add_argument(
+        "--payload",
+        default=None,
+        help=(
+            "Payload JSON: file path, '-' for stdin, or inline JSON string. "
+            "Mutually exclusive with --payload-kv."
+        ),
+    )
+    p_app.add_argument(
+        "--payload-kv",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help=(
+            "Build payload from key=value pairs (repeatable). String values "
+            "only. Use --payload for typed/nested payloads."
+        ),
+    )
+
+    p_read = sub.add_parser(
+        "read",
+        help="Print all transitions as a JSON array on stdout.",
+    )
+    p_read.add_argument(
+        "--project",
+        default=".",
+        help="Project root (default: cwd '.').",
+    )
+
+    args = parser.parse_args()
+
+    if args.cmd == "append":
+        if args.payload is not None and args.payload_kv:
+            print(
+                "ERROR: --payload and --payload-kv are mutually exclusive.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        payload: dict
+        if args.payload is not None:
+            raw: str
+            if args.payload == "-":
+                raw = sys.stdin.read()
+            else:
+                p = pathlib.Path(args.payload)
+                if p.is_file():
+                    raw = p.read_text(encoding="utf-8")
+                else:
+                    raw = args.payload
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                print(f"ERROR: bad --payload JSON: {exc}", file=sys.stderr)
+                sys.exit(1)
+            if not isinstance(payload, dict):
+                print("ERROR: --payload must be a JSON object.", file=sys.stderr)
+                sys.exit(1)
+        else:
+            payload = {}
+            for kv in args.payload_kv:
+                if "=" not in kv:
+                    print(
+                        f"ERROR: bad --payload-kv {kv!r} (expected KEY=VALUE).",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                k, _, v = kv.partition("=")
+                payload[k] = v
+
+        try:
+            append_transition(
+                kind=args.kind,
+                payload=payload,
+                project_path=pathlib.Path(args.project),
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(f"APPENDED: kind={args.kind}")
+
+    elif args.cmd == "read":
+        try:
+            txs = read_ledger(project_path=pathlib.Path(args.project))
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(json.dumps(txs, indent=2))

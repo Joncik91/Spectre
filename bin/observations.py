@@ -121,3 +121,93 @@ def find_recurrences(*, kind: str | None = None, threshold: int = 3) -> list[dic
             most_recent = records[-1]
             out.append({**most_recent, "count": len(records)})
     return out
+
+
+# ── CLI entrypoint ────────────────────────────────────────────────────────────
+
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="observations",
+        description="Observe-leg CLI — record-halt, find-recurrences.",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_rec = sub.add_parser(
+        "record-halt",
+        help=(
+            "Compute the (action, classifier-label) fingerprint and append a "
+            "halt observation to ~/.spectre/observations.jsonl. Prints "
+            "`OBSERVED: <fp[:12]>...` on success. Also writes a CDLC ledger "
+            "halt transition (best-effort; errors swallowed)."
+        ),
+    )
+    p_rec.add_argument("--action", required=True, help="The action text that halted.")
+    p_rec.add_argument(
+        "--label",
+        required=True,
+        help="Classifier label (the first reason from the tier classifier).",
+    )
+    p_rec.add_argument(
+        "--kind",
+        default="tier-gate",
+        help='Observation kind (default: "tier-gate").',
+    )
+    p_rec.add_argument(
+        "--project",
+        default=None,
+        help=(
+            "Project path for the observation record (default: cwd). "
+            "Stored verbatim; the ledger writer always uses cwd."
+        ),
+    )
+    p_rec.add_argument(
+        "--spec-slug",
+        default=None,
+        help="Active spec slug from .active (optional).",
+    )
+
+    p_rec_q = sub.add_parser(
+        "find-recurrences",
+        help=(
+            "Find fingerprints that recur ≥ --threshold times across "
+            "~/.spectre/observations.jsonl. Prints JSON list."
+        ),
+    )
+    p_rec_q.add_argument("--kind", default=None, help="Filter by observation kind.")
+    p_rec_q.add_argument(
+        "--threshold",
+        type=int,
+        default=3,
+        help="Minimum recurrence count (default: 3).",
+    )
+
+    args = parser.parse_args()
+
+    if args.cmd == "record-halt":
+        project_path = args.project if args.project is not None else str(pathlib.Path.cwd())
+        try:
+            fp = fingerprint_halt(action=args.action, classifier_label=args.label)
+            record_halt(
+                kind=args.kind,
+                fingerprint=fp,
+                project_path=project_path,
+                spec_slug=args.spec_slug,
+                action=args.action,
+                classifier_label=args.label,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(f"OBSERVED: {fp[:12]}...")
+
+    elif args.cmd == "find-recurrences":
+        try:
+            recs = find_recurrences(kind=args.kind, threshold=args.threshold)
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(json.dumps(recs, indent=2))
