@@ -122,3 +122,47 @@ def test_walk_state_round_count_starts_at_zero():
         spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
     )
     assert state.round_count == 0
+
+
+def test_init_walk_returns_walk_state_with_intent():
+    state = walker.init_walk(
+        spec_intent="build a btc poller",
+        spec_draft_path=pathlib.Path("specs/btc.spec.md.draft"),
+    )
+    assert state.spec_intent == "build a btc poller"
+
+
+def test_init_walk_seeds_pending_with_assumption_surface_concern():
+    """Every walk starts with at least one assumption-surface concern.
+    The walker refuses to prune what biology lets humans skip — round 1
+    asks the human to surface the unstated assumptions in their intent."""
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    assert any(c.kind == "assumption-surface" for c in state.pending)
+
+
+def test_init_walk_seeded_concern_targets_human_receiver():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    seed = state.pending[0]
+    assert "human" in seed.receivers
+
+
+def test_init_walk_round_count_is_zero():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    assert state.round_count == 0
+
+
+def test_init_walk_no_stop_reason_set():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    assert state.stop_reason is None

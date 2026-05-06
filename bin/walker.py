@@ -66,3 +66,26 @@ class WalkState:
     stop_reason: str | None = None
     round_count: int = 0
     yield_history: list[int] = field(default_factory=list)
+
+
+def init_walk(*, spec_intent: str, spec_draft_path: pathlib.Path) -> WalkState:
+    """Initialize a walk. Seeds pending with one assumption-surface concern
+    targeting the human — round 1 always asks the author to enumerate their
+    own unstated assumptions, since the LLM doesn't have priors the human does.
+    """
+    seed = Concern(
+        id="seed-1",
+        kind="assumption-surface",
+        receivers=["human"],
+        depends_on=[],
+        summary=(
+            "Surface the unstated assumptions baked into the intent. What "
+            "edge cases, environment quirks, or hard constraints does the "
+            "author know that the spec doesn't yet say?"
+        ),
+    )
+    return WalkState(
+        spec_intent=spec_intent,
+        spec_draft_path=spec_draft_path,
+        pending=[seed],
+    )
