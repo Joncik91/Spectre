@@ -2,6 +2,44 @@
 
 All notable changes to the SDL Vision Engine plugin (Spectre).
 
+## v0.5.0-rc2 — 2026-05-07
+
+**Second prerelease toward v0.5.0. Phase 2B of issue #13 (heredoc replacement) — high-leverage prose surgery in `skills/vision/SKILL.md`. No behavioral changes to /vision or /implement flow.**
+
+### Changed
+
+3 of the 5 high-leverage `python3 - <<'PY' ... PY` heredocs called out in the issue #13 audit have been replaced in `skills/vision/SKILL.md`. The replacement form for each:
+
+- **§6.4 — Pre-lock spec evaluator** (audit occurrence #5) → `python3 -m bin.spec_evaluator slug-to-path --slug <slug>` for canonical draft path derivation, then `python3 -m bin.spec_evaluator evaluate --spec <draft> --config ~/.spectre/reviewer.toml --bundle-dir state --output state/.eval-result.json`. The slug → path step now goes through the validated CLI (no inline `Path("specs/<slug>...")` substitution); the result is persisted for §6.7 to consume.
+- **§6.6 — Resource node inference (read from bundle)** (audit occurrence #8) → native `Read` on `state/.eval-bundle.json` (which §6.4 already persisted, keyed by draft SHA-256). Removed inline SHA-256 + `load_persisted_bundle` Python; the bundle file is trusted because §6.4 wrote it in the same workflow.
+- **§6.7 step 4 — Write the `.eval.json` sidecar** (audit occurrence #9) → `python3 -m bin.spec_evaluator slug-to-path` for the locked-spec path, then a 1-line stdlib JSON extraction of `sidecar_payload` from `state/.eval-result.json` piped to `python3 -m bin.eval_metadata write-sidecar --spec <spec>`. The misleading `draft` variable that pointed at `.spec.md` is gone, and `policy_hash`/`tiers_run`/`dismissals`/`findings_summary`/`evaluator_version` now flow verbatim from §6.4 — eliminating the policy-hash drift bug class that `test_vision_sidecar_path_consistency.py` was added to guard.
+
+LOC reduction in `skills/vision/SKILL.md`: ~62 LOC of heredoc-Python removed; ~16 LOC of CLI invocations + native-tool prose added. Net: ~46 LOC reduction.
+
+### Deferred to Phase 2C
+
+Audit targets #11 (`skills/implement/SKILL.md` §3.5 Persistence-Tier classifier, 33 LOC heredoc) and #19 (§5.5 State Auditor, 25 LOC heredoc) are deferred to Phase 2C. Both require new CLI entry points on `bin/tier.py` and `bin/auditor.py` that Phase 2A did not ship; extending the CLI surface mid-Phase-2B would have retroactively broken Phase 2A's "additive only" guarantee. Phase 2C will land those CLIs alongside the §3.5 / §5.5 prose replacements in a single coherent PR.
+
+15 of the 20 audited heredocs remain (3 vision + 12 implement). Phase 2C handles the medium-leverage targets, Phase 2D the cleanup tail.
+
+### Tests
+
+**770 passing** (765 baseline + 5 new). One new test file:
+- `tests/test_skill_prose_no_heredoc_python.py` — 5 scope-limited drift guards: §6.4, §6.6, and §6.7 sidecar-write block must contain zero heredoc-Python and must invoke their respective Phase 2A CLIs; both skill files have heredoc-count ceilings (vision ≤ 7, implement ≤ 13) so accidental new heredocs surface in CI.
+
+The existing `tests/test_vision_sidecar_path_consistency.py` skill-prose drift checks still pass — the §6.7 prose still references `.spec.md.eval.json` (append-suffix) via the CLI's stdout.
+
+### Notes
+
+Phase 2B of issue #13. CDLC ledger transitions, walker yield-check, ADR writes, and other (b)/(c)-category heredocs (audit occurrences #1–#3, #6–#7, #10) remain in place — they are out of scope for this PR's "5 high-leverage targets" objective and depend on CLI surface that Phase 2A did not ship.
+
+### References
+
+- Issue #13: https://github.com/Joncik91/Spectre/issues/13
+- Audit: `docs/superpowers/audits/2026-05-06-issue-13-heredoc-audit.md`
+
+---
+
 ## v0.5.0-rc1 — 2026-05-06
 
 **First prerelease toward v0.5.0. Phase 2A of issue #13 (heredoc replacement). Pure additive infrastructure — no behavioral changes to existing flows.**
