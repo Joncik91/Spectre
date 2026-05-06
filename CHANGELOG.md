@@ -10,12 +10,15 @@ All notable changes to the SDL Vision Engine plugin (Spectre).
 - **State Auditor schema level** — `skills/implement/SKILL.md` §5.5 heredoc was reading `paths_touched` via `sp.get("paths_touched", [])` directly from the scratchpad root. After the v1→v2 migration `paths_touched` moved to `data["tracks"][track]["paths_touched"]`, so the auditor silently received `[]` on every post-migration run and `auditor.audit_action` was a no-op for all v2 scratchpads. (Discovered during issue #13 audit: `docs/superpowers/audits/2026-05-06-issue-13-heredoc-audit.md`, occurrence #19.)
 - Heredoc now uses `_scratchpad.get_paths_touched(sp, track="<current_track>")` which falls back to the v1 top-level key for mixed-version transitions.
 - Heredoc now writes audit results back via `_scratchpad.atomic_write` instead of raw `json.dump`, eliminating the data-corruption risk on interrupted writes (also flagged in #19).
+- **`bin/compact.py` PostToolUse hook never migrated to v2** — on every hook fire it was appending to `data["paths_touched"]` at root, leaving `tracks.default.paths_touched` frozen with stale data from migration time. The helper added in the prior commit prefers the v2-tracks path, so the auditor received stale data. `compact.py` now writes to `data["tracks"]["default"]["paths_touched"]` for v2 scratchpads; root-level write is preserved as fallback for unmigrated (v1/hand-edited) dicts only.
+- **`isinstance(list)` guard on `get_paths_touched()`** — a corrupt `paths_touched: "string"` field no longer propagates to `auditor.audit_action` (which iterates it char-by-char). Both the v2-tracks and v1-root branches now verify the value is a list before returning it; a non-list value falls through to the next branch and ultimately returns `[]`.
 
 ### Tests
-**693 passing** (690 baseline + 3 new). New tests in `tests/test_auditor.py`:
-- `test_paths_touched_resolved_from_v2_schema_level` — v2 fixture; assert auditor sees actual paths under `tracks.default.paths_touched`.
-- `test_paths_touched_falls_back_to_v1_schema_level` — v1-style fixture (top-level key); assert lookup still returns the list.
-- `test_paths_touched_returns_empty_for_missing_field` — neither key present → `[]`, no crash.
+**694 passing** (690 baseline + 4 new). New tests:
+- `tests/test_auditor.py::test_paths_touched_resolved_from_v2_schema_level` — v2 fixture; assert auditor sees actual paths under `tracks.default.paths_touched`.
+- `tests/test_auditor.py::test_paths_touched_falls_back_to_v1_schema_level` — v1-style fixture (top-level key); assert lookup still returns the list.
+- `tests/test_auditor.py::test_paths_touched_returns_empty_for_missing_field` — neither key present → `[]`, no crash.
+- `tests/test_compact.py::test_v2_scratchpad_paths_touched_written_to_tracks_not_root` — end-to-end integration: seeds a v2 scratchpad, fires compact via subprocess (real hook path), asserts `tracks.default.paths_touched` contains the new path, root `paths_touched` is absent, and `get_paths_touched()` returns the v2 list.
 
 ### References
 - Issue #13 audit: `docs/superpowers/audits/2026-05-06-issue-13-heredoc-audit.md` (occurrence #19)
