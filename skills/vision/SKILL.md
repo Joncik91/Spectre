@@ -33,76 +33,100 @@ This writes `state/local-symbols.json`. Read the first 50 entries:
 python3 -c "import json; d=json.load(open('state/local-symbols.json')); print(json.dumps(d[:50], indent=2))"
 ```
 
-When you draft the First-Principles Summary in Step 3, scan the symbol map for any function/class/module conceptually related to the user's vision (e.g. user wants "fetch BTC price" → search for `fetch`, `price`, `http`, `bitcoin`, `btc`, `requests`). If you find a candidate, surface it in the **Algorithm Audit (Delete)** section: "We will NOT reinvent `<symbol_name>` at `<file>:<line>` — we will reuse it as the basis for step N."
+When the walker surfaces concerns in Step 4, scan the symbol map for any function/class/module conceptually related to the user's intent (e.g. intent says "fetch BTC price" → search for `fetch`, `price`, `http`, `bitcoin`, `btc`, `requests`). If you find a candidate, surface it via a `branch-resolution` concern: "We will NOT reinvent `<symbol_name>` at `<file>:<line>` — reuse it as the basis for step N." The "never reinvent the wheel" rule is enforced by construction here. Skipping Step 0 violates the rule silently.
 
-The "never reinvent the wheel" rule is enforced by construction here. Skipping Step 0 violates the rule silently.
+### Step 1 — Receive intent
 
-### Step 1 — Receive
+The user has typed `/vision <free-form text>`. Treat the text as **intent**, not as a spec. Anchor cwd via `pwd` to capture `$PROJECT`. If `$PROJECT` looks like a plugin cache (`/root/.claude/plugins/...`), HALT.
 
-The user has typed `/vision <free-form text>`. Treat that text as the **Spark**, not the spec.
+### Step 2 — Feasibility audit (silent, internal)
 
-### Step 2 — Feasibility Audit (silent, internal)
+Same as v0.3.x — refuse physically impossible requests; if multi-subsystem, ask which sub-problem to lock first. Do NOT draft or interrogate further until this is settled.
 
-Before drafting anything, evaluate:
-- Is the request physically possible on the user's hardware/environment?
-- Does it require breaking cryptography, exceeding network speed-of-light, time-traveling, or otherwise violating known constraints?
-- Is the scope a single core hard problem, or is it 3+ unrelated subsystems?
+### Step 3 — Initialize the walker
 
-If infeasible: halt and tell the user what's wrong. Do not draft a spec.
-If multi-subsystem: tell the user the spec must be decomposed first; ask which sub-problem they want to lock in this round.
+Resume an existing walk if one is live for this spec, otherwise initialize a new one:
 
-### Step 3 — Draft + Refinement Questions (multi-turn)
+```bash
+python3 - <<'PY'
+import sys, pathlib
+sys.path.insert(0, ".")
+from bin import walker
 
-Output a **First-Principles Summary**:
-- **Title** (≤8 words)
-- **Hard Problem** (one paragraph, no analogies)
-- **First Principles** (3-7 bullets — physical/logical constraints)
-- **Algorithm Audit** (Delete / Simplify / Accelerate)
-- **Speed-of-Light Limit** (one paragraph: the fastest version possible)
-- **Physics Guardrails** (system invariants to preserve)
-
-Then ask **2-3 Refinement Questions** about non-obvious edge cases. Examples of good questions:
-- Persistence model (across reboot? session-only? user-namespaced?)
-- Failure semantics (fail-closed vs fail-open?)
-- Privilege boundary (root? user? sudoless?)
-- Reversibility (idempotent? destructive?)
-
-**Wait for the user's answers.** Do not continue until they respond.
-
-### Step 4 — Draft Steps with why/action/verification triples
-
-Once refinement is settled, draft the **Steps** section using the schema in `specs/template.spec.md`:
-
-```yaml
-- step: 1
-  why: "<one-line first-principles justification — not analogy>"
-  action: "<exact shell command>"
-  verification: "<post-condition check command that exits 0 iff action succeeded>"
+walk_path = pathlib.Path("state/.walk.json")
+state = walker.load(walk_path)
+if state is None:
+    state = walker.init_walk(
+        spec_intent="""<verbatim user intent>""",
+        spec_draft_path=pathlib.Path("specs/<slug>.spec.md.draft"),
+    )
+    walker.persist(state, walk_path)
+print(f"WALK: {state.round_count} rounds, {len(state.pending)} pending, stop={state.stop_reason}")
+PY
 ```
 
-Rules for steps:
-- **`why:` is mandatory.** It must be first-principles ("the byte sequence must persist on disk because the alias is invoked across shells") — never analogy ("this is how people usually do it"). If you can't articulate `why:`, the step shouldn't exist.
-- Each `action` is a single shell command (chained with `&&` if atomic).
-- Each `verification` is a separate command that proves the action's side effect. Examples:
-  - `why: "Symlink resolves at kernel level — fastest possible aliasing primitive."`
-    `action: ln -s /var/log/syslog /usr/local/bin/quick-log`
-    `verification: "[ -L /usr/local/bin/quick-log ] && [ -e /usr/local/bin/quick-log ]"`
-  - `why: "HTTP client must be importable in the runtime; pip install is the standard delivery path."`
-    `action: pip install requests`
-    `verification: python3 -c 'import requests'`
-- 5-15 steps. If you need more, the spec is too big — decompose first.
-- No "soft" verifications (`echo done`, `true`). They must observably check the action's effect.
-- **Do not lock the spec if any step is missing `why:`.** Reject your own draft and iterate.
+### Step 4 — Walk loop (interrogation)
 
-### Step 5 — Confirm with the user
+Repeat until the walker reports stop:
 
-Show the full draft (Hard Problem, First Principles, ..., Steps, Success Criteria). Ask:
+1. **Read next concern.** `walker.next_concern(state)`. If `None`, walker is exhausted; jump to Step 5.
 
-> "Lock this as the active spec? (yes / refine / cancel)"
+2. **Render the structured concern as a natural-language question.** The concern's `summary` field is canonical structured text. The skill phrases it so the user understands. The structured concern is the data; the question text is presentation. If the user says "this question makes no sense," the debug surface is `state/.walk.json`, not the rendered prose.
 
-- `yes` → proceed to Step 6.
-- `refine` → adjust per their feedback, repeat Step 5.
-- `cancel` → halt, write nothing.
+   Render format:
+   ```
+   ROUND <N> · id: <concern_id> · receiver: <receivers> · kind: <kind>
+   <natural-language question derived from concern.summary>
+   (answer, or `revise <concern_id>` to amend an earlier answer, or `stop` to lock the walk)
+   ```
+
+   On `revise` without an id, list every concern in `state.asked` as `<id> | <one-line summary> | <answer-truncated>` so the user can pick which to amend.
+
+3. **Capture user input.** Three branches:
+
+   - **`stop`** — set `state.stop_reason = "author-arbitrated"`, persist, jump to Step 5.
+   - **`revise <concern_id> <new_answer>`** — call `walker.revise_answer(state, concern_id=..., new_answer=...)`. Display the returned `invalidated` list to the user. Ask: "These concerns are now stale: <list>. Re-walk them or accept-stale?" On `re-walk`, leave the stale ids in place (walker will skip stale concerns in `next_concern`); the walker's emit logic for new concerns is the v0.4.1 surface — for v0.4.0 the human types fresh answers as new concerns are surfaced naturally.
+   - **Anything else** — treat as the answer to the current concern. Call `walker.record_answer(state, concern_id=concern.id, answer=<text>)`.
+
+4. **Run the Tier 3 yield-delta check** (only if `~/.spectre/reviewer.toml` has `[tier3] enabled = true` AND we have an in-progress draft):
+
+   ```bash
+   python3 - <<'PY'
+   import sys, pathlib
+   sys.path.insert(0, ".")
+   from bin import spec_evaluator, walker
+
+   walk_path = pathlib.Path("state/.walk.json")
+   state = walker.load(walk_path)
+   draft_path = pathlib.Path("<spec-draft path>")
+   if draft_path.exists() and state.round_count > 0:
+       config = pathlib.Path.home() / ".spectre" / "reviewer.toml"
+       result = spec_evaluator.evaluate(draft_path, config_path=config, bundle_persist_dir=pathlib.Path("state"))
+       new_t3 = sum(1 for f in result.findings if f.tier == 3 and f.kind != "tier3-unavailable")
+       state.yield_history.append(new_t3)
+       walker.persist(state, walk_path)
+       print(f"YIELD: {new_t3} new T3 findings this round; history={state.yield_history[-5:]}")
+   PY
+   ```
+
+5. **Check stop conditions.** `stop, reason = walker.should_stop(state)`. If `True`, set `state.stop_reason = reason` (the function is pure — does not mutate), persist, and proceed to Step 5. If `False`, loop back to Step 4.1.
+
+### Step 5 — Materialize draft + confirm
+
+The walk has stopped. Render the draft from accumulated `state.answered` plus `state.spec_intent`:
+
+1. **Slugify the title** (lowercase, `[^a-z0-9]+ → -`, trim).
+2. **Write the draft file** atomically at `$PROJECT/specs/<slug>.spec.md.draft` using the answers as Steps + First Principles + §8 Receiver Calibration content. The exact mapping from concerns to spec sections lives in your judgment of what the answers tell you; the skill does not impose a 1:1 mapping. Standard `## 1. Hard Problem` through `## 8. Receiver Calibration` structure per `specs/template.spec.md`.
+3. **Print the one-line confirmation:**
+   ```
+   DRAFT: specs/<slug>.spec.md.draft (N steps; walked R rounds; stop=<stop_reason>). Reply: yes / refine "<change>" / cancel
+   ```
+4. **Wait for the user.**
+   - `yes` → continue to Step 6.3a (existing v0.3.2 setup wizard) → Step 6.4 evaluator (existing).
+   - `refine "<change>"` — if the change implies revising a prior concern, invoke `walker.revise_answer` first, then re-render the draft. Otherwise, edit the draft directly and re-run §6.4 (existing v0.3.2 behavior).
+   - `cancel` → delete the draft AND `state/.walk.json` AND `state/.eval-bundle.json`. Halt.
+
+The walker's invalidation set + dependency graph are never re-rendered for the user post-confirmation; they exist only to drive interrogation cycles. After the user says `yes` and §6.4 passes, `state/.walk.json` may be retained as audit trail or cleared (skill author's choice; v0.4.0 keeps it).
 
 ### Step 6 — Draft-to-disk
 

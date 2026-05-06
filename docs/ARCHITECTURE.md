@@ -163,6 +163,25 @@ draft.spec.md.draft
 
 **Stable fingerprints, dismissable findings.** Every finding has a SHA-256 fingerprint over `{tier, kind, scope, step, steps, ref}` — message text is deliberately excluded so LLM nondeterminism doesn't break dismissals. A user dismisses a Tier 3 finding by appending `# tier3-dismissed: <fingerprint> "<reason>"` to the spec; the next evaluator run skips that finding. Tier 1 and Tier 2 findings are `dismissable=False` — structural rules don't get to be argued away.
 
+## Interrogation walker (v0.4.0)
+
+`bin/walker.py` is the strict-hybrid state machine that drives `/vision` Steps 1–5. It owns walk state, branching, dependency-tracked invalidation, and stop conditions. The skill phrases the walker's structured Concerns into natural-language questions; the walker is canonical, the rendered question is best-effort.
+
+Stop conditions (any triggers halt; evaluated in this deterministic order):
+
+1. Author types `stop` → `stop_reason = "author-arbitrated"`.
+2. Tier 3 yield-delta converged (3 consecutive rounds <2 new findings).
+3. Max-rounds hit (default 30, configurable in `~/.spectre/walker.toml`).
+4. Per-receiver exhaustion (no non-stale pending concerns remain).
+
+State persists at `state/.walk.json` (atomic JSON write — same pattern as `bin/_scratchpad.atomic_write`). A walk in progress survives session interruption. Revising an earlier answer marks all transitively-dependent concerns `stale`; the walker skips stale concerns in `next_concern`. The author sees the invalidated set as a diff and chooses re-walk or accept-stale.
+
+`init_walk` seeds five concerns: one `assumption-surface` (round 1: surface unstated assumptions in the intent) plus four `receiver-clarification` concerns covering the §8.1 hard contract (mutates, never-touches, decision-budget, reboot-survival). The downstream evaluator (§6.4) requires these fields; seeding them at walk-init guarantees they're answered before draft materialization.
+
+Reference:
+- Design: `docs/superpowers/specs/2026-05-06-spectre-v0.4-cdlc-closure.md`
+- Plan: `docs/superpowers/plans/2026-05-06-v0.4.0-walker.md`
+
 ## Resource-lock supervisor (v0.2.2)
 
 For multi-track projects (`/implement payments`, `/implement notifications`), Spectre runs a per-project Unix domain socket daemon at `runtime/supervisor.sock`:

@@ -2,6 +2,35 @@
 
 All notable changes to the SDL Vision Engine plugin (Spectre).
 
+## v0.4.0 — 2026-05-06
+
+**v0.4 line — Interrogation-driven /vision (first of three releases).**
+
+### Added
+- `bin/walker.py` — strict-hybrid state machine for spec interrogation. Owns walk state, dependency-tracked invalidation, stop conditions. Public API: `Concern`, `WalkState`, `init_walk`, `next_concern`, `record_answer`, `revise_answer`, `should_stop`, `persist`, `load`.
+- `~/.spectre/walker.toml` — auto-provisioned config (max_rounds, yield_threshold, yield_converge_rounds, brake_threshold).
+- `state/.walk.json` — per-spec/per-track walk persistence; atomic JSON writes.
+
+### Changed
+- `skills/vision/SKILL.md` — Steps 1–5 rewritten as walker-driven interrogation loop. Steps 6.4–6.7 (evaluator + ADR + Resource + lock) preserved unchanged.
+- `bin/setup_wizard.py` — extended to provision `~/.spectre/walker.toml` alongside `~/.spectre/reviewer.toml`.
+- `bin/spec_evaluator.py:EVALUATOR_VERSION` 0.3.1 → 0.4.0.
+- `.claude-plugin/marketplace.json` plugin version 0.3.2 → 0.4.0.
+
+### Tests
+**569 passing** (504 v0.3.2 baseline + 60 new walker tests + 5 new wizard tests). Audit fixes added during build: yield_converge_rounds precondition, walker_version validation, init_walk seeds 4 §8.1 concerns, skill writes stop_reason after should_stop.
+
+### Architecture references
+- Design: `docs/superpowers/specs/2026-05-06-spectre-v0.4-cdlc-closure.md`
+- Plan: `docs/superpowers/plans/2026-05-06-v0.4.0-walker.md`
+
+### Deferred to v0.4.1
+- `bin/observations.py` + live opt-out at /implement halt sites
+- `bin/personal_rules.py` + sandbox-paradox brake
+
+### Deferred to v0.4.2
+- `bin/cdlc_ledger.py` + Distribute leg (~/.spectre/templates/) + Adapt template-patch proposals
+
 ## v0.3.2 — 2026-05-06
 
 **Setup-wizard usability follow-up to v0.3.1.**
