@@ -19,6 +19,9 @@ KNOWN_KINDS = {
     "tier3-attacker-view",
     "tier3-spec-asserts-wrong",
     "tier3-unavailable",
+    # v0.3.1 — Tier 1.5 spec_lint kinds
+    "runuser-no-cd",
+    "unsafe-heredoc",
 }
 
 SEVERITIES = {"block", "warn", "info"}

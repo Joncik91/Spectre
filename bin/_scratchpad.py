@@ -21,6 +21,7 @@ DEFAULT = {
     "last_audit_kinds": [],
     "last_audit_passed": None,
     "last_audit_failures": [],
+    "pending_findings": [],
 }
 
 DEFAULT_V2 = {

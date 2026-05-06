@@ -194,3 +194,111 @@ def test_drop_table_in_psql_still_matches():
 def test_repo_tier_for_extensionless_path_with_slash():
     t, _, na = tier.classify("touch src/widgets/foo")
     assert t == "repo"
+
+
+# --- v0.3.1 gap 6: systemctl service-state mutations ---
+
+def test_never_autonomous_systemctl_start():
+    _, _, na = tier.classify("systemctl start nginx")
+    assert na == "service-state-mutation: systemctl"
+
+
+def test_never_autonomous_systemctl_user_enable_now():
+    _, _, na = tier.classify("systemctl --user enable --now spectre-smoke.service")
+    assert na == "service-state-mutation: systemctl"
+
+
+def test_never_autonomous_systemctl_restart():
+    _, _, na = tier.classify("systemctl restart sshd")
+    assert na == "service-state-mutation: systemctl"
+
+
+def test_never_autonomous_systemctl_disable():
+    _, _, na = tier.classify("systemctl --user disable spectre-smoke.service")
+    assert na == "service-state-mutation: systemctl"
+
+
+def test_systemctl_status_does_not_match():
+    _, _, na = tier.classify("systemctl --user status spectre-smoke.service")
+    assert na is None
+
+
+def test_systemctl_inside_quoted_action_does_not_match():
+    _, _, na = tier.classify("echo 'run: systemctl start nginx'")
+    assert na is None
+
+
+# --- v0.3.1 gap 6: loginctl linger ---
+
+def test_never_autonomous_loginctl_enable_linger():
+    _, _, na = tier.classify("loginctl enable-linger joncik")
+    assert na == "session-policy-mutation: loginctl linger"
+
+
+def test_never_autonomous_loginctl_disable_linger():
+    _, _, na = tier.classify("loginctl disable-linger joncik")
+    assert na == "session-policy-mutation: loginctl linger"
+
+
+def test_loginctl_show_user_does_not_match():
+    _, _, na = tier.classify("loginctl show-user joncik")
+    assert na is None
+
+
+# --- v0.3.1 gap 6: hostnamectl, timedatectl, sysctl ---
+
+def test_never_autonomous_hostnamectl_set():
+    _, _, na = tier.classify("hostnamectl set-hostname foo")
+    assert na == "host-state-mutation: hostnamectl"
+
+
+def test_never_autonomous_timedatectl_set():
+    _, _, na = tier.classify("timedatectl set-timezone UTC")
+    assert na == "host-state-mutation: timedatectl"
+
+
+def test_never_autonomous_sysctl_write():
+    _, _, na = tier.classify("sysctl -w net.ipv4.ip_forward=1")
+    assert na == "kernel-state-mutation: sysctl write"
+
+
+def test_sysctl_read_does_not_match():
+    _, _, na = tier.classify("sysctl net.ipv4.ip_forward")
+    assert na is None
+
+
+# --- v0.3.1 gap 9: loopback URLs downgrade from network tier ---
+
+def test_curl_loopback_127_is_silent():
+    t, _, _ = tier.classify("curl http://127.0.0.1:8791/health -o /tmp/x.json")
+    assert t == "silent"
+
+
+def test_curl_loopback_localhost_is_silent():
+    t, _, _ = tier.classify("curl http://localhost:8080/foo -o /tmp/y.json")
+    assert t == "silent"
+
+
+def test_curl_loopback_ipv6_is_silent():
+    t, _, _ = tier.classify("curl http://[::1]:8000/foo -o /tmp/z.json")
+    assert t == "silent"
+
+
+def test_curl_rfc1918_is_silent():
+    t, _, _ = tier.classify("curl http://192.168.0.1/admin -o /tmp/r.json")
+    assert t == "silent"
+
+
+def test_curl_public_url_remains_network():
+    t, _, _ = tier.classify("curl https://api.example.com/v1/foo")
+    assert t == "network"
+
+
+def test_curl_with_variable_url_remains_network():
+    t, _, _ = tier.classify("curl $UPSTREAM_URL/foo")
+    assert t == "network"
+
+
+def test_wget_loopback_is_silent():
+    t, _, _ = tier.classify("wget http://127.0.0.1/foo -O /tmp/w")
+    assert t == "silent"

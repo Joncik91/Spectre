@@ -6,7 +6,7 @@
 
 > SDL Vision Engine — a deterministic spec-driven Claude Code plugin. Vision → Spec → Evaluate → Lock → Implement → Verify, with three-tier pre-lock review and per-project resource locking.
 
-[![tests](https://img.shields.io/badge/tests-439%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![tests](https://img.shields.io/badge/tests-500%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## Table of Contents
 
@@ -30,7 +30,7 @@ Spectre overrides this with a deterministic state machine that drives an unbroke
 
 - **Spec is law.** `specs/.active` is an explicit instruction-pointer file. The hydrator re-injects exactly one spec on every session start — no mtime guessing, no scrollback archaeology.
 - **Steps are atomic transactions.** Every step has `why:` (first-principles justification, printed before execution), `action:` (the command), and `verification:` (a separate command that must exit 0 to prove the side effect). Soft verifications (`true`, `echo done`) are forbidden by the evaluator.
-- **Pre-lock review is mandatory.** Three tiers of validation run before a draft becomes the active spec: deterministic AST classifier (Tier 1, always), structural coverage gate (Tier 2, always), DeepSeek v4 Pro adversarial reviewer (Tier 3, opt-in). Block-severity findings prevent lock.
+- **Pre-lock review is mandatory.** Three tiers of validation run before a draft becomes the active spec: deterministic AST classifier (Tier 1, always), structural coverage gate (Tier 2, always), DeepSeek `deepseek-reasoner` adversarial reviewer (Tier 3, opt-in). Block-severity findings prevent lock. Tier 3 status is always surfaced — when it skips, the skip is visible (see "First-run setup" below).
 - **Risky steps halt by default.** A persistence-tier classifier gates every action: `silent` and `repo` execute freely; `host` and `network` halt and ask. The Never Autonomous list (sudo, rm -rf, systemctl mask, …) is a hard halt regardless of tier.
 
 Five named v1 failure modes — broad matcher, hydrator bloat, recursive failure, torn writes, log inflation — each have a code-level mitigation and a test. The v0.2.x and v0.3.0 releases added five more first-class concerns: drift detection, resource contention, ADR provenance, host-state coverage, and adversarial review.
@@ -66,7 +66,9 @@ Available specs:
 STATE: step=1 exit_code=0 last_command=None
 ```
 
-**Optional — Tier 3 adversarial review (DeepSeek v4 Pro):** copy `.spectre/reviewer.toml.example` to `~/.spectre/reviewer.toml`, set `[tier3] enabled = true`, and export `DEEPSEEK_API_KEY` (the env-var name itself is configurable; the key is read from the environment at runtime, never stored in the config file). Each `/vision` draft then makes ~3 API calls (~10–30s, ~$0.01–0.05).
+**Optional — Tier 3 adversarial review (DeepSeek `deepseek-reasoner`):** the **first-run wizard** auto-creates `~/.spectre/reviewer.toml` on your first `/vision` invocation. If `DEEPSEEK_API_KEY` is already in your environment, you'll be prompted once with a cost estimate and can opt in. The key is never written to the config — only the env-var name is. Each `/vision` draft makes ~3 API calls (~10–30s, ~$0.01–0.05).
+
+If you keep your secrets in a `.env`-style file outside the environment, point Spectre at it via `export SPECTRE_SECRETS_FILE=/path/to/your/.env` before running `/vision`. The wizard reads only the variable's *presence* — the value itself is never copied. To re-enable Tier 3 after declining, edit `~/.spectre/reviewer.toml` and set `[tier3] enabled = true`.
 
 ## Usage
 

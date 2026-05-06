@@ -2,6 +2,51 @@
 
 All notable changes to the SDL Vision Engine plugin (Spectre).
 
+## v0.3.1 — 2026-05-06
+
+**Closes [#1](https://github.com/Joncik91/Spectre/issues/1) — 9 UX/safety gaps surfaced by the v1.1.0 BTC proxy test run.**
+
+Pure UX/safety hardening release. No new features; every change either makes a load-bearing defense visible (Tier 3 skip), wires a documented defense to actual code (systemctl/loginctl in NEVER_AUTONOMOUS), or removes friction without lowering safety (`/implement auto`, loopback curl downgrade).
+
+### Added
+- `bin/setup_wizard.py` — first-run auto-provisioner for `~/.spectre/reviewer.toml`. Detects `DEEPSEEK_API_KEY` in env (or `.env`-style file pointed to by `SPECTRE_SECRETS_FILE`), prompts once with cost estimate, writes TOML at mode 0600. Writes `enabled=false` placeholder on decline/no-key so subsequent runs don't re-prompt. Closes the user-side ask: no more out-of-band TOML provisioning.
+- `bin/spec_lint.py` — Tier 1.5 spec-author lints. Two checks today: `runuser-no-cd` (warn — `runuser -l user -c '<cmd>'` without `cd` lands in `$HOME`, masking failures) and `unsafe-heredoc` (info — heredoc-script bodies without `set -euo pipefail`). Wired into the evaluator's Tier 1 pipeline.
+- `tests/test_setup_wizard.py` (17 cases) and `tests/test_spec_lint.py` (14 cases).
+- `bin/_scratchpad.py` DEFAULT gains `pending_findings: []` for the Step 7.5 fallback queue.
+
+### Changed
+- `bin/tier.py` `_NEVER_AUTONOMOUS` now includes `systemctl <verb>` (start/stop/restart/reload/enable/disable/mask/unmask, with `--user`/`--system` flag tolerance), `loginctl enable-linger` / `disable-linger`, `hostnamectl set-*`, `timedatectl set-*`, and `sysctl -w`. The Risk-Gate caught zero of three host-mutating systemctl invocations in the v1.1.0 test run; the agent had to manually judgment-override. These five regex additions move that work from agent vigilance to machine enforcement.
+- `bin/tier.py` `_is_network()` downgrades loopback URLs (`127.0.0.1`, `localhost`, `[::1]`, `0.0.0.0`) and RFC1918 (`10.*`, `172.16-31.*`, `192.168.*`) to path-based tier classification. The packet never leaves the kernel; halting on `curl http://127.0.0.1/health` is pure friction. Variable URLs (`$VAR`) keep network tier — false-positive is the safe default.
+- `bin/spec_evaluator.py` always emits a `tier3-unavailable` info finding when Tier 3 is unavailable for any recoverable reason. Three new reason markers in the message: `config-missing`, `disabled-in-config`, `no-api-key`. v0.3.0 silently dropped Tier 3 with no signal — sidecar showed `tiers_run=[1,2]` and that was it. v0.3.1 makes the skip visible in §6.4 output.
+- `bin/spec_evaluator.py` `EVALUATOR_VERSION` `0.3.0` → `0.3.1`. `DEEPSEEK_MODEL` from non-existent `deepseek-v4-pro` to `deepseek-reasoner` (DeepSeek's actual reasoning model on the v1 API; reasoning > chat for adversarial spec critique).
+- `bin/spec_ast.py` `_extract_paths_from_text` filters `/dev/null`, `/dev/stdout`, `/dev/stderr` (and their `/null`/`/stdout`/`/stderr` word-boundary artifacts after `2>/dev/null` redirects). The action-not-probed heuristic no longer false-positives on stream redirects.
+- `skills/vision/SKILL.md` — new §6.3a wizard call before §6.4. §6.4 always passes `~/.spectre/reviewer.toml` (existence-check moved into the evaluator). Output format updated: one line per tier with PASS/SKIPPED + reason, so Tier 3 status is as visible as Tiers 1 and 2.
+- `skills/implement/SKILL.md` — new `/implement auto` mode. Walks consecutive silent/repo-tier steps without re-prompting; halts at host/network/never-autonomous, queued resources, verification fail, drift, or completion. Same safety surface as per-step. Plain `/implement` still runs exactly one step.
+- `skills/implement/SKILL.md` — new §Step 7.5 Spectre-finding capture. When Path B retry succeeds (the corrected action passes verification after the original failed), the skill prompts to file the finding. Default category is `spectre` (the trigger pattern reliably identifies a runtime-environment quirk, not a project design choice). Spectre-category findings auto-route to gh issue #1 thread; project-category writes a normal ADR. Fallback queues drafts in `pending_findings: []` if `gh` fails.
+- `bin/findings.py` `KNOWN_KINDS` adds `runuser-no-cd` and `unsafe-heredoc`.
+
+### Fixed
+- Gap 1: Tier 3 silent skip — see Changed (visible findings + auto-provision wizard).
+- Gap 2: Tier 1 path false-positive on `2>/dev/null` — see Changed (`_extract_paths_from_text` filter).
+- Gap 3: DeepSeek model alias drift — see Changed (`DEEPSEEK_MODEL` standardized on `deepseek-reasoner`).
+- Gap 4: spec-author traps with `runuser -l <user> -c '<cmd>'` and unsafe heredocs — Tier 1.5 lint catches both at lock-time.
+- Gap 6: Risk-Gate not firing on `systemctl <verb>` / `loginctl enable-linger` / etc. — five new NEVER_AUTONOMOUS regex patterns.
+- Gap 7: Spectre-itself ADRs evaporating with throwaway test repos — Step 7.5 auto-routes to upstream issue #1 thread, never to a hidden side-channel.
+- Gap 8: `/implement` per-step friction on long specs — auto mode batches truly-low-tier steps.
+- Gap 9: loopback `curl` over-classified as network tier — `_is_network()` parses URLs and downgrades.
+
+### Tests
+**500 passing** (439 v0.3.0 baseline + 61 v0.3.1 new across `test_tier`, `test_spec_evaluator`, `test_setup_wizard`, `test_spec_lint`, `test_spec_ast`, `test_scratchpad`). Stdlib-only. Pragma test-gaming guard satisfied.
+
+### Deferred to v0.4
+- Gap 5: per-spec Tier-Gate approval memoization for steps with many `chmod`s. Requires per-spec gate-approval cache; not in v0.3.1's scope.
+- Drift checkpoint sliding window > 5 (currently fixed at 5).
+- `paths_touched` retention beyond 200 entries (FIFO truncation when capped).
+- Project-local NEVER_AUTONOMOUS verb override file.
+
+### Architecture references
+- All 9 gap descriptions and root-cause analysis live in https://github.com/Joncik91/Spectre/issues/1 (issue body + 5 comments).
+
 ## v0.3.0 — 2026-05-05
 
 **Plan A — Pre-lock spec evaluator (CDLC Evaluate phase).**

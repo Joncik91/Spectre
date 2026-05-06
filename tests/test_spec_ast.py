@@ -256,6 +256,57 @@ def test_action_not_probed_warn_when_path_in_action_not_in_verification():
     assert any(f.kind == "action-not-probed" for f in fs)
 
 
+def test_action_not_probed_ignores_dev_null_redirect(tmp_path):
+    """v0.3.1 gap 2: `>/dev/null` is not a writable target, must not trip
+    the action-not-probed heuristic when it's the only path in action."""
+    body = (
+        "# Test\n"
+        "**Generated:** 2026-05-06\n"
+        "**Slug:** dev-null-test\n\n"
+        "## 1. Hard Problem\nProbe.\n\n"
+        "## 2. First Principles\n- only stdlib\n\n"
+        "## 6. Steps\n\n"
+        "```yaml\n"
+        '- step: 1\n'
+        '  why: "stdlib import probe"\n'
+        '  action: "python3 -c \\"import pytest\\" 2>/dev/null && echo OK"\n'
+        '  verification: "python3 -c \\"import pytest\\""\n'
+        "```\n\n"
+        "## 8. Receiver Calibration\n### 8.1 Hard contract\n"
+        "- mutates: []\n- never-touches: [/etc, /usr]\n"
+        "- decision-budget: 0 paid calls\n- reboot-survival: stateless\n"
+    )
+    spec_path = tmp_path / "dev_null.spec.md"
+    spec_path.write_text(body, encoding="utf-8")
+    fs = spec_ast.classify(spec_path)
+    assert not any(f.kind == "action-not-probed" for f in fs)
+
+
+def test_action_not_probed_ignores_dev_stderr_and_dev_stdout(tmp_path):
+    """/dev/stderr and /dev/stdout are also stream redirects, never writable artifacts."""
+    body = (
+        "# Test\n"
+        "**Generated:** 2026-05-06\n"
+        "**Slug:** dev-stream\n\n"
+        "## 1. Hard Problem\nProbe.\n\n"
+        "## 2. First Principles\n- only stdlib\n\n"
+        "## 6. Steps\n\n"
+        "```yaml\n"
+        '- step: 1\n'
+        '  why: "stream redirect probe"\n'
+        '  action: "echo hi 1>/dev/stderr 2>/dev/stdout"\n'
+        '  verification: "echo hi"\n'
+        "```\n\n"
+        "## 8. Receiver Calibration\n### 8.1 Hard contract\n"
+        "- mutates: []\n- never-touches: [/etc, /usr]\n"
+        "- decision-budget: 0 paid calls\n- reboot-survival: stateless\n"
+    )
+    spec_path = tmp_path / "dev_stream.spec.md"
+    spec_path.write_text(body, encoding="utf-8")
+    fs = spec_ast.classify(spec_path)
+    assert not any(f.kind == "action-not-probed" for f in fs)
+
+
 # ── performance ──────────────────────────────────────────────────────────────
 
 def test_classify_runs_under_100ms():

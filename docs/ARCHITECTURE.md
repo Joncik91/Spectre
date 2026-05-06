@@ -110,6 +110,10 @@ Step 7    Failure logging              append to scratchpad.failed_hypotheses[]
 
 The persistence-tier gate (§3.5) is the single source of truth for halt-vs-execute. v1 used a regex risk-gate inline in the skill prose; v0.2.1 replaced it with `bin/tier.py` so the rule set is testable and project-overridable.
 
+**v0.3.1 NEVER_AUTONOMOUS additions** (closes [#1](https://github.com/Joncik91/Spectre/issues/1) gap 6): `systemctl <verb>` (start/stop/restart/reload/enable/disable/mask/unmask, with `--user`/`--system` flag tolerance), `loginctl enable-linger` / `disable-linger`, `hostnamectl set-*`, `timedatectl set-*`, `sysctl -w`. v0.3.0 missed these because the verb regex only checked the binary name; the v1.1.0 BTC proxy test run hit three host-state-mutating systemctl invocations that the classifier treated as `silent` until the agent applied judgment-override.
+
+**v0.3.1 loopback downgrade** (closes [#1](https://github.com/Joncik91/Spectre/issues/1) gap 9): `_is_network()` now parses URLs in argv. `127.0.0.1`, `localhost`, `[::1]`, `0.0.0.0`, and RFC1918 (`10.*`, `172.16-31.*`, `192.168.*`) downgrade `curl`/`wget` to path-tier classification on the output file. The packet never leaves the kernel; halting is pure friction. Variable URLs (`$VAR`) keep network tier — false-positive is the safe default.
+
 ## Evaluator pipeline (v0.3.0)
 
 ```
