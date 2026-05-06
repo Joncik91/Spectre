@@ -156,3 +156,160 @@ def save_track(path: Path, track: str, track_data: dict[str, Any]) -> None:
         data["tracks"] = {}
     data["tracks"][track] = track_data
     atomic_write(path, data)
+
+
+# ── CLI entrypoint ────────────────────────────────────────────────────────────
+
+
+def _set_pending_adoption_prompt(
+    scratchpad_path: Path,
+    *,
+    track: str,
+    fingerprint: str,
+    label: str,
+    action: str,
+) -> None:
+    """Persist the §3.5 pending_adoption_prompt structured field to the track.
+
+    Auto-promotes v1 → v2 if needed. Atomic write. Used by the implement skill
+    to survive session restart / mid-execution compact between §3.5 and §6.
+    """
+    data = load(scratchpad_path)
+    if data.get("version") != 2:
+        data = expand_v1_to_v2(data)
+    tracks = data.get("tracks")
+    if not isinstance(tracks, dict):
+        tracks = {}
+    track_state = tracks.get(track) or track_default()
+    track_state["pending_adoption_prompt"] = {
+        "fingerprint": fingerprint,
+        "label": label,
+        "action": action,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+    }
+    tracks[track] = track_state
+    data["tracks"] = tracks
+    atomic_write(scratchpad_path, data)
+
+
+def _get_pending_adoption_prompt(
+    scratchpad_path: Path, *, track: str
+) -> dict[str, Any] | None:
+    """Read the track's pending_adoption_prompt or None if absent."""
+    data = load(scratchpad_path)
+    tracks = data.get("tracks") or {}
+    track_state = tracks.get(track) or {}
+    return track_state.get("pending_adoption_prompt")
+
+
+def _clear_pending_adoption_prompt(scratchpad_path: Path, *, track: str) -> bool:
+    """Set the track's pending_adoption_prompt to None. Returns True if the
+    track existed (write happened); False otherwise (no-op)."""
+    data = load(scratchpad_path)
+    tracks = data.get("tracks") or {}
+    if track not in tracks:
+        return False
+    tracks[track]["pending_adoption_prompt"] = None
+    data["tracks"] = tracks
+    atomic_write(scratchpad_path, data)
+    return True
+
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="_scratchpad",
+        description=(
+            "Scratchpad CLI — set/get/clear pending_adoption_prompt for a track."
+        ),
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    common_path = dict(
+        default="state/scratchpad.json",
+        help="Path to scratchpad.json (default: state/scratchpad.json).",
+    )
+
+    p_set = sub.add_parser(
+        "set-pending-adoption",
+        help=(
+            "Persist pending_adoption_prompt = {fingerprint, label, action, "
+            "recorded_at} to tracks.<track>. Atomic write; auto-promotes v1→v2."
+        ),
+    )
+    p_set.add_argument("--scratchpad", **common_path)
+    p_set.add_argument("--track", default="default", help="Track name (default: 'default').")
+    p_set.add_argument("--fingerprint", required=True, help="Halt fingerprint (hex).")
+    p_set.add_argument("--label", required=True, help="Classifier label.")
+    p_set.add_argument("--action", required=True, help="Action text.")
+
+    p_get = sub.add_parser(
+        "get-pending-adoption",
+        help=(
+            "Print 'NO_PENDING_PROMPT' or "
+            "'PROMPT: fp=<fp[:12]>... label=<label>'."
+        ),
+    )
+    p_get.add_argument("--scratchpad", **common_path)
+    p_get.add_argument("--track", default="default", help="Track name (default: 'default').")
+    p_get.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the full prompt dict as JSON (or 'null' when absent).",
+    )
+
+    p_clr = sub.add_parser(
+        "clear-pending-adoption",
+        help="Set tracks.<track>.pending_adoption_prompt = None and atomic-write.",
+    )
+    p_clr.add_argument("--scratchpad", **common_path)
+    p_clr.add_argument("--track", default="default", help="Track name (default: 'default').")
+
+    args = parser.parse_args()
+
+    sp_path = Path(args.scratchpad)
+
+    if args.cmd == "set-pending-adoption":
+        try:
+            _set_pending_adoption_prompt(
+                sp_path,
+                track=args.track,
+                fingerprint=args.fingerprint,
+                label=args.label,
+                action=args.action,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(f"PENDING_ADOPTION_PROMPT_PERSISTED: {args.fingerprint[:12]}...")
+
+    elif args.cmd == "get-pending-adoption":
+        try:
+            prompt = _get_pending_adoption_prompt(sp_path, track=args.track)
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        if args.json:
+            import json as _json
+
+            print(_json.dumps(prompt, indent=2))
+        else:
+            if not prompt:
+                print("NO_PENDING_PROMPT")
+            else:
+                fp = prompt.get("fingerprint", "")
+                label = prompt.get("label", "")
+                print(f"PROMPT: fp={fp[:12]}... label={label}")
+
+    elif args.cmd == "clear-pending-adoption":
+        try:
+            wrote = _clear_pending_adoption_prompt(sp_path, track=args.track)
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        if wrote:
+            print("PROMPT_CLEARED")
+        else:
+            print("NO_TRACK_TO_CLEAR")

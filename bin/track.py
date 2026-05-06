@@ -127,3 +127,93 @@ def status(project_root: Path) -> dict[str, Any]:
 
 def heartbeat(project_root: Path, *, track_name: str) -> dict[str, Any]:
     return _send(project_root, {"op": "heartbeat", "track": track_name})
+
+
+# ── CLI entrypoint ────────────────────────────────────────────────────────────
+
+
+def _split_resources(arg: str) -> list[str]:
+    """Split a comma-separated --resources flag into a clean list."""
+    return [r.strip() for r in arg.split(",") if r.strip()]
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="track",
+        description="Track CLI — acquire / release Resource locks via supervisor.",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_acq = sub.add_parser(
+        "acquire",
+        help=(
+            "Ensure supervisor running, then acquire each --resources entry. "
+            "Prints `ACQUIRED: <rid>` per granted lock or "
+            "`QUEUED: <rid> (position N)` for the first queued lock and exits "
+            "1 (queue is a halt-worthy state for the skill)."
+        ),
+    )
+    p_acq.add_argument(
+        "--project",
+        default=".",
+        help="Project root (default: '.', the cwd).",
+    )
+    p_acq.add_argument("--track", required=True, help="Track name.")
+    p_acq.add_argument(
+        "--resources",
+        required=True,
+        help="Comma-separated list of resource ids (e.g. 'port:8080,db:postgres').",
+    )
+
+    p_rel = sub.add_parser(
+        "release",
+        help="Release each --resources entry (idempotent; supervisor no-ops on unknown).",
+    )
+    p_rel.add_argument(
+        "--project",
+        default=".",
+        help="Project root (default: '.', the cwd).",
+    )
+    p_rel.add_argument("--track", required=True, help="Track name.")
+    p_rel.add_argument(
+        "--resources",
+        required=True,
+        help="Comma-separated list of resource ids.",
+    )
+
+    args = parser.parse_args()
+
+    project = Path(args.project)
+    rids = _split_resources(args.resources)
+    if not rids:
+        print("ERROR: --resources is empty.", file=sys.stderr)
+        sys.exit(1)
+
+    if args.cmd == "acquire":
+        try:
+            ensure_supervisor_running(project)
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: supervisor spawn failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+        for rid in rids:
+            try:
+                resp = acquire(project, track_name=args.track, resource_id=rid)
+            except Exception as exc:  # noqa: BLE001
+                print(f"ERROR: acquire {rid}: {exc}", file=sys.stderr)
+                sys.exit(1)
+            if not resp.get("granted"):
+                pos = resp.get("queued_position", "?")
+                print(f"QUEUED: {rid} (position {pos})")
+                sys.exit(1)
+            print(f"ACQUIRED: {rid}")
+
+    elif args.cmd == "release":
+        for rid in rids:
+            try:
+                release(project, track_name=args.track, resource_id=rid)
+            except Exception as exc:  # noqa: BLE001
+                print(f"ERROR: release {rid}: {exc}", file=sys.stderr)
+                sys.exit(1)
+            print(f"RELEASED: {rid}")
