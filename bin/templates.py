@@ -49,3 +49,90 @@ def list_templates() -> list[dict]:
                     name = name[:-len(".spec")]
                 out.append({"name": name, "kind": kind, "path": str(entry)})
     return out
+
+
+def _resolve_source(source_name: str, kind: str | None) -> tuple[pathlib.Path, str]:
+    """Locate a template by name, optionally constrained by kind.
+    Returns (path, kind). Raises FileNotFoundError if not found."""
+    base = templates_dir_default()
+    candidates: list[tuple[pathlib.Path, str]] = []
+    if kind in (None, "spec"):
+        spec_path = base / "specs" / f"{source_name}.spec.md"
+        if spec_path.is_file():
+            candidates.append((spec_path, "spec"))
+    if kind in (None, "skill"):
+        skill_path = base / "skills" / f"{source_name}.md"
+        if skill_path.is_file():
+            candidates.append((skill_path, "skill"))
+    if not candidates:
+        raise FileNotFoundError(f"template not found: {source_name!r}")
+    # If kind not specified and both exist, prefer spec (specs are the v0.4.2 default).
+    return candidates[0]
+
+
+def import_template(
+    *,
+    source_name: str,
+    target_name: str,
+    kind: str | None = None,
+) -> None:
+    """Copy a template from ~/.spectre/templates/ into the active project.
+
+    Specs land at ./specs/<target_name>.spec.md.draft (the .draft suffix
+    means /vision Step 6 confirmation drives the lock — keeps the
+    interrogation flow consistent).
+
+    Skills land at ./skills/<target_name>.md.
+    """
+    source_path, resolved_kind = _resolve_source(source_name, kind)
+    body = source_path.read_text(encoding="utf-8")
+    cwd = pathlib.Path.cwd()
+    if resolved_kind == "spec":
+        target_dir = cwd / "specs"
+        target = target_dir / f"{target_name}.spec.md.draft"
+    else:
+        target_dir = cwd / "skills"
+        target = target_dir / f"{target_name}.md"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target.write_text(body, encoding="utf-8")
+
+
+def export_template(
+    *,
+    source_path: pathlib.Path,
+    target_name: str,
+    kind: str | None = None,
+) -> None:
+    """Copy a project file into ~/.spectre/templates/ for reuse.
+
+    kind defaults to "spec" if source_path ends in .spec.md, "skill"
+    otherwise. Target is mode 0600.
+    """
+    source_path = pathlib.Path(source_path)
+    if not source_path.is_file():
+        raise FileNotFoundError(f"source spec not found: {source_path}")
+    if kind is None:
+        kind = "spec" if source_path.name.endswith(".spec.md") else "skill"
+    base = templates_dir_default()
+    if kind == "spec":
+        target_dir = base / "specs"
+        target = target_dir / f"{target_name}.spec.md"
+    else:
+        target_dir = base / "skills"
+        target = target_dir / f"{target_name}.md"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    body = source_path.read_text(encoding="utf-8")
+    fd, tmp = tempfile.mkstemp(
+        dir=str(target_dir), prefix=target.name + ".", suffix=".tmp",
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(body)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, target)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
