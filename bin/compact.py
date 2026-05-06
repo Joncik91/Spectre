@@ -149,6 +149,9 @@ def main() -> int:
         else:
             # v1 / unmigrated fallback: preserve prior behavior
             existing = data.setdefault("paths_touched", [])
+            if not isinstance(existing, list):
+                existing = []
+                data["paths_touched"] = existing
             seen = set(existing)
             for p in touched:
                 if p not in seen:

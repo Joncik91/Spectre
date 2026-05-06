@@ -198,6 +198,19 @@ def test_paths_touched_records_redirect_target(plugin_root):
     assert data["paths_touched"] == ["out.txt"]
 
 
+def test_v1_fallback_replaces_corrupted_paths_touched_with_list(plugin_root):
+    # Seed a v1 scratchpad with a corrupted paths_touched (string instead of list)
+    scratch_path = plugin_root / "state" / "scratchpad.json"
+    scratch_path.write_text(json.dumps({"paths_touched": "garbage"}))
+
+    result = run_compact(plugin_root, make_event("mkdir newpath"))
+    assert result.returncode == 0
+
+    data = json.loads(scratch_path.read_text())
+    assert isinstance(data["paths_touched"], list)
+    assert "newpath" in data["paths_touched"]
+
+
 def test_v2_scratchpad_paths_touched_written_to_tracks_not_root(plugin_root):
     """End-to-end: compact writes paths_touched into tracks.default, not root level.
 
