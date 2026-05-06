@@ -130,14 +130,32 @@ def main() -> int:
     })
 
     if exit_code == 0 and touched:
-        existing = data.setdefault("paths_touched", [])
-        seen = set(existing)
-        for p in touched:
-            if p not in seen:
-                existing.append(p)
-                seen.add(p)
-        if len(existing) > sp.PATHS_TOUCHED_CAP:
-            data["paths_touched"] = existing[-sp.PATHS_TOUCHED_CAP:]
+        tracks = data.get("tracks")
+        if isinstance(tracks, dict):
+            # v2 schema: write to tracks.<track>.paths_touched
+            track_name = "default"
+            track_data = tracks.setdefault(track_name, sp.track_default())
+            existing = track_data.setdefault("paths_touched", [])
+            if not isinstance(existing, list):
+                existing = []
+                track_data["paths_touched"] = existing
+            seen = set(existing)
+            for p in touched:
+                if p not in seen:
+                    existing.append(p)
+                    seen.add(p)
+            if len(existing) > sp.PATHS_TOUCHED_CAP:
+                track_data["paths_touched"] = existing[-sp.PATHS_TOUCHED_CAP:]
+        else:
+            # v1 / unmigrated fallback: preserve prior behavior
+            existing = data.setdefault("paths_touched", [])
+            seen = set(existing)
+            for p in touched:
+                if p not in seen:
+                    existing.append(p)
+                    seen.add(p)
+            if len(existing) > sp.PATHS_TOUCHED_CAP:
+                data["paths_touched"] = existing[-sp.PATHS_TOUCHED_CAP:]
 
     if exit_code != 0:
         err = first_error_line(stderr) or "(no stderr)"

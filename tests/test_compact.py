@@ -196,3 +196,49 @@ def test_paths_touched_records_redirect_target(plugin_root):
     run_compact(plugin_root, make_event("echo hi > out.txt"))
     data = json.loads((plugin_root / "state" / "scratchpad.json").read_text())
     assert data["paths_touched"] == ["out.txt"]
+
+
+def test_v2_scratchpad_paths_touched_written_to_tracks_not_root(plugin_root):
+    """End-to-end: compact writes paths_touched into tracks.default, not root level.
+
+    Synthesises a PostToolUse(Bash) event for 'mkdir newdir', seeds a v2 scratchpad
+    in the tmp dir, runs compact.main() via subprocess (same as the hook fires it),
+    then asserts the chain:
+      - data["tracks"]["default"]["paths_touched"] contains "newdir"
+      - data["paths_touched"] at root is absent (v2 dict never had it)
+      - _scratchpad.get_paths_touched(data) returns the v2 list
+    """
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from bin import _scratchpad as _sp
+
+    # Seed a v2 scratchpad (no root-level paths_touched)
+    scratch_path = plugin_root / "state" / "scratchpad.json"
+    v2_seed = {
+        "version": 2,
+        "active_mission": None,
+        "tracks": {
+            "default": _sp.track_default(),
+        },
+        "decisions_index": "decisions/",
+        "graph_snapshot": "specs/.graph.md",
+    }
+    scratch_path.write_text(json.dumps(v2_seed))
+
+    # Fire compact with a mkdir event (exit_code=0 → paths recorded)
+    result = run_compact(plugin_root, make_event("mkdir newdir", exit_code=0))
+    assert result.returncode == 0
+
+    # Read result and verify
+    data = json.loads(scratch_path.read_text())
+
+    # v2 write: path must be in tracks.default.paths_touched
+    assert "newdir" in data["tracks"]["default"]["paths_touched"]
+
+    # Root-level paths_touched must NOT have been created (v2 dict)
+    assert "paths_touched" not in data
+
+    # Helper must agree with what compact wrote
+    returned = _sp.get_paths_touched(data, track="default")
+    assert returned == data["tracks"]["default"]["paths_touched"]
+    assert "newdir" in returned

@@ -139,10 +139,13 @@ def get_paths_touched(data: dict[str, Any], track: str = "default") -> list[str]
     if isinstance(tracks, dict):
         track_data = tracks.get(track, {})
         v2_val = track_data.get("paths_touched")
-        if v2_val is not None:
+        if isinstance(v2_val, list):
             return v2_val
     # v1 fallback (top-level)
-    return data.get("paths_touched", [])
+    v1_val = data.get("paths_touched")
+    if isinstance(v1_val, list):
+        return v1_val
+    return []
 
 
 def save_track(path: Path, track: str, track_data: dict[str, Any]) -> None:
