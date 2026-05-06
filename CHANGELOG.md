@@ -31,6 +31,10 @@ CLI entrypoints (`if __name__ == "__main__":`) on three `bin/` modules. All subc
 - `tests/test_eval_metadata_cli.py` — 33 tests covering `policy-hash` (TOML + severity-overrides + error), `sidecar-path`, `write-sidecar` (file + stdin + error cases), `sha256` (file + stdin + error cases).
 - `tests/test_walker_cli.py` — 13 tests covering `init-or-resume` (fresh init, resume, round-count persistence, error cases, missing flags).
 
+### Fixed
+
+- `write-sidecar` CLI now preserves caller-supplied `findings_summary` (was silently zeroed when `findings=[]` was passed to `write_sidecar()`; counts came from the empty list instead of the payload).
+
 ### Notes
 
 - This is the first prerelease toward v0.5.0.

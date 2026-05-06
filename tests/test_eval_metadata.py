@@ -265,3 +265,28 @@ def test_load_severity_overrides_raises_on_unknown_kind():
             eval_metadata.load_severity_overrides_from_config(path)
     finally:
         path.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# write_sidecar — findings_summary override
+# ---------------------------------------------------------------------------
+
+def test_write_sidecar_uses_findings_summary_override_when_provided(tmp_path):
+    """When findings_summary is passed, it is written verbatim — not recomputed."""
+    spec = tmp_path / "foo.spec.md"
+    spec.write_text("# spec\n", encoding="utf-8")
+    override = {"block_count": 2, "warn_count": 1, "info_count": 0, "dismissed_t3_count": 0}
+    sidecar_path = eval_metadata.write_sidecar(
+        spec,
+        evaluator_version="0.5.0-rc1",
+        tiers_run=[1, 2],
+        findings=[],  # empty — would produce all-zero counts if recomputed
+        dismissals=[],
+        config_path=None,
+        config_hash=None,
+        deepseek_model_version=None,
+        policy_hash="deadbeef" * 8,
+        findings_summary=override,
+    )
+    on_disk = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    assert on_disk["findings_summary"] == override

@@ -189,6 +189,20 @@ class TestWriteSidecarCli:
         r = _run("write-sidecar")
         assert r.returncode == 2
 
+    def test_write_sidecar_cli_preserves_findings_summary_from_payload(self, tmp_path):
+        """findings_summary in the payload must round-trip to disk unchanged."""
+        spec = tmp_path / "foo.spec.md"
+        spec.write_text("# spec\n", encoding="utf-8")
+        payload = _make_sidecar_payload(
+            findings_summary={"block_count": 2, "warn_count": 1, "info_count": 0, "dismissed_t3_count": 0}
+        )
+        payload_file = tmp_path / "payload.json"
+        payload_file.write_text(json.dumps(payload), encoding="utf-8")
+        _run("write-sidecar", "--spec", str(spec), "--payload", str(payload_file))
+        import json as _json
+        on_disk = _json.loads((tmp_path / "foo.spec.md.eval.json").read_text(encoding="utf-8"))
+        assert on_disk["findings_summary"] == payload["findings_summary"]
+
 
 # ── sha256 ────────────────────────────────────────────────────────────────────
 

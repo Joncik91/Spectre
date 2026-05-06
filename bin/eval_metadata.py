@@ -157,19 +157,31 @@ def write_sidecar(
     config_hash: str | None,
     deepseek_model_version: str | None,
     policy_hash: str,
+    findings_summary: dict | None = None,
 ) -> pathlib.Path:
     """Atomic write of <spec>.eval.json next to the spec file.
 
     Returns the sidecar path. Raises on write failure (caller handles).
+
+    If *findings_summary* is provided it is used verbatim (round-trip from a
+    caller-supplied payload).  When omitted (``None``) the summary is
+    recomputed from *findings* and *dismissals* as before.
     """
     spec_path = pathlib.Path(spec_path)
     sidecar_path = sidecar_path_for(spec_path)
 
-    # Aggregate findings_summary
-    block_count = sum(1 for f in findings if f.severity == "block")
-    warn_count = sum(1 for f in findings if f.severity == "warn")
-    info_count = sum(1 for f in findings if f.severity == "info")
-    dismissed_t3_count = len(dismissals)
+    if findings_summary is None:
+        # Aggregate findings_summary
+        block_count = sum(1 for f in findings if f.severity == "block")
+        warn_count = sum(1 for f in findings if f.severity == "warn")
+        info_count = sum(1 for f in findings if f.severity == "info")
+        dismissed_t3_count = len(dismissals)
+        findings_summary = {
+            "block_count": block_count,
+            "warn_count": warn_count,
+            "info_count": info_count,
+            "dismissed_t3_count": dismissed_t3_count,
+        }
 
     locked_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -179,12 +191,7 @@ def write_sidecar(
         "policy_hash": policy_hash,
         "config_path": str(config_path) if config_path is not None else None,
         "config_hash": config_hash,
-        "findings_summary": {
-            "block_count": block_count,
-            "warn_count": warn_count,
-            "info_count": info_count,
-            "dismissed_t3_count": dismissed_t3_count,
-        },
+        "findings_summary": findings_summary,
         "dismissals": dismissals,
         "deepseek_model_version": deepseek_model_version,
         "locked_at": locked_at,
@@ -210,7 +217,6 @@ def write_sidecar(
 
 if __name__ == "__main__":
     import argparse
-    import hashlib
     import sys
 
     parser = argparse.ArgumentParser(
@@ -320,6 +326,7 @@ if __name__ == "__main__":
                 config_hash=payload.get("config_hash"),
                 deepseek_model_version=payload.get("deepseek_model_version"),
                 policy_hash=payload["policy_hash"],
+                findings_summary=payload.get("findings_summary"),
             )
         except KeyError as exc:
             print(f"ERROR: missing required payload field: {exc}", file=sys.stderr)
