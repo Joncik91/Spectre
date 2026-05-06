@@ -2,7 +2,9 @@
 import json
 import os
 import pathlib
+import random
 import socket
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -121,7 +123,7 @@ class JudgeConfig:
     model: str
     base_url: str = "https://api.deepseek.com/v1"
     budget_tokens_per_spec: int = 50_000
-    timeout_s: int = 30
+    timeout_s: int = 180
 
 
 class _NoApiKeyError(Exception):
@@ -132,8 +134,26 @@ class _NoApiKeyError(Exception):
         super().__init__(f"no-api-key: {api_key_env} not found in env or secrets file")
 
 
+_MAX_RETRIES = 3  # up to 4 total attempts
+_MAX_BACKOFF_S = 60.0
+_FAIL_FAST_HTTP_CODES = {400, 401, 403}
+
+
+def _backoff_sleep(attempt: int) -> None:
+    """Sleep 2^(attempt+1) seconds, capped at _MAX_BACKOFF_S, plus 0-1s jitter."""
+    delay = min(2.0 ** (attempt + 1), _MAX_BACKOFF_S)
+    delay += random.uniform(0.0, 1.0)
+    time.sleep(delay)
+
+
 def _call_deepseek(prompts: dict, *, config: JudgeConfig) -> str:
-    """Single API call. Returns response content string. Raises on HTTP / auth errors."""
+    """API call with retry-with-backoff. Returns response content string.
+
+    Retries up to _MAX_RETRIES times (4 total attempts) on transient errors:
+    socket.timeout, TimeoutError, urllib.error.URLError, HTTP 429, HTTP 5xx.
+    Fail-fast on HTTP 400, 401, 403 (not transient).
+    Raises on final failure.
+    """
     key_result = resolve_api_key(config.api_key_env)
     if not key_result:
         raise _NoApiKeyError(config.api_key_env)
@@ -148,18 +168,39 @@ def _call_deepseek(prompts: dict, *, config: JudgeConfig) -> str:
             "response_format": {"type": "json_object"},
         }
     ).encode("utf-8")
-    req = urllib.request.Request(
-        f"{config.base_url}/chat/completions",
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=config.timeout_s) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    return data["choices"][0]["message"]["content"]
+
+    last_exc: Exception | None = None
+    for attempt in range(_MAX_RETRIES + 1):
+        req = urllib.request.Request(
+            f"{config.base_url}/chat/completions",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=config.timeout_s) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            return data["choices"][0]["message"]["content"]
+        except urllib.error.HTTPError as exc:
+            if exc.code in _FAIL_FAST_HTTP_CODES:
+                raise
+            if exc.code == 429 or 500 <= exc.code <= 599:
+                last_exc = exc
+                if attempt < _MAX_RETRIES:
+                    _backoff_sleep(attempt)
+                continue
+            raise
+        except (socket.timeout, TimeoutError, urllib.error.URLError) as exc:
+            last_exc = exc
+            if attempt < _MAX_RETRIES:
+                _backoff_sleep(attempt)
+            continue
+
+    assert last_exc is not None
+    raise last_exc
 
 
 def _unavailable(message: str) -> Finding:
@@ -218,6 +259,9 @@ def _run_prompt(prompt_template: dict, spec_text: str, *, config: JudgeConfig) -
         "user": prompt_template["user"].format(spec_text=spec_text),
     }
     expected_kind = prompt_template["kind"]
+    # Derive a short prong name from the kind (e.g. "tier3-context-gap" → "context-gap").
+    prong_name = expected_kind.removeprefix("tier3-")
+    total_attempts = _MAX_RETRIES + 1
     try:
         content = _call_deepseek(prompts, config=config)
         return _parse_findings(content, expected_kind)
@@ -225,12 +269,22 @@ def _run_prompt(prompt_template: dict, spec_text: str, *, config: JudgeConfig) -
         # Distinct skip reason: neither env var nor secrets file has the key.
         return [_unavailable(f"Tier 3 skipped (no-api-key): {config.api_key_env} not found")]
     except urllib.error.HTTPError as exc:
-        return [_unavailable(f"Tier 3 unavailable: HTTP {exc.code}")]
+        kind_label = f"http-{exc.code}"
+        return [_unavailable(
+            f"Tier 3 unavailable: timeout in {prong_name} after {total_attempts} attempts"
+            f" (last error: {kind_label})"
+        )]
     except urllib.error.URLError as exc:
-        return [_unavailable(f"Tier 3 unavailable: URLError {exc.reason}")]
-    except (TimeoutError, socket.timeout) as exc:
-        return [_unavailable(f"Tier 3 unavailable: timeout")]
-    except json.JSONDecodeError as exc:
+        return [_unavailable(
+            f"Tier 3 unavailable: timeout in {prong_name} after {total_attempts} attempts"
+            f" (last error: connection-error)"
+        )]
+    except (TimeoutError, socket.timeout):
+        return [_unavailable(
+            f"Tier 3 unavailable: timeout in {prong_name} after {total_attempts} attempts"
+            f" (last error: socket-timeout)"
+        )]
+    except json.JSONDecodeError:
         return [_unavailable("Tier 3 unavailable: malformed JSON response")]
     except KeyError as exc:
         return [_unavailable(f"Tier 3 unavailable: missing field {exc}")]

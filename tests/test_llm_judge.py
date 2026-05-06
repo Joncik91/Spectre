@@ -3,6 +3,7 @@ import json
 import os
 import pathlib
 import socket
+import time
 from unittest import mock
 from urllib import error as url_error
 
@@ -171,6 +172,7 @@ def test_evaluate_third_prompt_kind_is_tier3_attacker_view(mock_urlopen, monkeyp
 @mock.patch("urllib.request.urlopen")
 def test_evaluate_http_error_returns_tier3_unavailable(mock_urlopen, monkeypatch):
     _env(monkeypatch)
+    monkeypatch.setattr(time, "sleep", lambda _d: None)
     mock_urlopen.side_effect = url_error.HTTPError(
         url="https://api.deepseek.com", code=429, msg="Too Many Requests",
         hdrs=None, fp=None,
@@ -187,6 +189,7 @@ def test_evaluate_http_error_returns_tier3_unavailable(mock_urlopen, monkeypatch
 @mock.patch("urllib.request.urlopen")
 def test_evaluate_http_error_severity_info(mock_urlopen, monkeypatch):
     _env(monkeypatch)
+    monkeypatch.setattr(time, "sleep", lambda _d: None)
     mock_urlopen.side_effect = url_error.HTTPError(
         url="https://api.deepseek.com", code=401, msg="Unauthorized",
         hdrs=None, fp=None,
@@ -203,6 +206,7 @@ def test_evaluate_http_error_severity_info(mock_urlopen, monkeypatch):
 @mock.patch("urllib.request.urlopen")
 def test_evaluate_url_error_returns_tier3_unavailable(mock_urlopen, monkeypatch):
     _env(monkeypatch)
+    monkeypatch.setattr(time, "sleep", lambda _d: None)
     mock_urlopen.side_effect = url_error.URLError("Name or service not known")
     result = llm_judge.evaluate(_SPEC, config=_CFG)
     assert result[0].kind == "tier3-unavailable"
@@ -216,6 +220,7 @@ def test_evaluate_url_error_returns_tier3_unavailable(mock_urlopen, monkeypatch)
 @mock.patch("urllib.request.urlopen")
 def test_evaluate_timeout_returns_tier3_unavailable(mock_urlopen, monkeypatch):
     _env(monkeypatch)
+    monkeypatch.setattr(time, "sleep", lambda _d: None)
     mock_urlopen.side_effect = TimeoutError("timed out")
     result = llm_judge.evaluate(_SPEC, config=_CFG)
     assert result[0].kind == "tier3-unavailable"
@@ -351,17 +356,20 @@ def test_evaluate_request_uses_bearer_auth(mock_urlopen, monkeypatch):
 @mock.patch("urllib.request.urlopen")
 def test_evaluate_partial_response_one_call_fails_others_succeed(mock_urlopen, monkeypatch):
     _env(monkeypatch)
+    monkeypatch.setattr(time, "sleep", lambda _d: None)
+    # First prong fails all 4 attempts (retried 3x), then two prongs succeed.
+    _500 = url_error.HTTPError(
+        url="https://api.deepseek.com", code=500, msg="Internal Server Error",
+        hdrs=None, fp=None,
+    )
     mock_urlopen.side_effect = [
-        url_error.HTTPError(
-            url="https://api.deepseek.com", code=500, msg="Internal Server Error",
-            hdrs=None, fp=None,
-        ),
+        _500, _500, _500, _500,  # prong 1: all 4 attempts fail
         _make_fake_resp("tier3-spec-asserts-wrong"),
         _make_fake_resp("tier3-attacker-view"),
     ]
     result = llm_judge.evaluate(_SPEC, config=_CFG)
     kinds = [f.kind for f in result]
-    # One unavailable from the failed call + 2 real findings
+    # One unavailable from the failed prong + 2 real findings
     assert "tier3-unavailable" in kinds
     assert "tier3-spec-asserts-wrong" in kinds
     assert "tier3-attacker-view" in kinds
@@ -470,3 +478,144 @@ def test_tier3_renders_distinct_no_api_key_skip_reason(monkeypatch, tmp_path):
     cfg = llm_judge.JudgeConfig(enabled=True, api_key_env="DEEPSEEK_API_KEY", model="deepseek-reasoner")
     result = llm_judge.evaluate(_SPEC, config=cfg)
     assert "no-api-key" in result[0].message
+
+
+# ---------------------------------------------------------------------------
+# 26. _call_deepseek retries socket.timeout twice then succeeds (3 attempts)
+# ---------------------------------------------------------------------------
+
+
+@mock.patch("urllib.request.urlopen")
+def test_call_deepseek_retries_on_socket_timeout(mock_urlopen, monkeypatch):
+    monkeypatch.setenv("TEST_DEEPSEEK_KEY", "fake-key-for-tests")
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(time, "sleep", lambda d: sleep_calls.append(d))
+
+    mock_urlopen.side_effect = [
+        socket.timeout("timed out"),
+        socket.timeout("timed out"),
+        _make_fake_resp("tier3-context-gap"),
+    ]
+    cfg = llm_judge.JudgeConfig(enabled=True, api_key_env="TEST_DEEPSEEK_KEY", model="deepseek-reasoner")
+    prompts = {"system": "s", "user": "u"}
+    result = llm_judge._call_deepseek(prompts, config=cfg)
+    assert mock_urlopen.call_count == 3
+    assert len(sleep_calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# 27. _call_deepseek retries HTTP 503 twice then succeeds
+# ---------------------------------------------------------------------------
+
+
+@mock.patch("urllib.request.urlopen")
+def test_call_deepseek_retries_on_http_503(mock_urlopen, monkeypatch):
+    monkeypatch.setenv("TEST_DEEPSEEK_KEY", "fake-key-for-tests")
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(time, "sleep", lambda d: sleep_calls.append(d))
+
+    _503 = url_error.HTTPError(url="https://api.deepseek.com", code=503, msg="Service Unavailable", hdrs=None, fp=None)
+    mock_urlopen.side_effect = [
+        _503,
+        _503,
+        _make_fake_resp("tier3-context-gap"),
+    ]
+    cfg = llm_judge.JudgeConfig(enabled=True, api_key_env="TEST_DEEPSEEK_KEY", model="deepseek-reasoner")
+    prompts = {"system": "s", "user": "u"}
+    result = llm_judge._call_deepseek(prompts, config=cfg)
+    assert mock_urlopen.call_count == 3
+    assert len(sleep_calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# 28. _call_deepseek does NOT retry HTTP 401 — single attempt, error propagates
+# ---------------------------------------------------------------------------
+
+
+@mock.patch("urllib.request.urlopen")
+def test_call_deepseek_does_not_retry_on_http_401(mock_urlopen, monkeypatch):
+    monkeypatch.setenv("TEST_DEEPSEEK_KEY", "fake-key-for-tests")
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(time, "sleep", lambda d: sleep_calls.append(d))
+
+    mock_urlopen.side_effect = url_error.HTTPError(
+        url="https://api.deepseek.com", code=401, msg="Unauthorized", hdrs=None, fp=None
+    )
+    cfg = llm_judge.JudgeConfig(enabled=True, api_key_env="TEST_DEEPSEEK_KEY", model="deepseek-reasoner")
+    prompts = {"system": "s", "user": "u"}
+    with pytest.raises(url_error.HTTPError):
+        llm_judge._call_deepseek(prompts, config=cfg)
+    assert mock_urlopen.call_count == 1
+    assert sleep_calls == []
+
+
+# ---------------------------------------------------------------------------
+# 29. _call_deepseek gives up after 3 retries (4 total attempts)
+# ---------------------------------------------------------------------------
+
+
+@mock.patch("urllib.request.urlopen")
+def test_call_deepseek_gives_up_after_3_retries(mock_urlopen, monkeypatch):
+    monkeypatch.setenv("TEST_DEEPSEEK_KEY", "fake-key-for-tests")
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(time, "sleep", lambda d: sleep_calls.append(d))
+
+    mock_urlopen.side_effect = socket.timeout("always times out")
+    cfg = llm_judge.JudgeConfig(enabled=True, api_key_env="TEST_DEEPSEEK_KEY", model="deepseek-reasoner")
+    prompts = {"system": "s", "user": "u"}
+    with pytest.raises(socket.timeout):
+        llm_judge._call_deepseek(prompts, config=cfg)
+    assert mock_urlopen.call_count == 4
+    assert len(sleep_calls) == 3
+
+
+# ---------------------------------------------------------------------------
+# 30. _run_prompt includes prong name in timeout message
+# ---------------------------------------------------------------------------
+
+
+@mock.patch("urllib.request.urlopen")
+def test_run_prompt_includes_prong_name_in_timeout_message(mock_urlopen, monkeypatch):
+    monkeypatch.setenv("TEST_DEEPSEEK_KEY", "fake-key-for-tests")
+    monkeypatch.setattr(time, "sleep", lambda _d: None)
+
+    mock_urlopen.side_effect = socket.timeout("timed out")
+    cfg = llm_judge.JudgeConfig(enabled=True, api_key_env="TEST_DEEPSEEK_KEY", model="deepseek-reasoner")
+    # Use the first prompt template (kind = "tier3-context-gap" → prong "context-gap")
+    prompt_template = llm_judge._PROMPTS[0]
+    result = llm_judge._run_prompt(prompt_template, _SPEC, config=cfg)
+    assert len(result) == 1
+    assert "context-gap" in result[0].message
+
+
+# ---------------------------------------------------------------------------
+# 31. JudgeConfig default timeout_s is 180
+# ---------------------------------------------------------------------------
+
+
+def test_default_timeout_s_is_180(monkeypatch):
+    cfg = llm_judge.JudgeConfig(enabled=True, api_key_env="DEEPSEEK_API_KEY", model="deepseek-reasoner")
+    assert cfg.timeout_s == 180
+
+
+# ---------------------------------------------------------------------------
+# 32. backoff sleep durations are capped at _MAX_BACKOFF_S (60s)
+# ---------------------------------------------------------------------------
+
+
+@mock.patch("urllib.request.urlopen")
+def test_backoff_capped_at_60_seconds(mock_urlopen, monkeypatch):
+    monkeypatch.setenv("TEST_DEEPSEEK_KEY", "fake-key-for-tests")
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(time, "sleep", lambda d: sleep_calls.append(d))
+    # Patch random.uniform to 0 so we only measure the base delay
+    monkeypatch.setattr("bin.llm_judge.random.uniform", lambda _a, _b: 0.0)
+
+    mock_urlopen.side_effect = socket.timeout("always times out")
+    cfg = llm_judge.JudgeConfig(enabled=True, api_key_env="TEST_DEEPSEEK_KEY", model="deepseek-reasoner")
+    prompts = {"system": "s", "user": "u"}
+    with pytest.raises(socket.timeout):
+        llm_judge._call_deepseek(prompts, config=cfg)
+    # Without cap: 2^1=2, 2^2=4, 2^3=8 — all under 60. Verify all ≤ 60.
+    assert all(d <= llm_judge._MAX_BACKOFF_S for d in sleep_calls)
+    assert len(sleep_calls) == 3
