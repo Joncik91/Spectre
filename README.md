@@ -66,9 +66,29 @@ Available specs:
 STATE: step=1 exit_code=0 last_command=None
 ```
 
-**Optional — Tier 3 adversarial review (DeepSeek `deepseek-reasoner`):** the **first-run wizard** auto-creates `~/.spectre/reviewer.toml` on your first `/vision` invocation. If `DEEPSEEK_API_KEY` is already in your environment, you'll be prompted once with a cost estimate and can opt in. The key is never written to the config — only the env-var name is. Each `/vision` draft makes ~3 API calls (~10–30s, ~$0.01–0.05).
+### First-run setup — Tier 3 adversarial review (optional, ~$0.01/spec)
 
-If you keep your secrets in a `.env`-style file outside the environment, point Spectre at it via `export SPECTRE_SECRETS_FILE=/path/to/your/.env` before running `/vision`. The wizard reads only the variable's *presence* — the value itself is never copied. To re-enable Tier 3 after declining, edit `~/.spectre/reviewer.toml` and set `[tier3] enabled = true`.
+Tier 3 runs DeepSeek's `deepseek-reasoner` model as an adversarial spec reviewer before lock. It catches missing context, factual errors, and attacker-view concerns the deterministic Tiers 1+2 can't see. **It is opt-in.** Tiers 1+2 always run for free.
+
+The first time you run `/vision`, the setup wizard fires automatically. It probes for a DeepSeek API key in this order:
+
+1. The `DEEPSEEK_API_KEY` environment variable in your live shell.
+2. `~/.spectre/secrets.env` — Spectre's canonical secrets file. `KEY=value` lines, mode 0600.
+3. `$SPECTRE_SECRETS_FILE` — escape hatch for users who keep secrets elsewhere.
+
+**If a key is found**, the wizard prompts once: enable Tier 3 now? `yes` → writes `~/.spectre/reviewer.toml` with `enabled=true`. `no` → writes the same file with `enabled=false` so subsequent runs don't re-prompt.
+
+**If no key is found**, the wizard prints the setup instructions and asks `(retry / skip)`. Drop the key, type `retry`, and the wizard re-probes — no second `/vision` invocation needed.
+
+To get a key: <https://platform.deepseek.com/api_keys>. Then:
+
+```bash
+mkdir -p ~/.spectre
+echo 'DEEPSEEK_API_KEY=sk-...' > ~/.spectre/secrets.env
+chmod 600 ~/.spectre/secrets.env
+```
+
+The key value is never copied into `reviewer.toml` — only the env-var name is stored. Each `/vision` draft with Tier 3 enabled makes ~3 API calls (~10–30s, ~$0.01–0.05). To re-enable after declining, edit `~/.spectre/reviewer.toml` and set `[tier3] enabled = true`.
 
 ## Usage
 
@@ -101,7 +121,13 @@ If you keep your secrets in a `.env`-style file outside the environment, point S
 /implement check
 # → Re-runs the current step's verification. No execution, no scratchpad write.
 
-# 4. Multi-track (parallel work in one project).
+# 4. Auto mode — walk consecutive low-tier steps without re-prompting.
+/implement auto
+# → Same safety surface as plain /implement but batches silent/repo-tier steps.
+# → Halts at the first host/network/never-autonomous step, queued lock, verification
+#   fail, or drift trigger. User then types /implement (or /implement auto) again.
+
+# 5. Multi-track (parallel work in one project).
 /implement payments       # acquires res-port-8080 for track "payments"
 /implement notifications  # queues if "payments" hasn't released yet
 ```
