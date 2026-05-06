@@ -572,14 +572,10 @@ if __name__ == "__main__":
         bundle_dir = pathlib.Path(args.bundle_dir) if args.bundle_dir else None
         try:
             result = evaluate(spec_path, config_path=config_path, bundle_persist_dir=bundle_dir)
-        except FileNotFoundError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            sys.exit(1)
         except Exception as exc:  # noqa: BLE001
             print(f"ERROR: {exc}", file=sys.stderr)
             sys.exit(1)
 
-        import json as _json
         out_data = {
             "findings": [
                 {
@@ -600,7 +596,7 @@ if __name__ == "__main__":
             "max_severity": result.max_severity,
             "sidecar_payload": result.sidecar_payload,
         }
-        output_text = _json.dumps(out_data, indent=2)
+        output_text = json.dumps(out_data, indent=2)
         if args.output:
             pathlib.Path(args.output).write_text(output_text, encoding="utf-8")
         else:
@@ -609,6 +605,13 @@ if __name__ == "__main__":
     elif args.cmd == "slug-to-path":
         # Canonical slug → spec path: specs/<slug>.spec.md
         slug = args.slug
+        slugified = _adr.slugify(slug)
+        if slugified != slug:
+            print(
+                f"Error: {slug!r} is not a valid slug — did you mean {slugified!r}?",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         canonical = pathlib.Path("specs") / f"{slug}.spec.md"
         print(str(canonical))
 

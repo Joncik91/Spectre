@@ -53,6 +53,18 @@ class TestSlugToPath:
         r = _run("slug-to-path", "--slug", "spec-v2-123")
         assert r.stdout.strip() == "specs/spec-v2-123.spec.md"
 
+    def test_slug_to_path_exits_1_for_unslugified_input(self):
+        r = _run("slug-to-path", "--slug", "My Feature")
+        assert r.returncode == 1
+
+    def test_slug_to_path_stderr_nonempty_for_unslugified_input(self):
+        r = _run("slug-to-path", "--slug", "My Feature")
+        assert r.stderr != ""
+
+    def test_slug_to_path_stderr_suggests_correction_for_unslugified_input(self):
+        r = _run("slug-to-path", "--slug", "My Feature")
+        assert "my-feature" in r.stderr
+
 
 # ── evaluate ──────────────────────────────────────────────────────────────────
 
