@@ -315,3 +315,66 @@ def load(path: pathlib.Path) -> WalkState | None:
         round_count=data.get("round_count", 0),
         yield_history=list(data.get("yield_history", [])),
     )
+
+
+# ── CLI entrypoint ────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="walker",
+        description="Walker CLI — init-or-resume walk state.",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    # ── init-or-resume ────────────────────────────────────────────────────────
+    p_ior = sub.add_parser(
+        "init-or-resume",
+        help=(
+            "Load existing walk state from --state-path or initialise a new one. "
+            "Prints: WALK: N rounds, M pending, stop=<reason|none>"
+        ),
+    )
+    p_ior.add_argument(
+        "--intent",
+        required=True,
+        help="Spec intent string (used only when initialising; ignored on resume).",
+    )
+    p_ior.add_argument(
+        "--draft",
+        required=True,
+        help="Path to the spec draft file (e.g. specs/<slug>.spec.md.draft).",
+    )
+    p_ior.add_argument(
+        "--state-path",
+        default="state/.walk.json",
+        help="Path to walk state JSON (default: state/.walk.json).",
+    )
+
+    args = parser.parse_args()
+
+    if args.cmd == "init-or-resume":
+        state_path = pathlib.Path(args.state_path)
+        draft_path = pathlib.Path(args.draft)
+        try:
+            state = load(state_path)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        if state is None:
+            state = init_walk(
+                spec_intent=args.intent,
+                spec_draft_path=draft_path,
+            )
+            try:
+                persist(state, state_path)
+            except OSError as exc:
+                print(f"ERROR: could not persist walk state: {exc}", file=sys.stderr)
+                sys.exit(1)
+
+        stop = state.stop_reason if state.stop_reason else "none"
+        pending_count = sum(1 for c in state.pending if c.id not in state.stale)
+        print(f"WALK: {state.round_count} rounds, {pending_count} pending, stop={stop}")
