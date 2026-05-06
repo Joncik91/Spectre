@@ -125,3 +125,28 @@ def test_hydrate_proposes_new_patches_for_recurring_fingerprints(tmp_path, monke
     proposed = tmp_path / ".spectre" / "template-patches" / "proposed"
     md_files = list(proposed.glob("*.md"))
     assert len(md_files) >= 1
+
+
+def test_hydrate_does_not_reproprose_existing_patch(tmp_path, monkeypatch):
+    """Idempotency: hydrate must not duplicate a patch on a 2nd run when no new
+    halts have occurred. Locks the slug-parity contract between hydrate.detect_and_propose_patches
+    and template_patcher.propose_patch (a future divergence in slug computation
+    would silently break this and cause patch duplicates)."""
+    from bin import observations, hydrate
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
+    for _ in range(3):
+        observations.record_halt(
+            kind="tier-gate", fingerprint="g" * 64,
+            project_path="/p", spec_slug="s", action="x",
+            classifier_label="y",
+        )
+    hydrate.detect_and_propose_patches()
+    proposed_dir = tmp_path / ".spectre" / "template-patches" / "proposed"
+    first_run_files = sorted(proposed_dir.glob("*.md"))
+
+    # Second run with no new halts — must be idempotent.
+    hydrate.detect_and_propose_patches()
+    second_run_files = sorted(proposed_dir.glob("*.md"))
+
+    assert first_run_files == second_run_files
