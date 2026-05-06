@@ -18,7 +18,7 @@ All notable changes to the SDL Vision Engine plugin (Spectre).
 - `.claude-plugin/marketplace.json` plugin version 0.3.2 → 0.4.0.
 
 ### Tests
-**~525 passing** (504 v0.3.2 baseline + ~22 new walker tests + 2 wizard tests).
+**569 passing** (504 v0.3.2 baseline + 60 new walker tests + 5 new wizard tests). Audit fixes added during build: yield_converge_rounds precondition, walker_version validation, init_walk seeds 4 §8.1 concerns, skill writes stop_reason after should_stop.
 
 ### Architecture references
 - Design: `docs/superpowers/specs/2026-05-06-spectre-v0.4-cdlc-closure.md`
