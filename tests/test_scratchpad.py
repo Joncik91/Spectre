@@ -35,6 +35,12 @@ def test_default_includes_last_audit_failures_empty_list():
     assert sp.DEFAULT["last_audit_failures"] == []
 
 
+def test_default_includes_pending_findings_empty_list():
+    """v0.3.1: Step 7.5 captures Spectre-itself findings; queue holds drafts
+    that couldn't be filed via gh (network/auth blip)."""
+    assert sp.DEFAULT["pending_findings"] == []
+
+
 def test_paths_touched_cap_constant_is_at_least_100():
     assert sp.PATHS_TOUCHED_CAP >= 100
 

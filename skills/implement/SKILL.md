@@ -4,21 +4,41 @@ description: State-aware spec executor — read the active spec, run the next st
 disable-model-invocation: false
 ---
 
-# Skill: /implement [check]
+# Skill: /implement [check | auto] [<track>]
 
-Triggered when the user types `/implement` (run next step) or `/implement check` (verify current state without executing). This is the **physical-build engine** of the SDL Vision Engine — it owns the action→verification→retry→advance cycle.
+Triggered when the user types `/implement` (run next step), `/implement check` (verify current state without executing), or `/implement auto` (walk consecutive low-tier steps without re-prompting until a halt-worthy step). This is the **physical-build engine** of the SDL Vision Engine — it owns the action→verification→retry→advance cycle.
 
 ## Hard rules (read every invocation)
 
 - **All paths are user-project-cwd-relative.** Read `specs/.active` and `state/scratchpad.json` from the user's `pwd`, never from the plugin install dir (`${CLAUDE_PLUGIN_ROOT}` or `~/.claude/plugins/...`). If `pwd` looks like a plugin cache, HALT and tell the user to restart from their project directory.
 - **Verification is the gate, not the action.** A non-zero `action:` exit is a failure; a zero-exit `action:` followed by a non-zero `verification:` is **also** a failure. Both halt or retry per Option B.
-- **One step per invocation.** Never auto-chain `step N → N+1 → ...`. The user runs `/implement` once per step. This is the human's pause point.
+- **One step per invocation, except in auto mode.** Plain `/implement` runs exactly one step. `/implement auto` chains consecutive steps that classify as `silent` or `repo` tier with no never-autonomous match, no resource-lock contention, no verification failure, and no drift trigger. The first step that fails any of those conditions halts auto mode and reverts to per-step.
 - **One retry, then halt.** Option B retry policy (see §Retry below).
 - **Hard halt on missing-binary errors.** `command not found`, `No such file or directory` for the binary itself → halt without retry.
 - **Never edit the spec from `/implement`.** If the spec is wrong, halt and tell the user to re-run `/vision`.
 - **Pre-flight check before executing Step N.** Run Step N-1's verification first if scratchpad says it passed; halt with a "Root-State Desync" message if it now fails.
 
 ## Protocol
+
+### Step 0 — Mode routing (v0.3.1+)
+
+Parse the args. Recognized invocations:
+
+  - `/implement` — run exactly one step.
+  - `/implement check` — verify current state (no execution, no advance).
+  - `/implement auto` — walk consecutive low-tier steps without re-prompting.
+  - `/implement <track>` / `/implement auto <track>` / `/implement check <track>` — same, scoped to a named track.
+
+In `auto` mode, the runner repeats Steps 2–7.5 in a loop until any of the following triggers a halt:
+
+  - Tier classifier returns `host` or `network`.
+  - Tier classifier returns a `NEVER_AUTONOMOUS` label.
+  - Resource-lock acquisition is queued (not granted on first try).
+  - Verification fails (Path B retry is per-step interactive — auto mode hands control back at the prompt).
+  - Drift checkpoint at §6.5 detects drift.
+  - Spec is complete (`current_step > total_steps`).
+
+When auto mode halts, print one line summarizing what triggered the halt, then proceed exactly as plain `/implement` would for that step (e.g., emit the `TIER GATE` prompt). The user's next `/implement` can re-enter auto mode by passing `auto` again. Auto is opt-in — never the default — so the human-veto right at risky steps is preserved.
 
 ### Step 0.5 — Track selection
 
@@ -289,6 +309,54 @@ Do NOT release on retry-mid-flight (Path B retry pending) — the track still ow
 ### Step 7 — Failure logging
 
 Whether the failure halts or retries, the `compact.py` hook already appends to `failed_hypotheses[]`. The `/implement` skill doesn't write to scratchpad directly except to advance `step` on success or store `diagnosis` on retry.
+
+### Step 7.5 — Spectre-finding capture (v0.3.1+)
+
+Triggered when **Path B retry succeeded** — verification failed on the first run, the agent diagnosed and proposed a corrected action, the user said `yes`, and verification passed on the corrected action. This signal pattern reliably identifies "the spec author didn't anticipate something about the runtime environment" — the spec said one thing, reality demanded another, and the fix was an invocation tweak rather than a logic change. That's almost always a Spectre-itself finding (classifier gap, skill-prose gap, environment quirk), not a project-architecture choice.
+
+Prompt:
+
+```
+FINDING: <one-line summary of what the corrected action revealed>
+Detected: verification-fail-recover
+Category? (project / spectre)
+  - project → decisions/<NNNN>-<slug>.md in the active project
+  - spectre → gh issue comment 1 --repo Joncik91/Spectre with auto-drafted body
+```
+
+Default category is `spectre` because the trigger is an invocation correction, not a design choice.
+
+On `spectre`:
+
+```bash
+gh issue comment 1 --repo Joncik91/Spectre --body "$(cat <<EOF
+## Finding from /implement (auto-captured)
+
+**Spec:** <slug>
+**Step:** <N>
+**Original action:** <action from spec>
+**Corrected action:** <agent's diagnosis-driven retry>
+**Diagnosis:** <one-line>
+
+Captured from a real /implement run where Path B retry succeeded — i.e. the
+spec author's invocation didn't account for the runtime quirk surfaced here.
+EOF
+)"
+```
+
+If `gh` is unavailable or the command fails, write the draft to `decisions/<NNNN>-DRAFT-<slug>.md` with a `# DRAFT: TO-BE-FILED-UPSTREAM` header banner, AND append a record to scratchpad's `pending_findings: []` queue so the user can file later. Never lose a finding to a network/auth blip.
+
+On `project`:
+
+```bash
+python3 - <<'PY'
+import sys; sys.path.insert(0, ".")
+from bin import adr
+adr.write_adr(slug="<slug>", title="<title>", body="<body with finding>")
+PY
+```
+
+Skip Step 7.5 entirely on `silent`/`repo`-tier steps that pass on first try — those have no signal worth capturing.
 
 ## Output contract
 
