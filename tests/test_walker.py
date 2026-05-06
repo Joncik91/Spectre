@@ -548,3 +548,18 @@ def test_should_stop_raises_when_yield_converge_rounds_is_negative():
     )
     with pytest.raises(ValueError, match="yield_converge_rounds must be >= 1"):
         walker.should_stop(state, yield_converge_rounds=-1)
+
+
+def test_load_raises_on_walker_version_mismatch(tmp_path):
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    target = tmp_path / "walk.json"
+    walker.persist(state, target)
+    # Hand-edit the version to simulate a stale walk file
+    data = json.loads(target.read_text(encoding="utf-8"))
+    data["walker_version"] = "0.99.0-future"
+    target.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match="walker_version"):
+        walker.load(target)

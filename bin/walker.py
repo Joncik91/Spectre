@@ -253,6 +253,12 @@ def load(path: pathlib.Path) -> WalkState | None:
     if not path.is_file():
         return None
     data = json.loads(path.read_text(encoding="utf-8"))
+    ver = data.get("walker_version")
+    if ver != WALKER_VERSION:
+        raise ValueError(
+            f"walker_version mismatch: file has {ver!r}, walker is {WALKER_VERSION!r}; "
+            f"rm state/.walk.json to restart"
+        )
     return WalkState(
         spec_intent=data["spec_intent"],
         spec_draft_path=pathlib.Path(data["spec_draft_path"]),
