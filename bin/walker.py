@@ -70,24 +70,69 @@ class WalkState:
 
 def init_walk(*, spec_intent: str, spec_draft_path: pathlib.Path) -> WalkState:
     """Initialize a walk. Seeds pending with one assumption-surface concern
-    targeting the human — round 1 always asks the author to enumerate their
-    own unstated assumptions, since the LLM doesn't have priors the human does.
+    plus four §8.1 receiver-clarification concerns.
+
+    The five seeds guarantee the resulting draft has §8.1 hard-contract
+    fields populated (mutates, never-touches, decision-budget, reboot-survival)
+    so the §6.4 evaluator doesn't block on missing-receiver-calibration.
     """
-    seed = Concern(
-        id="seed-1",
-        kind="assumption-surface",
-        receivers=["human"],
-        depends_on=[],
-        summary=(
-            "Surface the unstated assumptions baked into the intent. What "
-            "edge cases, environment quirks, or hard constraints does the "
-            "author know that the spec doesn't yet say?"
+    seeds = [
+        Concern(
+            id="seed-1",
+            kind="assumption-surface",
+            receivers=["human"],
+            depends_on=[],
+            summary=(
+                "Surface the unstated assumptions baked into the intent. What "
+                "edge cases, environment quirks, or hard constraints does the "
+                "author know that the spec doesn't yet say?"
+            ),
         ),
-    )
+        Concern(
+            id="seed-mutates",
+            kind="receiver-clarification",
+            receivers=["human"],
+            depends_on=[],
+            summary=(
+                "§8.1 mutates: which paths is this spec authorized to write or "
+                "modify? Comma-separated list of file/dir paths."
+            ),
+        ),
+        Concern(
+            id="seed-never-touches",
+            kind="receiver-clarification",
+            receivers=["human"],
+            depends_on=[],
+            summary=(
+                "§8.1 never-touches: which paths must this spec NOT write to "
+                "under any circumstance? Comma-separated list."
+            ),
+        ),
+        Concern(
+            id="seed-decision-budget",
+            kind="receiver-clarification",
+            receivers=["human"],
+            depends_on=[],
+            summary=(
+                "§8.1 decision-budget: paid-API call budget (e.g. '1 paid call "
+                "per minute, CoinGecko free tier' or 'none')."
+            ),
+        ),
+        Concern(
+            id="seed-reboot-survival",
+            kind="receiver-clarification",
+            receivers=["human"],
+            depends_on=[],
+            summary=(
+                "§8.1 reboot-survival: 'required' | 'best-effort' | 'none'. Does "
+                "the spec's effect need to survive a host reboot?"
+            ),
+        ),
+    ]
     return WalkState(
         spec_intent=spec_intent,
         spec_draft_path=spec_draft_path,
-        pending=[seed],
+        pending=seeds,
     )
 
 

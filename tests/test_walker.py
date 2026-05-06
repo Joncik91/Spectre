@@ -183,7 +183,9 @@ def test_next_concern_skips_stale_concerns():
         spec_intent="x",
         spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
     )
-    state.stale.add("seed-1")
+    # Mark every seeded concern stale so c2 is the only non-stale candidate.
+    for seed in list(state.pending):
+        state.stale.add(seed.id)
     extra = walker.Concern(
         id="c2",
         kind="edge-case",
@@ -563,3 +565,55 @@ def test_load_raises_on_walker_version_mismatch(tmp_path):
     target.write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(ValueError, match="walker_version"):
         walker.load(target)
+
+
+def test_init_walk_seeds_mutates_concern():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    assert any(
+        c.kind == "receiver-clarification" and "mutates" in c.summary.lower()
+        for c in state.pending
+    )
+
+
+def test_init_walk_seeds_never_touches_concern():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    assert any(
+        c.kind == "receiver-clarification" and "never-touches" in c.summary.lower()
+        for c in state.pending
+    )
+
+
+def test_init_walk_seeds_decision_budget_concern():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    assert any(
+        c.kind == "receiver-clarification" and "decision-budget" in c.summary.lower()
+        for c in state.pending
+    )
+
+
+def test_init_walk_seeds_reboot_survival_concern():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    assert any(
+        c.kind == "receiver-clarification" and "reboot-survival" in c.summary.lower()
+        for c in state.pending
+    )
+
+
+def test_init_walk_pending_starts_with_seed_assumption_then_four_receiver_clarifications():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    assert len(state.pending) == 5
