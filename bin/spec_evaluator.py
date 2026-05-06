@@ -381,6 +381,9 @@ def evaluate(
     tier3_findings: list[_findings.Finding] = []
     tiers_run = [1, 2]
     severity_overrides: dict[str, str] = {}
+    config_dict: dict = {}
+    config_hash: str | None = None
+    deepseek_model_version: str | None = None
 
     if config_path is not None:
         config_path = pathlib.Path(config_path)
@@ -397,9 +400,10 @@ def evaluate(
         else:
             from bin import llm_judge as _llm_judge
 
-            config = _load_toml_config(config_path)
-            tier3_cfg = config.get("tier3", {})
-            severity_overrides = config.get("severity_overrides", {})
+            config_dict = _load_toml_config(config_path)
+            config_hash = hashlib.sha256(config_path.read_bytes()).hexdigest()
+            tier3_cfg = config_dict.get("tier3", {})
+            severity_overrides = config_dict.get("severity_overrides", {})
 
             if tier3_cfg.get("enabled", False):
                 judge_config = _llm_judge.JudgeConfig(
@@ -416,6 +420,7 @@ def evaluate(
                 # tier3-unavailable findings.
                 if not any(f.kind == "tier3-unavailable" for f in tier3_findings):
                     tiers_run = [1, 2, 3]
+                    deepseek_model_version = tier3_cfg.get("model", DEEPSEEK_MODEL)
             else:
                 # Config exists but Tier 3 is explicitly disabled — emit a visible signal.
                 tier3_findings.append(_findings.Finding(
@@ -456,10 +461,17 @@ def evaluate(
     max_sev = _findings.max_severity(filtered)
 
     # ── Step 11: Build sidecar_payload ───────────────────────────────────────
+    # policy_hash is always computed (over the loaded config dict + severity
+    # overrides). config_dict stays {} when no config_path was supplied or the
+    # path didn't exist, so the hash is stable for the no-config case.
+    policy_hash = _eval_metadata.compute_policy_hash(config_dict, severity_overrides)
     sidecar_payload: dict = {
         "evaluator_version": EVALUATOR_VERSION,
         "tiers_run": tiers_run,
         "dismissals": dismissals,
+        "policy_hash": policy_hash,
+        "config_hash": config_hash,
+        "deepseek_model_version": deepseek_model_version,
         "findings_summary": {
             "block_count": sum(1 for f in filtered if f.severity == "block"),
             "warn_count": sum(1 for f in filtered if f.severity == "warn"),

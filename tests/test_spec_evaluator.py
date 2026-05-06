@@ -340,6 +340,59 @@ def test_sidecar_payload_dismissals_count_matches_parse_dismissals(tmp_path):
     assert len(result.sidecar_payload.get("dismissals", [])) == len(expected_dismissals)
 
 
+# ── 23a-c. v0.4.2.1: sidecar_payload schema parity with /vision §6.7.4 ────────
+
+
+def test_sidecar_payload_includes_policy_hash(tmp_path):
+    """v0.4.2.1: policy_hash is always present (even when no config_path)
+    so /vision §6.7.4 can pass it to write_sidecar() without KeyError."""
+    from bin import eval_metadata
+    result = spec_evaluator.evaluate(_GOOD_MINIMAL, bundle_persist_dir=tmp_path)
+    expected = eval_metadata.compute_policy_hash({}, {})
+    assert result.sidecar_payload["policy_hash"] == expected
+
+
+def test_sidecar_payload_config_hash_is_none_when_no_config(tmp_path):
+    """v0.4.2.1: config_hash is None when no config_path was supplied."""
+    result = spec_evaluator.evaluate(_GOOD_MINIMAL, bundle_persist_dir=tmp_path)
+    assert result.sidecar_payload["config_hash"] is None
+
+
+def test_sidecar_payload_includes_config_hash_when_config_path_given(tmp_path):
+    """v0.4.2.1: config_hash is sha256 of the config TOML's bytes when present."""
+    config_path = tmp_path / "reviewer.toml"
+    config_path.write_bytes(b"[tier3]\nenabled = false\n")
+    result = spec_evaluator.evaluate(
+        _GOOD_MINIMAL, config_path=config_path, bundle_persist_dir=tmp_path
+    )
+    expected = hashlib.sha256(config_path.read_bytes()).hexdigest()
+    assert result.sidecar_payload["config_hash"] == expected
+
+
+def test_sidecar_payload_deepseek_model_version_is_none_when_tier3_skipped(tmp_path):
+    """v0.4.2.1: deepseek_model_version stays None when Tier 3 didn't run."""
+    config_path = tmp_path / "reviewer.toml"
+    config_path.write_bytes(b"[tier3]\nenabled = false\n")
+    result = spec_evaluator.evaluate(
+        _GOOD_MINIMAL, config_path=config_path, bundle_persist_dir=tmp_path
+    )
+    assert result.sidecar_payload["deepseek_model_version"] is None
+
+
+def test_sidecar_payload_includes_deepseek_model_version_when_tier3_runs(tmp_path, monkeypatch):
+    """v0.4.2.1: deepseek_model_version captures tier3.model when judge actually ran."""
+    config_path = tmp_path / "reviewer.toml"
+    config_path.write_bytes(
+        b"[tier3]\nenabled = true\nmodel = \"deepseek-reasoner-v9\"\n"
+    )
+    from bin import llm_judge as _llm_judge
+    monkeypatch.setattr(_llm_judge, "evaluate", lambda spec_text, config: [])
+    result = spec_evaluator.evaluate(
+        _GOOD_MINIMAL, config_path=config_path, bundle_persist_dir=tmp_path
+    )
+    assert result.sidecar_payload["deepseek_model_version"] == "deepseek-reasoner-v9"
+
+
 # ── 26. CRITICAL #2: invalid severity override raises ValueError ───────────────
 
 
