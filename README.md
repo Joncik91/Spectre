@@ -6,7 +6,7 @@
 
 > SDL Vision Engine — a deterministic spec-driven Claude Code plugin. Vision → Spec → Evaluate → Lock → Implement → Verify, with three-tier pre-lock review and per-project resource locking.
 
-[![tests](https://img.shields.io/badge/tests-569%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![tests](https://img.shields.io/badge/tests-614%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## Table of Contents
 
@@ -90,6 +90,17 @@ chmod 600 ~/.spectre/secrets.env
 ```
 
 The key value is never copied into `reviewer.toml` — only the env-var name is stored. Each `/vision` draft with Tier 3 enabled makes ~3 API calls (~10–30s, ~$0.01–0.05). To re-enable after declining, edit `~/.spectre/reviewer.toml` and set `[tier3] enabled = true`.
+
+### Personal rules — adoptive halt overrides (v0.4.1+)
+
+`~/.spectre/personal-rules.toml` accumulates user-adopted rule overrides. Every TIER GATE halt in `/implement` records a fingerprint to `~/.spectre/observations.jsonl`. After a halt where you reply `yes` and the action verifies, the skill prompts: **"Adopt this halt-class as personal-rule-skip? (adopt / once-only / never-ask-again)"**.
+
+- `adopt` writes to `personal-rules.toml`. Future runs of the same `(classifier_label, fingerprint)` skip the halt automatically.
+- Sandbox-paradox brake: after 3 adoptions in one session, the prompt stops firing. The skill prints `BRAKE: edit ~/.spectre/personal-rules.toml to review`. Restarting resets the counter (counter is persisted per-track in `state/scratchpad.json`).
+- **Removal is manual.** Open `personal-rules.toml` and delete the entry. There is no auto-removal prompt.
+- **Project-locked §8.1 rules are immune.** A spec's `mutates:` / `never-touches:` block always overrides personal-rules — adoptions cannot weaken a project's hard contract.
+
+The setup wizard provisions an empty `personal-rules.toml` at first run.
 
 ## Usage
 

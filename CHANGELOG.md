@@ -2,6 +2,35 @@
 
 All notable changes to the SDL Vision Engine plugin (Spectre).
 
+## v0.4.1 — 2026-05-06
+
+**v0.4 line — Observe + Adapt legs (second of three releases).**
+
+### Added
+- `bin/observations.py` — append-only halt log at `~/.spectre/observations.jsonl`. Public API: `record_halt`, `find_recurrences`, `fingerprint_halt`.
+- `bin/personal_rules.py` — TOML-backed rule overrides at `~/.spectre/personal-rules.toml`. Public API: `load_personal_rules`, `is_classifier_halt_overridden`, `append_adoption`, `adoption_count_this_session`. Sandbox-paradox brake caps adoptions at 3 per session.
+- `~/.spectre/personal-rules.toml` — empty placeholder auto-provisioned by setup_wizard.
+
+### Changed
+- `bin/tier.should_halt()` consults `personal_rules.is_classifier_halt_overridden()` before returning True. Personal rules can ONLY downgrade; project-locked §8.1 rules are immune.
+- `skills/implement/SKILL.md` — every TIER GATE halt records a fingerprint to `observations.jsonl`. New §3.5b post-halt-success prompt: after user picks `yes` and verification passes, prompts "Adopt this halt-class as personal-rule-skip? (adopt / once-only / never-ask-again)". Stops firing after 3 adoptions/session.
+- `bin/setup_wizard.py` — extended to provision `~/.spectre/personal-rules.toml` on first run.
+- `bin/spec_evaluator.py:EVALUATOR_VERSION` 0.4.0 → 0.4.1.
+- `.claude-plugin/marketplace.json` plugin version 0.4.0 → 0.4.1.
+
+### Tests
+**614 passing** (569 v0.4.0 baseline + 14 observations + 22 personal_rules + 5 setup_wizard + 4 tier integration). The personal_rules count includes 4 audit-fix tests for the persistent brake counter and the TOML escape hardening.
+
+### Architecture references
+- Design: `docs/superpowers/specs/2026-05-06-spectre-v0.4-cdlc-closure.md`
+- Plan: `docs/superpowers/plans/2026-05-06-v0.4.1-observe-adapt.md`
+
+### Deferred to v0.4.2
+- `bin/cdlc_ledger.py` + `state/cdlc-ledger.json`
+- `~/.spectre/templates/` Distribute leg
+- Adapt's auto-template-patch proposal flow
+- Aggregated retroactive Adapt prompt (≥3× recurrence detection — code is in observations.find_recurrences but the prompt surface ships in v0.4.2)
+
 ## v0.4.0 — 2026-05-06
 
 **v0.4 line — Interrogation-driven /vision (first of three releases).**

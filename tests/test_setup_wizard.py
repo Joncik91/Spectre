@@ -253,3 +253,38 @@ def test_maybe_provision_walker_writes_default_when_missing(tmp_path, monkeypatc
     result = setup_wizard.maybe_provision_walker(target)
     assert result == "created"
     assert target.exists()
+
+
+def test_personal_rules_path_default_returns_dotspectre_personal_rules_toml():
+    p = setup_wizard.personal_rules_path_default()
+    assert p == pathlib.Path.home() / ".spectre" / "personal-rules.toml"
+
+
+def test_write_personal_rules_config_creates_empty_file(tmp_path):
+    target = tmp_path / "personal-rules.toml"
+    setup_wizard.write_personal_rules_config(target)
+    assert target.exists()
+
+
+def test_write_personal_rules_config_sets_mode_0600(tmp_path):
+    target = tmp_path / "personal-rules.toml"
+    setup_wizard.write_personal_rules_config(target)
+    mode = target.stat().st_mode & 0o777
+    assert mode == 0o600
+
+
+def test_maybe_provision_personal_rules_writes_default_when_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    target = tmp_path / ".spectre" / "personal-rules.toml"
+    result = setup_wizard.maybe_provision_personal_rules(target)
+    assert result == "created"
+
+
+def test_maybe_provision_personal_rules_skips_when_file_exists(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    spectre = tmp_path / ".spectre"
+    spectre.mkdir()
+    target = spectre / "personal-rules.toml"
+    target.write_text("# pre-existing\n", encoding="utf-8")
+    result = setup_wizard.maybe_provision_personal_rules(target)
+    assert result == "exists"

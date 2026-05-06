@@ -101,11 +101,32 @@ Classify `current_action` by tier before executing. Run:
 
 ```bash
 python3 - <<'PY'
-import sys
+import sys, pathlib
 sys.path.insert(0, ".")
-from bin import tier
-t, reasons, na = tier.classify("""<current_action>""")
-halt = tier.should_halt(t, na)
+from bin import tier, coverage_gate
+
+current_action = """<current_action verbatim>"""
+t, reasons, na = tier.classify(current_action)
+
+# Read the active spec's §8.1 hard contract to populate spec_locked_paths.
+# Delegates to bin.coverage_gate.parse_81_block — the canonical permissive
+# parser that handles both bare (`- mutates: /etc/`) and backticked-key
+# (`- `mutates:` /etc/`) syntax. Inline regex was too strict (v0.4.1 fix).
+spec_locked_paths = set()
+active_spec_path = pathlib.Path("specs") / "<active spec name>.spec.md"
+if active_spec_path.is_file():
+    text = active_spec_path.read_text(encoding="utf-8")
+    parsed = coverage_gate.parse_81_block(text)
+    spec_locked_paths.update(parsed.get("mutates", []))
+    spec_locked_paths.update(parsed.get("never_touches", []))
+
+halt = tier.should_halt(
+    t,
+    na,
+    action=current_action,
+    reasons=reasons,
+    spec_locked_paths=frozenset(spec_locked_paths),
+)
 print(f"TIER: {t}")
 for r in reasons:
     print(f"  reason: {r}")
@@ -115,7 +136,7 @@ print(f"HALT: {halt}")
 PY
 ```
 
-Substitute the literal action text for `<current_action>`. The classifier is in `bin/tier.py` and is the **single source of truth** for halt-vs-execute. Never substitute your own judgment about whether something is "safe enough" — if the classifier says halt, halt.
+Substitute the literal action text for `<current_action>` and the actual spec filename for `<active spec name>`. The classifier is in `bin/tier.py` and is the **single source of truth** for halt-vs-execute. Never substitute your own judgment about whether something is "safe enough" — if the classifier says halt, halt. The v0.4.1 `should_halt` signature consults `~/.spectre/personal-rules.toml` and respects §8.1 spec-locked paths (rules cannot override halts whose reason references a locked path).
 
 Interpret the output:
 
@@ -134,9 +155,79 @@ Reasoning: <one-line first-principles "why this halts — what state changes irr
 Proceed? (yes / halt / skip)
 ```
 
-- `yes` → continue to Step 3.6 then 3.7 then Step 4 (execute).
+**Record observation BEFORE accepting input:** every TIER GATE halt — regardless of the user's answer — produces a fingerprint and an observation row. Run:
+
+```bash
+python3 - <<'PY'
+import sys, pathlib
+sys.path.insert(0, ".")
+from bin import observations
+
+label = "<the first reason from the classifier output>"
+action = """<current_action>"""
+fp = observations.fingerprint_halt(action=action, classifier_label=label)
+observations.record_halt(
+    kind="tier-gate",
+    fingerprint=fp,
+    project_path=str(pathlib.Path.cwd()),
+    spec_slug="<active spec slug from .active>",
+    action=action,
+    classifier_label=label,
+)
+print(f"OBSERVED: {fp[:12]}...")
+PY
+```
+
+The fingerprint is what personal-rules.toml keys against. Future runs with the same fingerprint may skip the halt automatically (per v0.4.1 personal-rules consultation in `tier.should_halt`).
+
+- `yes` → continue to Step 3.6 then 3.7 then Step 4 (execute). After §6 Path A succeeds, run §Step 3.5b (post-halt-success prompt).
 - `halt` → stop. No scratchpad change.
 - `skip` → advance `step` by 1 (no execution, no verification). Use only when the step was already done out-of-band; rare.
+
+### Step 3.5b — Post-halt-success prompt (v0.4.1+)
+
+If §3.5 fired a TIER GATE halt AND the user replied `yes`, schedule a **deferred prompt** to run AFTER §6 Path A (verification passes). If §3.5 didn't halt, or the user said `halt` / `skip`, this step does nothing.
+
+After §6 Path A completes successfully — i.e. the action ran AND verification confirmed it worked — emit:
+
+```
+The TIER GATE halted you on this action class. Adopt as personal-rule-skip going forward?
+   adopt          — write to ~/.spectre/personal-rules.toml; future runs of this fingerprint will not halt.
+   once-only      — no rule written. Same trigger halts again next time.
+   never-ask-again — write a "user-declined" placeholder; this fingerprint never re-prompts (but still halts at TIER GATE).
+```
+
+If `adopt`: run
+
+```bash
+python3 - <<'PY'
+import sys
+sys.path.insert(0, ".")
+from bin import personal_rules
+
+# Persistent counter (state/scratchpad.json). The in-memory counter would
+# reset to 0 every fork — heredoc fork bug, v0.4.1 fix. append_adoption
+# auto-bumps the persistent value via its default scratchpad path.
+if personal_rules.adoption_count_this_session_persistent() >= personal_rules.DEFAULT_BRAKE_THRESHOLD:
+    print("BRAKE: 3 adoptions this session. Edit ~/.spectre/personal-rules.toml to review or remove. Skipping prompt.")
+    sys.exit(0)
+
+personal_rules.append_adoption(
+    classifier_label="<label>",
+    fingerprint="<fp>",
+    reason="<one-line user reason>",
+)
+print(f"ADOPTED. ({personal_rules.adoption_count_this_session_persistent()}/3 this session)")
+PY
+```
+
+If `once-only`: do nothing — the halt fires again on the next run.
+
+If `never-ask-again`: in v0.4.1, treat as `once-only` (the placeholder schema lands in v0.4.2). Print "Note: never-ask-again is v0.4.2; treating as once-only."
+
+**Sandbox-paradox brake.** If `personal_rules.adoption_count_this_session_persistent()` already ≥ `personal_rules.DEFAULT_BRAKE_THRESHOLD` (default 3), the skill MUST skip the prompt entirely and print: "BRAKE: 3 adoptions this session. Edit ~/.spectre/personal-rules.toml to review or remove." The brake is session-scoped via `state/scratchpad.json`'s `tracks.<track>.session_adoption_count` field — restarting Claude Code (or starting a new spec/track) resets it on the next `/vision`. The persistent variant is mandatory because each `python3 - <<'PY'` heredoc forks a fresh process, wiping any in-memory counter. Read the threshold dynamically from `personal_rules.DEFAULT_BRAKE_THRESHOLD` rather than hardcoding 3, so v0.4.2 schema bumps stay backward-compatible.
+
+**Why the brake exists.** Per `research/developing-a-safe.md` (vault), HITL approval gates create permission-fatigue: users rage-bypass safety once prompts feel persistent. The 3-adoption cap forces the user to re-read their personal-rules file rather than reflexively saying yes to everything.
 
 ### Step 3.6 — Resource lock acquire
 

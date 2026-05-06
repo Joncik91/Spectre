@@ -204,8 +204,55 @@ def classify(command: str) -> tuple[str, list[str], str | None]:
     return (tier_value, reasons, na)
 
 
-def should_halt(tier_value: str, never_autonomous_match: str | None) -> bool:
-    """Return True if the runner should halt and require user confirmation."""
+def fingerprint_for_action(*, action: str, classifier_label: str) -> str:
+    """Same SHA-256 fingerprint format that observations.fingerprint_halt produces.
+    Lives here so /implement skill prose can compute the fingerprint without
+    importing observations directly (decouples the call site)."""
+    from bin import observations as _observations
+    return _observations.fingerprint_halt(action=action, classifier_label=classifier_label)
+
+
+def should_halt(
+    tier_value: str,
+    never_autonomous_match: str | None,
+    *,
+    action: str | None = None,
+    reasons: list[str] | None = None,
+    spec_locked_paths: frozenset[str] = frozenset(),
+) -> bool:
+    """Return True if the runner should halt and require user confirmation.
+
+    v0.4.1: consult personal-rules.toml. A personal-rules entry can downgrade
+    a halt to a non-halt UNLESS:
+      - never_autonomous_match is non-None (those are non-overridable).
+      - The action's classifier reasons reference a path in spec_locked_paths
+        (the active spec's §8.1 declaration). Spec-locked rules are immune.
+
+    Backward-compat: callers passing only (tier_value, never_autonomous_match)
+    get the v0.4.0 behavior — no personal-rules consultation.
+    """
     if never_autonomous_match is not None:
         return True
-    return tier_value in ("host", "network")
+
+    base_should_halt = tier_value in ("host", "network")
+
+    # v0.4.0-compat: no action means no personal-rules consultation.
+    if not base_should_halt or action is None or reasons is None:
+        return base_should_halt
+
+    # §8.1 immunity: if any reason references a spec-locked path, personal
+    # rules cannot override.
+    for reason in reasons:
+        for locked_path in spec_locked_paths:
+            if locked_path in reason:
+                return True
+
+    # Consult personal rules. Use the first reason as the canonical label.
+    if not reasons:
+        return base_should_halt
+    label = reasons[0]
+    from bin import personal_rules as _personal
+    fp = fingerprint_for_action(action=action, classifier_label=label)
+    if _personal.is_classifier_halt_overridden(classifier_label=label, fingerprint=fp):
+        return False
+    return base_should_halt

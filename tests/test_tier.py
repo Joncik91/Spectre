@@ -1,4 +1,5 @@
 """Tier classifier tests. Each test names one classification axis."""
+import pathlib
 import pytest
 from bin import tier
 
@@ -302,3 +303,75 @@ def test_curl_with_variable_url_remains_network():
 def test_wget_loopback_is_silent():
     t, _, _ = tier.classify("wget http://127.0.0.1/foo -O /tmp/w")
     assert t == "silent"
+
+
+def test_should_halt_consults_personal_rules_when_no_spec_lock(tmp_path, monkeypatch):
+    """Personal rule downgrades a host-tier halt when the active spec's
+    §8.1 doesn't touch the same paths."""
+    from bin import personal_rules
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    personal_rules.reset_session_counter() if hasattr(personal_rules, "reset_session_counter") else None
+
+    fp = tier.fingerprint_for_action(
+        action="touch /etc/foo.conf",
+        classifier_label="path '/etc/foo.conf' → host",
+    )
+    personal_rules.append_adoption(
+        classifier_label="path '/etc/foo.conf' → host",
+        fingerprint=fp,
+        reason="I trust this",
+    )
+
+    result = tier.should_halt(
+        tier_value="host",
+        never_autonomous_match=None,
+        action="touch /etc/foo.conf",
+        reasons=["path '/etc/foo.conf' → host"],
+        spec_locked_paths=frozenset(),  # empty — no §8.1 immunity
+    )
+    assert result is False
+
+
+def test_should_halt_personal_rule_cannot_override_when_path_in_spec_lock(tmp_path, monkeypatch):
+    """Personal rule for /etc/foo.conf cannot override a halt when the
+    active spec's §8.1 has /etc/foo.conf in mutates/never-touches."""
+    from bin import personal_rules
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    personal_rules.reset_session_counter() if hasattr(personal_rules, "reset_session_counter") else None
+
+    fp = tier.fingerprint_for_action(
+        action="touch /etc/foo.conf",
+        classifier_label="path '/etc/foo.conf' → host",
+    )
+    personal_rules.append_adoption(
+        classifier_label="path '/etc/foo.conf' → host",
+        fingerprint=fp,
+        reason="I trust this",
+    )
+
+    result = tier.should_halt(
+        tier_value="host",
+        never_autonomous_match=None,
+        action="touch /etc/foo.conf",
+        reasons=["path '/etc/foo.conf' → host"],
+        spec_locked_paths=frozenset({"/etc/foo.conf"}),  # spec mandates halt
+    )
+    assert result is True
+
+
+def test_should_halt_no_personal_rule_returns_default_for_host(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    result = tier.should_halt(
+        tier_value="host",
+        never_autonomous_match=None,
+        action="touch /etc/foo.conf",
+        reasons=["path '/etc/foo.conf' → host"],
+        spec_locked_paths=frozenset(),
+    )
+    assert result is True
+
+
+def test_should_halt_legacy_call_signature_still_works():
+    """v0.4.0 callers passing only (tier_value, never_autonomous_match) must keep working."""
+    result = tier.should_halt("host", None)
+    assert result is True
