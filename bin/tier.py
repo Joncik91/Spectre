@@ -22,6 +22,9 @@ _DEV_NULL = "/dev/null"
 _NETWORK_HEADS = ("curl", "wget", "ssh", "scp", "rsync", "gh", "nsupdate", "resolvectl")
 _GIT_NETWORK_VERBS = ("push", "pull", "fetch", "clone")
 
+_LOOPBACK_RE = re.compile(r"(?:\b127\.0\.0\.1\b|\blocalhost\b|\[::1\]|\b0\.0\.0\.0\b)")
+_RFC1918_RE = re.compile(r"\b(?:10\.\d|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)")
+
 _NEVER_AUTONOMOUS: list[tuple[re.Pattern, str]] = [
     # Privilege escalation — always halt regardless of what follows.
     (re.compile(r"\bsudo\b"), "permission-change: sudo"),
@@ -53,6 +56,11 @@ _NEVER_AUTONOMOUS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\bgh\s+release\s+create\b"), "external-state-network: gh release create"),
     (re.compile(r"\bwebhook\b"), "external-state-network: webhook"),
     (re.compile(r"\bcloudflare\b"), "external-state-network: cloudflare"),
+    (re.compile(r"\bsystemctl\s+(?:--\S+\s+)*(start|stop|restart|reload|enable|disable|mask|unmask)\b"), "service-state-mutation: systemctl"),
+    (re.compile(r"\bloginctl\s+(?:enable|disable)-linger\b"), "session-policy-mutation: loginctl linger"),
+    (re.compile(r"\bhostnamectl\s+set-\w"), "host-state-mutation: hostnamectl"),
+    (re.compile(r"\btimedatectl\s+set-\w"), "host-state-mutation: timedatectl"),
+    (re.compile(r"\bsysctl\s+(-w|--write)\b"), "kernel-state-mutation: sysctl write"),
 ]
 
 # Labels for rules whose regexes should NOT match inside quoted strings.
@@ -71,6 +79,11 @@ _VERB_SENSITIVE_LABELS = {
     "dependency-add: npm install",
     "dependency-add: apt-get install",
     "dependency-add: cargo add",
+    "service-state-mutation: systemctl",
+    "session-policy-mutation: loginctl linger",
+    "host-state-mutation: hostnamectl",
+    "host-state-mutation: timedatectl",
+    "kernel-state-mutation: sysctl write",
 }
 
 _QUOTED_STRING_RE = re.compile(r'''(?:"[^"]*"|'[^']*')''')
@@ -133,11 +146,16 @@ def _is_network(command: str) -> bool:
     if idx >= len(head):
         return False
     first = head[idx]
-    if first in _NETWORK_HEADS:
-        return True
-    if first == "git" and idx + 1 < len(head) and head[idx + 1] in _GIT_NETWORK_VERBS:
-        return True
-    return False
+    is_net_head = first in _NETWORK_HEADS or (
+        first == "git" and idx + 1 < len(head) and head[idx + 1] in _GIT_NETWORK_VERBS
+    )
+    if not is_net_head:
+        return False
+    # Loopback / RFC1918 destinations stay local — downgrade so file-tier rules apply.
+    # Variable URLs ($VAR / ${VAR}) keep network classification: false-positive is the safe default.
+    if _LOOPBACK_RE.search(command) or _RFC1918_RE.search(command):
+        return False
+    return True
 
 
 def _check_never_autonomous(command: str) -> str | None:
