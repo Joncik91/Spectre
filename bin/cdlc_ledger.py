@@ -31,3 +31,59 @@ KNOWN_TRANSITION_KINDS: tuple[str, ...] = (
 def cdlc_ledger_path_default(project_path: pathlib.Path) -> pathlib.Path:
     """Return the canonical ledger path for a project."""
     return pathlib.Path(project_path) / "state" / "cdlc-ledger.json"
+
+
+def append_transition(
+    *,
+    kind: str,
+    payload: dict,
+    project_path: pathlib.Path,
+) -> None:
+    """Append a transition to the per-project ledger. Atomic write.
+
+    Reads existing ledger (or initializes empty), appends new transition,
+    writes via mkstemp + os.replace.
+    """
+    if kind not in KNOWN_TRANSITION_KINDS:
+        raise ValueError(f"unknown transition kind: {kind!r}")
+
+    target = cdlc_ledger_path_default(project_path)
+    if target.is_file():
+        try:
+            data = json.loads(target.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            data = {"version": LEDGER_VERSION, "transitions": []}
+    else:
+        data = {"version": LEDGER_VERSION, "transitions": []}
+
+    data["transitions"].append({
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "kind": kind,
+        "payload": payload,
+    })
+    data["version"] = LEDGER_VERSION
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(
+        dir=str(target.parent), prefix=target.name, suffix=".tmp",
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, target)
+    except Exception:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def read_ledger(*, project_path: pathlib.Path) -> list[dict]:
+    """Return the list of transitions in append order. Empty list if missing."""
+    target = cdlc_ledger_path_default(project_path)
+    if not target.is_file():
+        return []
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    return list(data.get("transitions", []))
