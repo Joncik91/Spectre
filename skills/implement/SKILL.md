@@ -388,11 +388,12 @@ After verification passes but before the step advances, run the State Auditor fo
 python3 - <<'PY'
 import json, sys
 sys.path.insert(0, ".")
-from bin import auditor
+from bin import auditor, _scratchpad
 
-with open("state/scratchpad.json") as f:
-    sp = json.load(f)
-paths = sp.get("paths_touched", [])
+sp_path = "state/scratchpad.json"
+sp = _scratchpad.load(sp_path)
+# get_paths_touched handles both v1 (top-level) and v2 (tracks.<track>.paths_touched)
+paths = _scratchpad.get_paths_touched(sp, track="<current_track>")
 # If the active spec's current step has a `properties:` YAML block, populate
 # `properties` with that list of dicts before invoking. Otherwise leave None.
 properties = None
@@ -402,14 +403,17 @@ out = {
     "passed": all(r.passed for r in results),
     "failures": [{"kind": r.kind, "message": r.message} for r in results if not r.passed],
 }
-sp["last_audit_kinds"] = out["kinds"]
-sp["last_audit_passed"] = out["passed"]
-sp["last_audit_failures"] = out["failures"]
-with open("state/scratchpad.json", "w") as f:
-    json.dump(sp, f, indent=2)
+track = sp.get("tracks", {}).get("<current_track>", {})
+track["last_audit_kinds"] = out["kinds"]
+track["last_audit_passed"] = out["passed"]
+track["last_audit_failures"] = out["failures"]
+if "tracks" not in sp:
+    sp["tracks"] = {}
+sp["tracks"]["<current_track>"] = track
+_scratchpad.atomic_write(sp_path, sp)
 print(f"AUDIT: {len(results)} checks, passed={out['passed']}")
-for f in out["failures"]:
-    print(f"  FAIL: {f['kind']} — {f['message']}")
+for failure in out["failures"]:
+    print(f"  FAIL: {failure['kind']} — {failure['message']}")
 PY
 ```
 
