@@ -70,3 +70,75 @@ def test_detect_patch_candidates_skips_already_adopted(tmp_path, monkeypatch):
     result = template_patcher.detect_patch_candidates()
     fps = {c["fingerprint"] for c in result}
     assert fp not in fps
+
+
+def test_propose_patch_writes_to_proposed_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    candidate = {
+        "fingerprint": "d" * 64,
+        "classifier_label": "permission-change: chmod",
+        "kind": "tier-gate",
+        "count": 4,
+        "action": "chmod 755 /tmp/foo",
+        "spec_slug": "test-spec",
+    }
+    target = template_patcher.propose_patch(candidate)
+    expected_dir = tmp_path / ".spectre" / "template-patches" / "proposed"
+    assert target.parent == expected_dir
+
+
+def test_propose_patch_filename_is_fingerprint_short_slug(tmp_path, monkeypatch):
+    """The patch filename includes a short fingerprint hash for uniqueness."""
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    candidate = {
+        "fingerprint": "abcd" * 16,
+        "classifier_label": "x",
+        "kind": "tier-gate",
+        "count": 3,
+        "action": "y",
+        "spec_slug": "z",
+    }
+    target = template_patcher.propose_patch(candidate)
+    assert "abcd" in target.name
+
+
+def test_propose_patch_writes_markdown_with_candidate_metadata(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    candidate = {
+        "fingerprint": "e" * 64,
+        "classifier_label": "permission-change: chmod",
+        "kind": "tier-gate",
+        "count": 5,
+        "action": "chmod 755 /tmp/x",
+        "spec_slug": "my-spec",
+    }
+    target = template_patcher.propose_patch(candidate)
+    body = target.read_text(encoding="utf-8")
+    assert "permission-change: chmod" in body
+
+
+def test_propose_patch_sets_mode_0600(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    candidate = {
+        "fingerprint": "f"*64, "classifier_label": "x",
+        "kind": "tier-gate", "count": 3, "action": "y", "spec_slug": "z",
+    }
+    target = template_patcher.propose_patch(candidate)
+    mode = target.stat().st_mode & 0o777
+    assert mode == 0o600
+
+
+def test_list_proposed_patches_returns_empty_when_dir_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    result = template_patcher.list_proposed_patches()
+    assert result == []
+
+
+def test_list_proposed_patches_returns_files_in_proposed_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    proposed_dir = tmp_path / ".spectre" / "template-patches" / "proposed"
+    proposed_dir.mkdir(parents=True)
+    (proposed_dir / "patch-a.md").write_text("# a\n", encoding="utf-8")
+    (proposed_dir / "patch-b.md").write_text("# b\n", encoding="utf-8")
+    result = template_patcher.list_proposed_patches()
+    assert len(result) == 2
