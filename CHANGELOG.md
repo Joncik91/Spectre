@@ -2,6 +2,29 @@
 
 All notable changes to the SDL Vision Engine plugin (Spectre).
 
+## v0.4.2.1 — 2026-05-06
+
+**Patch release — two blocking bugs surfaced by the v0.4 end-to-end live test.**
+
+### Fixed
+- **#7** — `bin/setup_wizard.maybe_provision()` no longer prompts when no `DEEPSEEK_API_KEY` is found. Adding the API key is a prerequisite to using Spectre, not an in-flow decision; the wizard now silently writes the `enabled=false` placeholder, prints one stderr breadcrumb naming the resolved secrets path and the env-var name, and returns `"setup-skipped"`. Eliminates `EOFError` in non-interactive contexts (subagents, scripts, paste-stdin, observer flows). The `_SETUP_BANNER` constant and the `(retry / skip)` loop are removed.
+- **#8 finding 2** — `bin/spec_evaluator.evaluate()` now populates `policy_hash`, `config_hash`, and `deepseek_model_version` in `result.sidecar_payload`, matching the schema `skills/vision/SKILL.md` §6.7.4 documents. Previously `eval_metadata.write_sidecar()`'s required `policy_hash` kwarg raised `KeyError` on every well-formed lock; today's workaround (manual `compute_policy_hash` from outside the evaluator) is no longer needed. `policy_hash` is always computed; `config_hash` is the SHA-256 of the config TOML bytes when `config_path` exists, `None` otherwise; `deepseek_model_version` captures `tier3.model` only when Tier 3 actually reached the API.
+
+### Tests
+**670 passing** (664 v0.4.2 baseline + 3 wizard silent-skip + 5 evaluator sidecar parity − 2 retry/skip tests obsoleted by the new flow). Wizard non-interactive smoke test added; full `/vision` lock now succeeds end-to-end without manual intervention.
+
+### Changed
+- `bin/spec_evaluator.py:EVALUATOR_VERSION` 0.4.2 → 0.4.2.1.
+- `.claude-plugin/marketplace.json` plugin version 0.4.2 → 0.4.2.1.
+
+### Out of scope (deferred to v0.5)
+- Issue #8 finding 1 — `~/.spectre/**` never-touches collision with spec-author-declared paths. Needs a design call on spec-subject vs meta-tool path boundary.
+- Issue #8 finding 3 — scratchpad v2 schema clash with auto-tracker hook. Needs hook audit.
+- Issue #8 finding 4 — ADR over-generation curation. UX/curation discussion.
+
+### References
+- Issues: https://github.com/Joncik91/Spectre/issues/7 and https://github.com/Joncik91/Spectre/issues/8
+
 ## v0.4.2 — 2026-05-06
 
 **v0.4 line — CDLC Ledger + Distribute + Adapt (third and final v0.4 release).**
