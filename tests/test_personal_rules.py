@@ -175,3 +175,33 @@ def test_append_adoption_handles_quote_in_reason(tmp_path, monkeypatch):
         fingerprint=fp,
     )
     assert result is True
+
+
+def test_adoption_count_this_session_starts_at_zero(monkeypatch, tmp_path):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    personal_rules.reset_session_counter()
+    assert personal_rules.adoption_count_this_session() == 0
+
+
+def test_adoption_count_this_session_increments_on_append_adoption(monkeypatch, tmp_path):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    personal_rules.reset_session_counter()
+    personal_rules.append_adoption(
+        classifier_label="x", fingerprint="a"*64, reason="r1"
+    )
+    assert personal_rules.adoption_count_this_session() == 1
+
+
+def test_adoption_count_this_session_counts_multiple_adoptions(monkeypatch, tmp_path):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    personal_rules.reset_session_counter()
+    personal_rules.append_adoption(classifier_label="x", fingerprint="a"*64, reason="r")
+    personal_rules.append_adoption(classifier_label="y", fingerprint="b"*64, reason="r")
+    personal_rules.append_adoption(classifier_label="z", fingerprint="c"*64, reason="r")
+    assert personal_rules.adoption_count_this_session() == 3
+
+
+def test_brake_threshold_enforces_at_3_by_default(monkeypatch, tmp_path):
+    """The skill checks adoption_count_this_session() >= DEFAULT_BRAKE_THRESHOLD
+    to know when to stop prompting. The constant exists as a public surface."""
+    assert personal_rules.DEFAULT_BRAKE_THRESHOLD == 3

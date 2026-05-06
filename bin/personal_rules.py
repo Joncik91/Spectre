@@ -157,3 +157,16 @@ def append_adoption(*, classifier_label: str, fingerprint: str, reason: str) -> 
 
     _atomic_write_toml(personal_rules_path_default(), body)
     _SESSION_ADOPTION_COUNT += 1
+
+
+def adoption_count_this_session() -> int:
+    """Number of personal-rules adoptions in this Python process so far.
+    The /implement skill consults this against DEFAULT_BRAKE_THRESHOLD to
+    decide whether to keep firing the post-halt-success prompt."""
+    return _SESSION_ADOPTION_COUNT
+
+
+def reset_session_counter() -> None:
+    """Test-only helper. Production code never calls this."""
+    global _SESSION_ADOPTION_COUNT
+    _SESSION_ADOPTION_COUNT = 0
