@@ -35,6 +35,25 @@ python3 -c "import json; d=json.load(open('state/local-symbols.json')); print(js
 
 When the walker surfaces concerns in Step 4, scan the symbol map for any function/class/module conceptually related to the user's intent (e.g. intent says "fetch BTC price" → search for `fetch`, `price`, `http`, `bitcoin`, `btc`, `requests`). If you find a candidate, surface it via a `branch-resolution` concern: "We will NOT reinvent `<symbol_name>` at `<file>:<line>` — reuse it as the basis for step N." The "never reinvent the wheel" rule is enforced by construction here. Skipping Step 0 violates the rule silently.
 
+**Template-import surfacing (v0.4.2+).** Also list any reusable spec/skill templates the user has previously exported:
+
+```bash
+python3 - <<'PY'
+import sys, json
+sys.path.insert(0, ".")
+from bin import templates
+ts = templates.list_templates()
+if ts:
+    print(f"TEMPLATES_AVAILABLE: {len(ts)}")
+    for t in ts[:10]:
+        print(f"  {t['kind']}: {t['name']}")
+else:
+    print("TEMPLATES_AVAILABLE: 0")
+PY
+```
+
+If templates exist, surface them as candidate starting points during Step 4's interrogation walk: "Your library has `<template_name>` (a `<kind>`). Import as a base for this spec? (import / no)". On `import`, call `templates.import_template(source_name=<name>, target_name=<slug>)`; the imported draft becomes the seed for the walk's draft materialization in Step 5.
+
 ### Step 1 — Receive intent
 
 The user has typed `/vision <free-form text>`. Treat the text as **intent**, not as a spec. Anchor cwd via `pwd` to capture `$PROJECT`. If `$PROJECT` looks like a plugin cache (`/root/.claude/plugins/...`), HALT.
@@ -394,6 +413,25 @@ Now that the user confirmed and ADRs are written:
    ```bash
    python3 -c "from bin import spec_evaluator; from pathlib import Path; spec_evaluator.clear_bundle(Path('state/.eval-bundle.json'))"
    ```
+
+**Append CDLC ledger transition (v0.4.2+).** Record a `generate` transition (lock event):
+
+```bash
+python3 - <<'PY'
+import sys, pathlib
+sys.path.insert(0, ".")
+from bin import cdlc_ledger
+cdlc_ledger.append_transition(
+    kind="generate",
+    payload={
+        "spec_slug": "<slug>",
+        "round_count": "<walker round_count from state/.walk.json>",
+        "tiers_run": "<tiers_run from .eval.json sidecar>",
+    },
+    project_path=pathlib.Path.cwd(),
+)
+PY
+```
 
 ### Step 7 — Transition signal
 
