@@ -71,3 +71,36 @@ def record_halt(
     line = json.dumps(record, ensure_ascii=False) + "\n"
     with open(target, "a", encoding="utf-8") as f:
         f.write(line)
+
+
+def find_recurrences(*, kind: str | None = None, threshold: int = 3) -> list[dict]:
+    """Return one record per fingerprint that recurs ≥ threshold times.
+
+    Optionally filter by kind. The returned records are flattened: one row
+    per recurring fingerprint with the most-recent observation's fields
+    plus a `count` key.
+    """
+    target = observations_path_default()
+    if not target.exists():
+        return []
+
+    counts: dict[str, list[dict]] = {}
+    with open(target, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if kind is not None and rec.get("kind") != kind:
+                continue
+            counts.setdefault(rec["fingerprint"], []).append(rec)
+
+    out: list[dict] = []
+    for fp, records in counts.items():
+        if len(records) >= threshold:
+            most_recent = records[-1]
+            out.append({**most_recent, "count": len(records)})
+    return out

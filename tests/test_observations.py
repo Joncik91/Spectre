@@ -88,3 +88,50 @@ def test_record_halt_timestamp_is_iso_8601_utc(tmp_path, monkeypatch):
     target = tmp_path / ".spectre" / "observations.jsonl"
     record = json.loads(target.read_text(encoding="utf-8").strip())
     assert record["ts"].endswith("+00:00") or record["ts"].endswith("Z")
+
+
+def test_find_recurrences_returns_empty_when_no_jsonl(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    result = observations.find_recurrences(threshold=3)
+    assert result == []
+
+
+def test_find_recurrences_filters_below_threshold(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    for _ in range(2):
+        observations.record_halt(
+            kind="tier-gate", fingerprint="abc" * 21 + "a",
+            project_path="/p", spec_slug="s", action="x",
+        )
+    result = observations.find_recurrences(threshold=3)
+    assert result == []
+
+
+def test_find_recurrences_returns_fingerprints_at_or_above_threshold(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    target_fp = "deadbeef" * 8
+    for _ in range(3):
+        observations.record_halt(
+            kind="tier-gate", fingerprint=target_fp,
+            project_path="/p", spec_slug="s", action="x",
+        )
+    result = observations.find_recurrences(threshold=3)
+    fps = {r["fingerprint"] for r in result}
+    assert target_fp in fps
+
+
+def test_find_recurrences_filters_by_kind_when_specified(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    for _ in range(3):
+        observations.record_halt(
+            kind="tier-gate", fingerprint="a"*64,
+            project_path="/p", spec_slug="s", action="x",
+        )
+    for _ in range(3):
+        observations.record_halt(
+            kind="other-kind", fingerprint="b"*64,
+            project_path="/p", spec_slug="s", action="x",
+        )
+    result = observations.find_recurrences(kind="tier-gate", threshold=3)
+    kinds = {r["kind"] for r in result}
+    assert kinds == {"tier-gate"}
