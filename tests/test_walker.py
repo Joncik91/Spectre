@@ -258,3 +258,92 @@ def test_record_answer_raises_for_unknown_concern_id():
     )
     with pytest.raises(KeyError, match="not in pending"):
         walker.record_answer(state, concern_id="nonexistent", answer="x")
+
+
+def test_revise_answer_updates_stored_answer():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    state = walker.record_answer(state, concern_id="seed-1", answer="old")
+    new_state, _ = walker.revise_answer(state, concern_id="seed-1", new_answer="new")
+    assert new_state.answered["seed-1"] == "new"
+
+
+def test_revise_answer_returns_empty_invalidated_set_when_no_dependents():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    state = walker.record_answer(state, concern_id="seed-1", answer="old")
+    _, invalidated = walker.revise_answer(state, concern_id="seed-1", new_answer="new")
+    assert invalidated == []
+
+
+def test_revise_answer_marks_direct_dependent_stale():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    state = walker.record_answer(state, concern_id="seed-1", answer="old")
+    dep = walker.Concern(
+        id="c2",
+        kind="edge-case",
+        receivers=["implement"],
+        depends_on=["seed-1"],
+        summary="depends on seed",
+    )
+    state.asked.append(dep)
+    state.answered["c2"] = "downstream answer"
+    new_state, invalidated = walker.revise_answer(
+        state, concern_id="seed-1", new_answer="new"
+    )
+    assert "c2" in invalidated
+
+
+def test_revise_answer_marks_transitive_dependents_stale():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    state = walker.record_answer(state, concern_id="seed-1", answer="old")
+    state.asked.append(walker.Concern(
+        id="c2", kind="edge-case", receivers=["implement"],
+        depends_on=["seed-1"], summary="depends on seed",
+    ))
+    state.answered["c2"] = "x"
+    state.asked.append(walker.Concern(
+        id="c3", kind="edge-case", receivers=["implement"],
+        depends_on=["c2"], summary="depends on c2",
+    ))
+    state.answered["c3"] = "y"
+    _, invalidated = walker.revise_answer(
+        state, concern_id="seed-1", new_answer="new"
+    )
+    assert set(invalidated) == {"c2", "c3"}
+
+
+def test_revise_answer_adds_invalidated_ids_to_stale_set():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    state = walker.record_answer(state, concern_id="seed-1", answer="old")
+    state.asked.append(walker.Concern(
+        id="c2", kind="edge-case", receivers=["implement"],
+        depends_on=["seed-1"], summary="x",
+    ))
+    state.answered["c2"] = "x"
+    new_state, _ = walker.revise_answer(
+        state, concern_id="seed-1", new_answer="new"
+    )
+    assert "c2" in new_state.stale
+
+
+def test_revise_answer_raises_for_unanswered_concern():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    with pytest.raises(KeyError, match="not in answered"):
+        walker.revise_answer(state, concern_id="seed-1", new_answer="x")

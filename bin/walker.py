@@ -111,3 +111,45 @@ def record_answer(state: WalkState, *, concern_id: str, answer: str) -> WalkStat
             state.round_count += 1
             return state
     raise KeyError(f"concern_id {concern_id!r} not in pending")
+
+
+def revise_answer(
+    state: WalkState, *, concern_id: str, new_answer: str
+) -> tuple[WalkState, list[str]]:
+    """Update the answer to a previously-asked concern. Compute the
+    transitive closure of concerns that depend on it (directly OR via
+    intermediate dependents) and mark them stale.
+
+    Returns (state, invalidated_ids) — the skill renders the invalidated
+    set as a diff to the author and asks: re-walk these or accept-stale.
+
+    Raises KeyError if concern_id was never answered.
+    """
+    if concern_id not in state.answered:
+        raise KeyError(f"concern_id {concern_id!r} not in answered")
+
+    state.answered[concern_id] = new_answer
+
+    # Build a forward-dependency map: parent_id -> [child_ids]
+    children: dict[str, list[str]] = {}
+    for c in state.asked:
+        for parent in c.depends_on:
+            children.setdefault(parent, []).append(c.id)
+    for c in state.pending:
+        for parent in c.depends_on:
+            children.setdefault(parent, []).append(c.id)
+
+    # BFS from the revised concern.
+    invalidated: list[str] = []
+    seen: set[str] = set()
+    queue: list[str] = list(children.get(concern_id, []))
+    while queue:
+        nxt = queue.pop(0)
+        if nxt in seen:
+            continue
+        seen.add(nxt)
+        invalidated.append(nxt)
+        state.stale.add(nxt)
+        queue.extend(children.get(nxt, []))
+
+    return state, invalidated
