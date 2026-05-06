@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import sys
 import tempfile
 from typing import Callable
 
@@ -135,19 +136,6 @@ def write_config(
         raise
 
 
-_SETUP_BANNER = (
-    "Spectre wants to enable Tier 3 adversarial review (~$0.01/spec).\n"
-    "It needs a DeepSeek API key. Two ways to provide one:\n"
-    "  (a) export {env_name}=sk-... in your shell, OR\n"
-    "  (b) drop it in {secrets_path} (mode 0600):\n"
-    "        mkdir -p {secrets_dir}\n"
-    "        echo '{env_name}=sk-...' > {secrets_path}\n"
-    "        chmod 600 {secrets_path}\n"
-    "Get a key: https://platform.deepseek.com/api_keys\n"
-    "(retry / skip): "
-)
-
-
 def maybe_provision(
     target: pathlib.Path,
     *,
@@ -161,45 +149,42 @@ def maybe_provision(
       - "exists"        — config already present, no-op.
       - "enabled"       — key found, user opted in.
       - "declined"      — key found, user opted out.
-      - "setup-skipped" — no key, user chose to skip Tier 3 setup.
+      - "setup-skipped" — no key found; placeholder written silently.
 
-    The "no-key" silent path from v0.3.1 is gone: when no key is detected, the
-    wizard prints a setup banner with both the env-var and ~/.spectre/secrets.env
-    routes, then loops on (retry / skip). retry re-probes; skip writes
-    enabled=false placeholder so subsequent runs don't re-prompt without
-    user re-engagement.
+    Adding the API key is a prerequisite to using Spectre, not a step inside
+    /vision. When no key is detected, this writes the enabled=false placeholder,
+    prints a single stderr breadcrumb directing the user to ~/.spectre/secrets.env,
+    and returns "setup-skipped" without prompting. This keeps the wizard safe
+    for non-interactive contexts (subagents, scripts, paste-stdin) where input()
+    would raise EOFError. When the user later drops their key into the secrets
+    file and re-runs /vision, the key-detected branch fires the yes/no prompt.
     """
     if target.exists():
         return "exists"
 
-    while True:
-        detection = detect_api_key(env_var_name=api_key_env, secrets_file_path=secrets_file_path)
-        if detection is not None:
-            source, location = detection
-            msg = (
-                f"Tier 3 adversarial review available. {api_key_env} detected in {source} ({location}).\n"
-                f"Enable now? Cost ~$0.01 per spec. (yes/no): "
-            )
-            answer = prompt_fn(msg).strip().lower()
-            if answer in ("y", "yes"):
-                write_config(target, enabled=True, api_key_env=api_key_env)
-                return "enabled"
-            write_config(target, enabled=False, api_key_env=api_key_env)
-            return "declined"
-
-        # No key. Show setup banner and offer retry/skip.
-        secrets_path = _resolve_secrets_file_path(secrets_file_path)
-        banner = _SETUP_BANNER.format(
-            env_name=api_key_env,
-            secrets_path=secrets_path,
-            secrets_dir=secrets_path.parent,
+    detection = detect_api_key(env_var_name=api_key_env, secrets_file_path=secrets_file_path)
+    if detection is not None:
+        source, location = detection
+        msg = (
+            f"Tier 3 adversarial review available. {api_key_env} detected in {source} ({location}).\n"
+            f"Enable now? Cost ~$0.01 per spec. (yes/no): "
         )
-        answer = prompt_fn(banner).strip().lower()
-        if answer == "retry":
-            continue
-        # Default and explicit "skip" both write the placeholder.
+        answer = prompt_fn(msg).strip().lower()
+        if answer in ("y", "yes"):
+            write_config(target, enabled=True, api_key_env=api_key_env)
+            return "enabled"
         write_config(target, enabled=False, api_key_env=api_key_env)
-        return "setup-skipped"
+        return "declined"
+
+    # No key. Silent skip + visible placeholder + stderr breadcrumb.
+    write_config(target, enabled=False, api_key_env=api_key_env)
+    secrets_path = _resolve_secrets_file_path(secrets_file_path)
+    print(
+        f"Tier 3 adversarial review skipped — no {api_key_env} found. "
+        f"Configure {secrets_path} (mode 0600) and re-run /vision to enable.",
+        file=sys.stderr,
+    )
+    return "setup-skipped"
 
 
 def walker_path_default() -> pathlib.Path:
