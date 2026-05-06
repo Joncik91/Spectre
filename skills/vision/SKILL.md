@@ -38,19 +38,10 @@ When the walker surfaces concerns in Step 4, scan the symbol map for any functio
 **Template-import surfacing (v0.4.2+).** Also list any reusable spec/skill templates the user has previously exported:
 
 ```bash
-python3 - <<'PY'
-import sys, json
-sys.path.insert(0, ".")
-from bin import templates
-ts = templates.list_templates()
-if ts:
-    print(f"TEMPLATES_AVAILABLE: {len(ts)}")
-    for t in ts[:10]:
-        print(f"  {t['kind']}: {t['name']}")
-else:
-    print("TEMPLATES_AVAILABLE: 0")
-PY
+python3 -m bin.templates list --limit 10
 ```
+
+Stdout: `TEMPLATES_AVAILABLE: N` followed by up to 10 ` <kind>: <name>` lines (e.g. `  spec: btc-poller`). Pass `--json` for the full descriptor list when you need the absolute path.
 
 If templates exist, surface them as candidate starting points during Step 4's interrogation walk: "Your library has `<template_name>` (a `<kind>`). Import as a base for this spec? (import / no)". On `import`, call `templates.import_template(source_name=<name>, target_name=<slug>)`; the imported draft becomes the seed for the walk's draft materialization in Step 5.
 
@@ -64,25 +55,18 @@ Same as v0.3.x — refuse physically impossible requests; if multi-subsystem, as
 
 ### Step 3 — Initialize the walker
 
-Resume an existing walk if one is live for this spec, otherwise initialize a new one:
+Resume an existing walk if one is live for this spec, otherwise initialize a new one. Derive the canonical draft path from the slug via the Phase 2A CLI (never substitute `<slug>` into a `Path("specs/...")` literal inline):
 
 ```bash
-python3 - <<'PY'
-import sys, pathlib
-sys.path.insert(0, ".")
-from bin import walker
-
-walk_path = pathlib.Path("state/.walk.json")
-state = walker.load(walk_path)
-if state is None:
-    state = walker.init_walk(
-        spec_intent="""<verbatim user intent>""",
-        spec_draft_path=pathlib.Path("specs/<slug>.spec.md.draft"),
-    )
-    walker.persist(state, walk_path)
-print(f"WALK: {state.round_count} rounds, {len(state.pending)} pending, stop={state.stop_reason}")
-PY
+SPEC_PATH="$(python3 -m bin.spec_evaluator slug-to-path --slug "<slug>")"
+DRAFT_PATH="${SPEC_PATH}.draft"
+python3 -m bin.walker init-or-resume \
+    --intent "<verbatim user intent>" \
+    --draft "$DRAFT_PATH" \
+    --state-path state/.walk.json
 ```
+
+Stdout: `WALK: N rounds, M pending, stop=<reason|none>`. The `--intent` value is ignored on resume (existing walk's intent wins); on first run it is persisted into `state/.walk.json` along with five seed concerns covering §8.1 mutates, never-touches, decision-budget, and reboot-survival fields.
 
 ### Step 4 — Walk loop (interrogation)
 
@@ -110,23 +94,12 @@ Repeat until the walker reports stop:
 4. **Run the Tier 3 yield-delta check** (only if `~/.spectre/reviewer.toml` has `[tier3] enabled = true` AND we have an in-progress draft):
 
    ```bash
-   python3 - <<'PY'
-   import sys, pathlib
-   sys.path.insert(0, ".")
-   from bin import spec_evaluator, walker
-
-   walk_path = pathlib.Path("state/.walk.json")
-   state = walker.load(walk_path)
-   draft_path = pathlib.Path("<spec-draft path>")
-   if draft_path.exists() and state.round_count > 0:
-       config = pathlib.Path.home() / ".spectre" / "reviewer.toml"
-       result = spec_evaluator.evaluate(draft_path, config_path=config, bundle_persist_dir=pathlib.Path("state"))
-       new_t3 = sum(1 for f in result.findings if f.tier == 3 and f.kind != "tier3-unavailable")
-       state.yield_history.append(new_t3)
-       walker.persist(state, walk_path)
-       print(f"YIELD: {new_t3} new T3 findings this round; history={state.yield_history[-5:]}")
-   PY
+   python3 -m bin.walker yield-check \
+       --draft "$DRAFT_PATH" \
+       --state-path state/.walk.json
    ```
+
+   Stdout: `YIELD: N new T3 findings this round; history=[...]` on a real evaluation, or `YIELD: skipped (<reason>)` when preconditions fail (no walk state, draft missing, `round_count=0`). The CLI uses `~/.spectre/reviewer.toml` and `state/` as the bundle dir by default; override with `--config` and `--bundle-dir` when needed.
 
 5. **Check stop conditions.** `stop, reason = walker.should_stop(state)`. If `True`, set `state.stop_reason = reason` (the function is pure — does not mutate), persist, and proceed to Step 5. If `False`, loop back to Step 4.1.
 
@@ -174,17 +147,10 @@ The draft-to-disk pattern eliminates the double-token-output friction (printing 
 Before running the evaluator, ensure `~/.spectre/reviewer.toml` exists. If it doesn't, the wizard auto-creates it — detecting any DeepSeek API key in the live environment, then optionally in a `.env`-style secrets file pointed to by the `SPECTRE_SECRETS_FILE` env var, and prompting once for opt-in. The TOML is always written (with `enabled=false` if the user declines or no key is found) so subsequent runs don't re-prompt.
 
 ```bash
-python3 - <<'PY'
-import sys
-sys.path.insert(0, ".")
-from bin import setup_wizard
-target = setup_wizard.config_path_default()
-result = setup_wizard.maybe_provision(target)
-print(f"WIZARD: {result} ({target})")
-PY
+python3 -m bin.setup_wizard provision
 ```
 
-Outcomes: `exists` (no-op), `enabled` (key found, user opted in), `declined` (key found, user opted out), `no-key` (no key anywhere — Tier 3 unavailable until user adds one and edits the TOML). After the wizard runs, `~/.spectre/reviewer.toml` is guaranteed to exist; §6.4 always passes that path to the evaluator.
+Stdout: `WIZARD: <result> (<target>)`. Outcomes: `exists` (no-op), `enabled` (DeepSeek API key found in env or `~/.spectre/secrets.env`, Tier 3 enabled), `setup-skipped` (no key found anywhere — placeholder `enabled=false` written so subsequent runs do not re-prompt). After the wizard runs, `~/.spectre/reviewer.toml` is guaranteed to exist; §6.4 always passes that path to the evaluator.
 
 ### Step 6.4 — Pre-lock spec evaluator (CDLC Evaluate phase, v0.3+)
 
@@ -261,41 +227,26 @@ For each decision found:
 1. Run:
 
 ```bash
-python3 - <<'PY'
-import sys
-sys.path.insert(0, ".")
-from bin import adr
-from pathlib import Path
-p = adr.write_adr(
-    Path("decisions"),
-    title="<extracted decision title>",
-    date="<today ISO>",
-    body="<one paragraph: the decision + the why from the spec>",
-    supersedes=None,  # set to "NNNN" only if this contradicts an existing ADR
-)
-print(f"ADR: {p}")
-PY
+python3 -m bin.adr write \
+    --dir decisions \
+    --title "<extracted decision title>" \
+    --body "<one paragraph: the decision + the why from the spec>"
 ```
+
+Stdout: `ADR: <path>`. Pass `--supersedes "NNNN"` only when this decision contradicts an existing ADR (see step 2). The `--date` flag defaults to today's ISO date when omitted.
 
 2. **Supersedes detection.** Before writing each ADR, list `decisions/*.md` and look for an existing ADR whose title or body contradicts the new decision (e.g. new ADR says "Use Postgres 16" and an existing ADR says "Use SQLite"). If found, pass `supersedes="<old_id>"`. If unsure, do NOT supersede — false positives are worse than missing supersedes (a missed supersedes can be retro-fixed; a wrong supersedes invalidates downstream work).
 
 3. **Graph wiring.** If `specs/.graph.md` exists AND both new and old ADRs are represented as nodes, run:
 
 ```bash
-python3 - <<'PY'
-import sys
-sys.path.insert(0, ".")
-from bin import adr
-from pathlib import Path
-adr.update_graph_for_supersedes(
-    Path("specs/.graph.md"),
-    new_adr_id="adr-NNNN",
-    old_adr_id="adr-MMMM",
-)
-PY
+python3 -m bin.adr update-graph \
+    --graph specs/.graph.md \
+    --new adr-NNNN \
+    --old adr-MMMM
 ```
 
-In v0.2.1 the graph manifest may not have ADR nodes yet. The `update_graph_for_supersedes` call is a no-op when nodes are absent, so it is safe to always invoke after a supersede write.
+In v0.2.1 the graph manifest may not have ADR nodes yet. The CLI (and underlying `update_graph_for_supersedes`) is a no-op when nodes are absent or the manifest is missing, so it is safe to always invoke after a supersede write.
 
 ### Step 6.6 — Resource node inference (read from bundle)
 
@@ -366,27 +317,19 @@ Now that the user confirmed and ADRs are written:
 5. **Clear the persisted bundle** — lock is complete, the bundle is no longer needed:
 
    ```bash
-   python3 -c "from bin import spec_evaluator; from pathlib import Path; spec_evaluator.clear_bundle(Path('state/.eval-bundle.json'))"
+   python3 -m bin.spec_evaluator clear-bundle --bundle state/.eval-bundle.json
    ```
 
 **Append CDLC ledger transition (v0.4.2+).** Record a `generate` transition (lock event):
 
 ```bash
-python3 - <<'PY'
-import sys, pathlib
-sys.path.insert(0, ".")
-from bin import cdlc_ledger
-cdlc_ledger.append_transition(
-    kind="generate",
-    payload={
-        "spec_slug": "<slug>",
-        "round_count": "<walker round_count from state/.walk.json>",
-        "tiers_run": "<tiers_run from <slug>.spec.md.eval.json sidecar>",
-    },
-    project_path=pathlib.Path.cwd(),
-)
-PY
+python3 -m bin.cdlc_ledger append --kind generate \
+    --payload-kv "spec_slug=<slug>" \
+    --payload-kv "round_count=<walker round_count from state/.walk.json>" \
+    --payload-kv "tiers_run=<tiers_run from <slug>.spec.md.eval.json sidecar>"
 ```
+
+The CLI writes to `state/cdlc-ledger.json` under the project cwd (override with `--project`). Stdout: `APPENDED: kind=generate`. For typed/nested payloads, use `--payload <json>` instead of `--payload-kv`.
 
 ### Step 7 — Transition signal
 

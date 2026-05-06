@@ -353,6 +353,33 @@ if __name__ == "__main__":
         help="Path to walk state JSON (default: state/.walk.json).",
     )
 
+    # ── yield-check ───────────────────────────────────────────────────────────
+    p_yc = sub.add_parser(
+        "yield-check",
+        help=(
+            "Run the §4.4 Tier 3 yield-delta check: load walk state, evaluate "
+            "the draft, count new T3 findings, append to yield_history, "
+            "re-persist. Prints `YIELD: N new T3 findings this round; "
+            "history=[...]`."
+        ),
+    )
+    p_yc.add_argument("--draft", required=True, help="Spec draft path.")
+    p_yc.add_argument(
+        "--state-path",
+        default="state/.walk.json",
+        help="Path to walk state JSON (default: state/.walk.json).",
+    )
+    p_yc.add_argument(
+        "--config",
+        default=None,
+        help="Reviewer config (default: ~/.spectre/reviewer.toml).",
+    )
+    p_yc.add_argument(
+        "--bundle-dir",
+        default="state",
+        help="Directory for bundle persistence (default: 'state').",
+    )
+
     args = parser.parse_args()
 
     if args.cmd == "init-or-resume":
@@ -378,3 +405,53 @@ if __name__ == "__main__":
         stop = state.stop_reason if state.stop_reason else "none"
         pending_count = sum(1 for c in state.pending if c.id not in state.stale)
         print(f"WALK: {state.round_count} rounds, {pending_count} pending, stop={stop}")
+
+    elif args.cmd == "yield-check":
+        from bin import spec_evaluator as _se  # lazy import — avoid cost on init-or-resume
+
+        state_path = pathlib.Path(args.state_path)
+        draft_path = pathlib.Path(args.draft)
+        try:
+            state = load(state_path)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        if state is None:
+            print("YIELD: skipped (no walk state)")
+            sys.exit(0)
+        if not draft_path.exists():
+            print("YIELD: skipped (draft missing)")
+            sys.exit(0)
+        if state.round_count <= 0:
+            print("YIELD: skipped (round_count=0)")
+            sys.exit(0)
+
+        config_path = (
+            pathlib.Path(args.config)
+            if args.config
+            else pathlib.Path.home() / ".spectre" / "reviewer.toml"
+        )
+        bundle_dir = pathlib.Path(args.bundle_dir)
+        try:
+            result = _se.evaluate(
+                draft_path,
+                config_path=config_path,
+                bundle_persist_dir=bundle_dir,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: evaluator failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        new_t3 = sum(
+            1 for f in result.findings if f.tier == 3 and f.kind != "tier3-unavailable"
+        )
+        state.yield_history.append(new_t3)
+        try:
+            persist(state, state_path)
+        except OSError as exc:
+            print(f"ERROR: could not persist walk state: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(
+            f"YIELD: {new_t3} new T3 findings this round; "
+            f"history={state.yield_history[-5:]}"
+        )

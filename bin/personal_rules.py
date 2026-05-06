@@ -304,3 +304,109 @@ def reset_session_counter() -> None:
     """Test-only helper. Production code never calls this."""
     global _SESSION_ADOPTION_COUNT
     _SESSION_ADOPTION_COUNT = 0
+
+
+# ── CLI entrypoint ────────────────────────────────────────────────────────────
+
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="personal_rules",
+        description=(
+            "Personal-rules CLI — adopt (with sandbox-paradox brake), check "
+            "the persistent session counter."
+        ),
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_ad = sub.add_parser(
+        "adopt",
+        help=(
+            "Append an entry to ~/.spectre/personal-rules.toml, bump the "
+            "persistent session counter, and emit `ADOPTED. (N/3 this session)`. "
+            "If the persistent counter already >= DEFAULT_BRAKE_THRESHOLD, "
+            "skip the write and print the BRAKE message (the post-halt-success "
+            "prompt's sandbox-paradox brake)."
+        ),
+    )
+    p_ad.add_argument(
+        "--label",
+        required=True,
+        help="Classifier label (the first reason from the tier classifier).",
+    )
+    p_ad.add_argument("--fingerprint", required=True, help="Halt fingerprint (hex).")
+    p_ad.add_argument("--reason", required=True, help="One-line user reason.")
+    p_ad.add_argument(
+        "--scratchpad",
+        default="state/scratchpad.json",
+        help=(
+            "Path to scratchpad.json — needed for the persistent brake "
+            "counter. Default: state/scratchpad.json."
+        ),
+    )
+    p_ad.add_argument(
+        "--track",
+        default=_DEFAULT_TRACK,
+        help=f"Track name for the brake counter (default: {_DEFAULT_TRACK!r}).",
+    )
+
+    p_cnt = sub.add_parser(
+        "session-count",
+        help=(
+            "Print the persistent session adoption count from "
+            "tracks.<track>.session_adoption_count. Returns 0 when the file "
+            "or field is missing."
+        ),
+    )
+    p_cnt.add_argument(
+        "--scratchpad",
+        default="state/scratchpad.json",
+        help="Path to scratchpad.json (default: state/scratchpad.json).",
+    )
+    p_cnt.add_argument(
+        "--track",
+        default=_DEFAULT_TRACK,
+        help=f"Track name (default: {_DEFAULT_TRACK!r}).",
+    )
+
+    args = parser.parse_args()
+
+    if args.cmd == "adopt":
+        sp_path = pathlib.Path(args.scratchpad)
+        try:
+            current = adoption_count_this_session_persistent(sp_path, track=args.track)
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        if current >= DEFAULT_BRAKE_THRESHOLD:
+            print(
+                f"BRAKE: {current} adoptions this session. Edit "
+                f"~/.spectre/personal-rules.toml to review or remove. Skipping prompt."
+            )
+            sys.exit(0)
+        try:
+            append_adoption(
+                classifier_label=args.label,
+                fingerprint=args.fingerprint,
+                reason=args.reason,
+                scratchpad_path=sp_path,
+                track=args.track,
+            )
+            new_count = adoption_count_this_session_persistent(sp_path, track=args.track)
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(f"ADOPTED. ({new_count}/{DEFAULT_BRAKE_THRESHOLD} this session)")
+
+    elif args.cmd == "session-count":
+        try:
+            n = adoption_count_this_session_persistent(
+                pathlib.Path(args.scratchpad), track=args.track
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(n)

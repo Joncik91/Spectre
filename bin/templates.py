@@ -136,3 +136,53 @@ def export_template(
         except OSError:
             pass
         raise
+
+
+# ── CLI entrypoint ────────────────────────────────────────────────────────────
+
+
+if __name__ == "__main__":
+    import argparse
+    import json
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="templates",
+        description="Templates CLI — list spec/skill templates under ~/.spectre/templates/.",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_list = sub.add_parser(
+        "list",
+        help=(
+            "List available templates under ~/.spectre/templates/. Default "
+            "output: `TEMPLATES_AVAILABLE: N` followed by up to --limit "
+            "`  <kind>: <name>` lines."
+        ),
+    )
+    p_list.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Max entries to print after the header (default: 10).",
+    )
+    p_list.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the full descriptors as JSON (ignores --limit).",
+    )
+
+    args = parser.parse_args()
+
+    if args.cmd == "list":
+        try:
+            ts = list_templates()
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        if args.json:
+            print(json.dumps(ts, indent=2))
+        else:
+            print(f"TEMPLATES_AVAILABLE: {len(ts)}")
+            for t in ts[: max(0, args.limit)]:
+                print(f"  {t['kind']}: {t['name']}")

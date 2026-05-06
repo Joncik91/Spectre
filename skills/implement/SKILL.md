@@ -137,49 +137,25 @@ Proceed? (yes / halt / skip)
 **Record observation BEFORE accepting input:** every TIER GATE halt — regardless of the user's answer — produces a fingerprint and an observation row. Run:
 
 ```bash
-python3 - <<'PY'
-import sys, pathlib
-sys.path.insert(0, ".")
-from bin import observations
-
-label = "<the first reason from the classifier output>"
-action = """<current_action>"""
-fp = observations.fingerprint_halt(action=action, classifier_label=label)
-observations.record_halt(
-    kind="tier-gate",
-    fingerprint=fp,
-    project_path=str(pathlib.Path.cwd()),
-    spec_slug="<active spec slug from .active>",
-    action=action,
-    classifier_label=label,
-)
-print(f"OBSERVED: {fp[:12]}...")
-PY
+python3 -m bin.observations record-halt \
+    --action "<current_action>" \
+    --label "<the first reason from the classifier output>" \
+    --spec-slug "<active spec slug from .active>"
 ```
 
-The fingerprint is what personal-rules.toml keys against. Future runs with the same fingerprint may skip the halt automatically (per v0.4.1 personal-rules consultation in `tier.should_halt`).
+Stdout: `OBSERVED: <fp[:12]>...`. The CLI computes the SHA-256 fingerprint, appends a JSONL record to `~/.spectre/observations.jsonl`, and best-effort writes a CDLC ledger `halt` transition to `<cwd>/state/cdlc-ledger.json` (ledger-write errors are swallowed — observation persistence is the load-bearing write). The fingerprint is what personal-rules.toml keys against. Future runs with the same fingerprint may skip the halt automatically (per v0.4.1 personal-rules consultation in `tier.should_halt`).
 
-**Append to CDLC ledger (v0.4.2+).** Every TIER GATE halt — regardless of yes/halt/skip — also records a `halt` transition in `state/cdlc-ledger.json`:
+**Append to CDLC ledger (v0.4.2+).** Every TIER GATE halt — regardless of yes/halt/skip — also records a `halt` transition in `state/cdlc-ledger.json` with the user's answer captured:
 
 ```bash
-python3 - <<'PY'
-import sys, pathlib
-sys.path.insert(0, ".")
-from bin import cdlc_ledger
-cdlc_ledger.append_transition(
-    kind="halt",
-    payload={
-        "fingerprint": "<fp from observation block>",
-        "label": "<label>",
-        "action": """<current_action>""",
-        "user_answer": "<yes|halt|skip>",
-    },
-    project_path=pathlib.Path.cwd(),
-)
-PY
+python3 -m bin.cdlc_ledger append --kind halt \
+    --payload-kv "fingerprint=<fp from observation block>" \
+    --payload-kv "label=<label>" \
+    --payload-kv "action=<current_action>" \
+    --payload-kv "user_answer=<yes|halt|skip>"
 ```
 
-**Ledger write is non-blocking.** If the ledger write fails (disk full, JSON corruption, etc.), the skill MUST continue to the user-answer dispatch and the pending_adoption_prompt persistence. The cdlc_ledger.append_transition call is already wrapped in a try/except in the call sites of bin/observations and bin/personal_rules; here the wrapping is structural — the ledger write is one heredoc, the persist is another, and a failure of the first does not abort the skill. If a downstream write to scratchpad.json is what fails, that's a separate halt — but ledger failures are silent.
+Stdout: `APPENDED: kind=halt`. The CLI exits non-zero on JSON-corruption / disk-full / unwritable-state errors; capture stderr but DO NOT propagate the failure to the user. **Ledger write is non-blocking.** A failure here does not abort the skill — the user-answer dispatch and the pending_adoption_prompt persistence below MUST still run. Note that `record-halt` above already best-effort-wrote a smaller ledger entry (no `user_answer`, no `label`) inside `observations.record_halt`; this dedicated CLI call is the structural place to record the user's answer post-prompt.
 
 - `yes` → continue to Step 3.6 then 3.7 then Step 4 (execute). After §6 Path A succeeds, run §Step 3.5b (post-halt-success prompt).
 - `halt` → stop. No scratchpad change.
@@ -188,75 +164,37 @@ PY
 **Persist pending_adoption_prompt for §3.5b durability (v0.4.2+).**
 
 ```bash
-python3 - <<'PY'
-import sys, json, pathlib
-sys.path.insert(0, ".")
-from bin import _scratchpad as sp
-
-scratchpad_path = pathlib.Path("state/scratchpad.json")
-data = sp.load(scratchpad_path)
-track = "<active track from invocation, default 'default'>"
-tracks = data.get("tracks") or {}
-track_state = tracks.get(track) or sp.track_default()
-track_state["pending_adoption_prompt"] = {
-    "fingerprint": "<fp from §3.5 observation block>",
-    "label": "<label from §3.5 observation block>",
-    "action": """<current_action>""",
-    "recorded_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
-}
-tracks[track] = track_state
-data["tracks"] = tracks
-sp.atomic_write(scratchpad_path, data)
-print(f"PENDING_ADOPTION_PROMPT_PERSISTED: {track_state['pending_adoption_prompt']['fingerprint'][:12]}...")
-PY
+python3 -m bin._scratchpad set-pending-adoption \
+    --scratchpad state/scratchpad.json \
+    --track "<active track from invocation, default 'default'>" \
+    --fingerprint "<fp from §3.5 observation block>" \
+    --label "<label from §3.5 observation block>" \
+    --action "<current_action>"
 ```
 
-This survives session restart and any mid-execution compact between §3.5 and §6 Path A. §3.5b reads and clears the field.
+Stdout: `PENDING_ADOPTION_PROMPT_PERSISTED: <fp[:12]>...`. The CLI atomic-writes via `_scratchpad.atomic_write`, auto-promotes a v1 scratchpad to v2 if needed, and stamps `recorded_at` with the current UTC ISO timestamp inside the function (so the heredoc's `__import__("datetime")` fragility is gone). This survives session restart and any mid-execution compact between §3.5 and §6 Path A. §3.5b reads and clears the field.
 
 ### Step 3.5b — Post-halt-success prompt (v0.4.1+; v0.4.2 durability hardening)
 
 After §6 Path A (verification passes) completes successfully, READ `pending_adoption_prompt` from `state/scratchpad.json` for the active track. If `None`, skip §3.5b entirely — no halt was queued. If present, fire the prompt using the persisted structured fields (fingerprint, label, action). The field is read once and CLEARED immediately after the prompt runs (regardless of adopt/once-only/never-ask-again). This survives compact/restart since scratchpad.json is durable across sessions.
 
 ```bash
-python3 - <<'PY'
-import sys, pathlib
-sys.path.insert(0, ".")
-from bin import _scratchpad as sp
-
-scratchpad_path = pathlib.Path("state/scratchpad.json")
-data = sp.load(scratchpad_path)
-track = "<active track from invocation, default 'default'>"
-tracks = data.get("tracks") or {}
-track_state = tracks.get(track) or sp.track_default()
-prompt = track_state.get("pending_adoption_prompt")
-if not prompt:
-    print("NO_PENDING_PROMPT")
-    sys.exit(0)
-print(f"PROMPT: fp={prompt['fingerprint'][:12]}... label={prompt['label']}")
-PY
+python3 -m bin._scratchpad get-pending-adoption \
+    --scratchpad state/scratchpad.json \
+    --track "<active track from invocation, default 'default'>"
 ```
+
+Stdout (one of): `NO_PENDING_PROMPT` (skip §3.5b entirely) or `PROMPT: fp=<fp[:12]>... label=<label>`. For the full structured prompt (action, recorded_at), pass `--json` and parse the result; `null` means no prompt is pending.
 
 **Clear pending_adoption_prompt FIRST (v0.4.2+).** As soon as §3.5b reads the field successfully and BEFORE running the adopt/once-only/never-ask-again branches, clear the field unconditionally:
 
 ```bash
-python3 - <<'PY'
-import sys, pathlib
-sys.path.insert(0, ".")
-from bin import _scratchpad as sp
-
-scratchpad_path = pathlib.Path("state/scratchpad.json")
-data = sp.load(scratchpad_path)
-track = "<active track from invocation, default 'default'>"
-tracks = data.get("tracks") or {}
-if track in tracks:
-    tracks[track]["pending_adoption_prompt"] = None
-    data["tracks"] = tracks
-    sp.atomic_write(scratchpad_path, data)
-    print("PROMPT_CLEARED")
-PY
+python3 -m bin._scratchpad clear-pending-adoption \
+    --scratchpad state/scratchpad.json \
+    --track "<active track from invocation, default 'default'>"
 ```
 
-Clearing FIRST means: if the user's chosen branch (adopt) raises an exception during personal_rules.append_adoption (e.g. permissions error on ~/.spectre/personal-rules.toml), the field is already cleared. The user sees the adopt-write error and can fix their config, but next /implement will not re-prompt for the same already-handled halt. Loss-of-clear was the v0.4.1 failure mode the durability hardening was meant to prevent — clearing first preserves that property.
+Stdout: `PROMPT_CLEARED` (track existed and was cleared) or `NO_TRACK_TO_CLEAR` (track absent — no-op). Clearing FIRST means: if the user's chosen branch (adopt) raises an exception during `personal_rules.adopt` (e.g. permissions error on ~/.spectre/personal-rules.toml), the field is already cleared. The user sees the adopt-write error and can fix their config, but next /implement will not re-prompt for the same already-handled halt. Loss-of-clear was the v0.4.1 failure mode the durability hardening was meant to prevent — clearing first preserves that property.
 
 The rest of §3.5b (the adopt / once-only / never-ask-again branches + sandbox-paradox brake from v0.4.1) is unchanged.
 
@@ -272,32 +210,21 @@ The TIER GATE halted you on this action class. Adopt as personal-rule-skip going
 If `adopt`: run
 
 ```bash
-python3 - <<'PY'
-import sys
-sys.path.insert(0, ".")
-from bin import personal_rules
-
-# Persistent counter (state/scratchpad.json). The in-memory counter would
-# reset to 0 every fork — heredoc fork bug, v0.4.1 fix. append_adoption
-# auto-bumps the persistent value via its default scratchpad path.
-if personal_rules.adoption_count_this_session_persistent() >= personal_rules.DEFAULT_BRAKE_THRESHOLD:
-    print("BRAKE: 3 adoptions this session. Edit ~/.spectre/personal-rules.toml to review or remove. Skipping prompt.")
-    sys.exit(0)
-
-personal_rules.append_adoption(
-    classifier_label="<label>",
-    fingerprint="<fp>",
-    reason="<one-line user reason>",
-)
-print(f"ADOPTED. ({personal_rules.adoption_count_this_session_persistent()}/3 this session)")
-PY
+python3 -m bin.personal_rules adopt \
+    --label "<label>" \
+    --fingerprint "<fp>" \
+    --reason "<one-line user reason>" \
+    --scratchpad state/scratchpad.json \
+    --track "<active track, default 'default'>"
 ```
+
+Stdout (one of): `ADOPTED. (N/3 this session)` (TOML written, persistent counter bumped) or `BRAKE: <N> adoptions this session. Edit ~/.spectre/personal-rules.toml to review or remove. Skipping prompt.` (the brake — TOML untouched, counter not bumped). The CLI consults the persistent counter at `tracks.<track>.session_adoption_count` BEFORE writing — same disk-backed counter as `personal_rules.adoption_count_this_session_persistent()`, which is the only counter that survives across `python3 -m` invocations.
 
 If `once-only`: do nothing — the halt fires again on the next run.
 
 If `never-ask-again`: in v0.4.1, treat as `once-only` (the placeholder schema lands in v0.4.2). Print "Note: never-ask-again is v0.4.2; treating as once-only."
 
-**Sandbox-paradox brake.** If `personal_rules.adoption_count_this_session_persistent()` already ≥ `personal_rules.DEFAULT_BRAKE_THRESHOLD` (default 3), the skill MUST skip the prompt entirely and print: "BRAKE: 3 adoptions this session. Edit ~/.spectre/personal-rules.toml to review or remove." The brake is session-scoped via `state/scratchpad.json`'s `tracks.<track>.session_adoption_count` field — restarting Claude Code (or starting a new spec/track) resets it on the next `/vision`. The persistent variant is mandatory because each `python3 - <<'PY'` heredoc forks a fresh process, wiping any in-memory counter. Read the threshold dynamically from `personal_rules.DEFAULT_BRAKE_THRESHOLD` rather than hardcoding 3, so v0.4.2 schema bumps stay backward-compatible.
+**Sandbox-paradox brake.** The CLI consults the persistent counter via `personal_rules.adoption_count_this_session_persistent()` against `personal_rules.DEFAULT_BRAKE_THRESHOLD` (default 3) BEFORE writing the TOML; if the counter is already at threshold, the CLI prints the BRAKE message and exits 0 without bumping anything. The brake is session-scoped via `state/scratchpad.json`'s `tracks.<track>.session_adoption_count` field — restarting Claude Code (or starting a new spec/track) resets it on the next `/vision`. The threshold is read dynamically from `DEFAULT_BRAKE_THRESHOLD` rather than hardcoded so v0.4.2 schema bumps stay backward-compatible.
 
 **Why the brake exists.** Per `research/developing-a-safe.md` (vault), HITL approval gates create permission-fatigue: users rage-bypass safety once prompts feel persistent. The 3-adoption cap forces the user to re-read their personal-rules file rather than reflexively saying yes to everything.
 
@@ -306,20 +233,12 @@ If `never-ask-again`: in v0.4.1, treat as `once-only` (the placeholder schema la
 If `current_resources` is non-empty, acquire each Resource via the supervisor before executing. Run:
 
 ```bash
-python3 - <<'PY'
-import sys
-sys.path.insert(0, ".")
-from pathlib import Path
-from bin import track
-track.ensure_supervisor_running(Path("."))
-for rid in [<list from current_resources>]:
-    resp = track.acquire(Path("."), track_name="<current track>", resource_id=rid)
-    if not resp["granted"]:
-        print(f"QUEUED: {rid} (position {resp['queued_position']})")
-        sys.exit(1)
-    print(f"ACQUIRED: {rid}")
-PY
+python3 -m bin.track acquire \
+    --track "<current track>" \
+    --resources "<comma-joined current_resources, e.g. port:8080,db:postgres>"
 ```
+
+Stdout: one `ACQUIRED: <rid>` line per granted lock, or `QUEUED: <rid> (position N)` followed by exit code 1 on the first queued resource. The CLI ensures the supervisor is running (idempotent — reuses an existing live process) and acquires resources in the listed order. A non-zero exit means the skill must halt with the RESOURCE QUEUED message below.
 
 If any Resource is queued (not granted) → halt with:
 
@@ -391,21 +310,13 @@ If audits fail repeatedly across multiple steps in the same spec, halt and tell 
 **Append CDLC ledger transition (v0.4.2+).** Record an `implement` transition for this successful step:
 
 ```bash
-python3 - <<'PY'
-import sys, pathlib
-sys.path.insert(0, ".")
-from bin import cdlc_ledger
-cdlc_ledger.append_transition(
-    kind="implement",
-    payload={
-        "step": "<step number that just succeeded — the pre-increment value, i.e. current_step from §1>",
-        "spec_slug": "<active spec slug from .active>",
-        "action": """<current_action>""",
-    },
-    project_path=pathlib.Path.cwd(),
-)
-PY
+python3 -m bin.cdlc_ledger append --kind implement \
+    --payload-kv "step=<step number that just succeeded — the pre-increment value, i.e. current_step from §1>" \
+    --payload-kv "spec_slug=<active spec slug from .active>" \
+    --payload-kv "action=<current_action>"
 ```
+
+Stdout: `APPENDED: kind=implement`. The CLI writes to `state/cdlc-ledger.json` under cwd; failure here does NOT roll back the step increment (see "Why the ledger fires AFTER the increment" below).
 
 **Why the ledger fires AFTER the increment.** The increment must be durable before any audit write — if the ledger write fails (disk full), we'd rather have the step advanced (so the user re-runs and sees the action already succeeded) than not advanced (replaying a successful action). Ledger writes are advisory; step advancement is load-bearing.
 
@@ -467,17 +378,12 @@ After advancing `step`, check if a drift audit is due:
 If `current_resources` is non-empty AND verification passed (Path A) OR the step halted permanently (no further retries possible), release every Resource the step acquired:
 
 ```bash
-python3 - <<'PY'
-import sys
-sys.path.insert(0, ".")
-from pathlib import Path
-from bin import track
-for rid in [<list from current_resources>]:
-    track.release(Path("."), track_name="<current track>", resource_id=rid)
-PY
+python3 -m bin.track release \
+    --track "<current track>" \
+    --resources "<comma-joined current_resources>"
 ```
 
-Do NOT release on retry-mid-flight (Path B retry pending) — the track still owns the lock. Only release on terminal step state (advance OR halt).
+Stdout: `RELEASED: <rid>` per resource. The CLI is idempotent — releasing a resource the track does not own is a no-op on the supervisor side. Do NOT call this on retry-mid-flight (Path B retry pending) — the track still owns the lock. Only release on terminal step state (advance OR halt).
 
 ### Step 7 — Failure logging
 
@@ -522,12 +428,13 @@ If `gh` is unavailable or the command fails, write the draft to `decisions/<NNNN
 On `project`:
 
 ```bash
-python3 - <<'PY'
-import sys; sys.path.insert(0, ".")
-from bin import adr
-adr.write_adr(slug="<slug>", title="<title>", body="<body with finding>")
-PY
+python3 -m bin.adr write \
+    --dir decisions \
+    --title "<title>" \
+    --body "<body with finding>"
 ```
+
+Stdout: `ADR: decisions/<NNNN>-<slug>.md`. The slug is auto-derived from the title via `adr.slugify()`; no need to pass it separately.
 
 Skip Step 7.5 entirely on `silent`/`repo`-tier steps that pass on first try — those have no signal worth capturing.
 

@@ -2,7 +2,94 @@
 
 All notable changes to the SDL Vision Engine plugin (Spectre).
 
-## v0.5.0-rc3 — 2026-05-07
+## v0.5.0 — 2026-05-07
+
+**Final v0.5.0 release. Phase 2D of issue #13 closes the heredoc-python replacement initiative — every `python3 - <<'PY' ... PY` block in `skills/**/SKILL.md` is now a tested `python3 -m bin.<module> <subcommand>` invocation against a CLI surface, or a native harness tool call. An entire bug class (path drift, hash drift, escape-layer fragility, scratchpad-schema-blind reads) is gone from the prose surface.**
+
+### Summary
+
+v0.5.0 is the cumulative release of the heredoc-python replacement initiative tracked under issue #13. Across three release candidates and one final, twenty heredoc-Python blocks were replaced by tested CLI entry points on `bin/` modules, and the drift-prevention test at `tests/test_skill_prose_no_heredoc_python.py` now enforces zero heredocs anywhere under `skills/**/SKILL.md` as a permanent CI guard. Skill prose now invokes documented, version-controlled CLIs whose schemas are pinned by argparse — slug substitutions, path drift, and inline `Path("specs/<slug>...")` constructions are eliminated by construction.
+
+### Added
+
+CLI entrypoints (`if __name__ == "__main__":`) on the eight `bin/` modules Phase 2D needed (4 vision-flow + 3 implement-flow + 1 cross-flow). All subcommands wrap existing public functions; no new business logic added.
+
+- **`bin/cdlc_ledger.py`** — 2 subcommands:
+  - `append --kind <generate|test|lock|implement|halt|adapt> [--project p] (--payload json|--payload-kv KEY=VALUE)` — atomic append to `state/cdlc-ledger.json`. Stdout: `APPENDED: kind=<k>`.
+  - `read --project p` — print all transitions as JSON.
+- **`bin/observations.py`** — 2 subcommands:
+  - `record-halt --action <a> --label <l> [--kind k] [--spec-slug s]` — fingerprint + JSONL append to `~/.spectre/observations.jsonl` + best-effort CDLC ledger halt sidecar. Stdout: `OBSERVED: <fp[:12]>...`.
+  - `find-recurrences [--kind k] [--threshold n]` — print recurring fingerprints as JSON.
+- **`bin/_scratchpad.py`** — 3 subcommands wrapping atomic state mutations:
+  - `set-pending-adoption --scratchpad p --track t --fingerprint fp --label l --action a` — atomic-write `tracks.<track>.pending_adoption_prompt`; auto-promotes v1→v2; stamps `recorded_at` with UTC ISO.
+  - `get-pending-adoption [--scratchpad p] [--track t] [--json]` — emit `NO_PENDING_PROMPT` or `PROMPT: fp=<fp[:12]>... label=<l>` (or full prompt as JSON).
+  - `clear-pending-adoption [--scratchpad p] [--track t]` — atomic set-to-None; idempotent.
+- **`bin/personal_rules.py`** — 2 subcommands:
+  - `adopt --label l --fingerprint fp --reason r [--scratchpad p] [--track t]` — sandbox-paradox-brake-aware adoption; emits `ADOPTED. (N/3 this session)` or `BRAKE: ...`. Brake check happens BEFORE TOML write so the v0.4.1 fork-counter bug stays fixed structurally.
+  - `session-count [--scratchpad p] [--track t]` — print persistent counter value.
+- **`bin/track.py`** — 2 subcommands wrapping the supervisor client:
+  - `acquire --project p --track t --resources r1,r2,...` — ensure_supervisor_running + acquire each rid; exits 1 on first QUEUED.
+  - `release --project p --track t --resources r1,r2,...` — idempotent release.
+- **`bin/adr.py`** — 2 subcommands:
+  - `write --dir <decisions> --title <t> --body <b> [--date d] [--supersedes id]` — atomic-write the ADR; date defaults to today's ISO; emits `ADR: <path>`. With `--supersedes`, also flips the old ADR's `status: accepted` → `status: superseded`.
+  - `update-graph --graph p --new id --old id` — append a supersedes edge; no-op when the manifest or either node is absent.
+- **`bin/templates.py`** — 1 subcommand:
+  - `list [--limit N] [--json]` — surface `~/.spectre/templates/{specs,skills}/` content. Default prose: `TEMPLATES_AVAILABLE: N` + up to N `<kind>: <name>` lines.
+- **`bin/setup_wizard.py`** — 1 subcommand:
+  - `provision [--target p] [--secrets-file p] [--api-key-env name]` — runs `maybe_provision()`; emits `WIZARD: <result> (<target>)`.
+- **`bin/walker.py`** — extends existing `__main__` with 1 new subcommand:
+  - `yield-check --draft p [--state-path p] [--config p] [--bundle-dir d]` — re-evaluates the draft, counts new T3 findings (excluding `tier3-unavailable`), appends to `yield_history`, re-persists. Skips silently with `YIELD: skipped (...)` on no-state / no-draft / round=0 preconditions.
+
+### Changed
+
+The 18 medium-/low-leverage `python3 - <<'PY' ... PY` heredocs cataloged in the issue #13 audit have all been replaced:
+
+- **`skills/vision/SKILL.md`** — 7 heredocs replaced (§0 templates, §3 walker init/resume, §4 Tier-3 yield-delta, §6.3a setup wizard, §6.5 ADR write + graph supersedes, §6.7 CDLC generate). Heredoc count: 7 → 0. Net LOC reduction: ~58 lines. Also replaced the v0.5.0-rc2 leftover `python3 -c "from bin import spec_evaluator..."` clear-bundle one-liner with the Phase 2A `spec_evaluator clear-bundle` subcommand for prose consistency.
+- **`skills/implement/SKILL.md`** — 11 heredocs replaced (§3.5 record-halt + cdlc-halt + persist-pending-adoption-prompt, §3.5b read-pending + clear-pending + adopt branch, §3.6 resource acquire, §6 cdlc-implement, §6.7 resource release, §7.5 project-finding ADR write). Heredoc count: 11 → 0. Net LOC reduction: ~134 lines. The §3.5b "Sandbox-paradox brake" prose paragraph also rewritten to remove the now-stale "each `python3 - <<'PY'` heredoc forks a fresh process" rationale — that warning is no longer applicable, and the new CLI explicitly consults the persistent counter on every call.
+
+Combined with Phase 2B (3 heredocs, vision/SKILL.md) and Phase 2C (2 heredocs, implement/SKILL.md), the cumulative replacement: 20/20 heredocs gone. Heredoc count: 0/0.
+
+### Tests
+
+**928 passing** (was 814 at v0.5.0-rc3 → +114 from Phase 2D's eight new CLI test files, four new walker yield-check tests, and the global drift-prevention guard). New test files:
+
+- `tests/test_cdlc_ledger_cli.py` — 16 tests (append happy path + payload formats + payload-kv + JSON file + stdin + bad input + read empty + read after append + round-trip).
+- `tests/test_observations_cli.py` — 15 tests (record-halt happy/persistence/fingerprint determinism/missing-flag + find-recurrences empty/below-threshold/at-threshold).
+- `tests/test_scratchpad_cli.py` — 18 tests (set/get/clear with v1→v2 promotion, sibling-track preservation, JSON mode, missing-flag).
+- `tests/test_personal_rules_cli.py` — 13 tests (adopt happy + persistent counter bump + brake at threshold + per-track + missing-flag + session-count).
+- `tests/test_track_cli.py` — 13 tests (acquire happy + multi-resource + queued exits 1 + release happy + release idempotent + supervisor lifecycle + missing-flag).
+- `tests/test_adr_cli.py` — 15 tests (write happy + persisted-fields + supersedes flips status + auto-id + missing-flag + update-graph noop-cases).
+- `tests/test_templates_cli.py` — 10 tests (list empty/one-spec/one-skill/limit/JSON/missing-flag).
+- `tests/test_setup_wizard_cli.py` — 9 tests (no-key/with-env-key/with-secrets-file/exists/target-output).
+
+`tests/test_walker_cli.py` extended with 4 yield-check tests (no-state-skipped, no-draft-skipped, round-zero-skipped, missing-flag-exits-2).
+
+The drift-prevention test at `tests/test_skill_prose_no_heredoc_python.py` is now load-bearing: per-file ceilings tightened to zero AND a new `test_no_python3_heredoc_anywhere_in_skills` walks the entire `skills/**/SKILL.md` tree. Future heredoc-Python introductions break CI immediately.
+
+Smoke-tested all 18 replacements against `/tmp/spectre-phase2d-test/`: the load-bearing on-disk fields (`pending_adoption_prompt`, CDLC ledger payloads, ADR file contents) are byte-identical to the reference heredoc behavior. The CLI is structurally more careful than the heredoc was — `_scratchpad set-pending-adoption` auto-promotes v1→v2 and preserves unknown v1 fields under `_v1_unknown` (the heredoc silently dropped them).
+
+### Migration
+
+None — the change is purely additive on the CLI surface. End users of `/vision` and `/implement` see no behavior change. Internal-API consumers of `bin/*` Python functions also see no change; only new `__main__` entry points were added.
+
+### References
+
+- Issue #13: https://github.com/Joncik91/Spectre/issues/13 (closed)
+- Audit: `docs/superpowers/audits/2026-05-06-issue-13-heredoc-audit.md` — historical artifact (status: RESOLVED)
+- Drift-prevention: `tests/test_skill_prose_no_heredoc_python.py`
+
+### v0.5.0 cumulative release notes (rc1 → rc2 → rc3 → final)
+
+The v0.5.0 minor cycle landed in four phases. Each prerelease was tagged and merged independently so the release ledger has a clean per-PR audit trail; this release rolls them up.
+
+- **v0.5.0-rc1 — Phase 2A (PR #18).** Foundational CLI infrastructure. Added `__main__` entry points on `bin/spec_evaluator.py` (`evaluate`, `slug-to-path`, `clear-bundle`), `bin/eval_metadata.py` (`policy-hash`, `sidecar-path`, `write-sidecar`, `sha256`), and the existing `bin/walker.py init-or-resume`. No skill-prose changes; the CLIs shipped first so PR #19 could use them. Closed v0.4.2.6's State Auditor v2-schema-blind read by adding `_scratchpad.get_paths_touched` (v1+v2-aware). Closed issue #12 P3 sidecar-path drift by routing all draft/spec path construction through `slug-to-path`.
+- **v0.5.0-rc2 — Phase 2B (PR #19).** High-leverage prose surgery in `skills/vision/SKILL.md` — replaced 3 heredocs (§6.4 evaluator, §6.6 resource node inference, §6.7 sidecar write) using only the Phase 2A CLI surface. Net LOC reduction: ~46 lines.
+- **v0.5.0-rc3 — Phase 2C (PR #20).** The remaining 2 high-leverage heredocs in `skills/implement/SKILL.md` (§3.5 Persistence-Tier classifier — the longest heredoc in the repo at 33 LOC, §5.5 State Auditor) replaced with new `bin.tier evaluate-action` and `bin.auditor audit-and-clear` CLI entry points. The auditor CLI's atomic-write also fixed v0.4.2.6's residual `json.dump` corruption-on-interrupt risk.
+- **v0.5.0 — Phase 2D (this release).** The final 18 medium-/low-leverage heredocs replaced; 8 new CLI entry points added; drift-prevention tightened to zero heredocs globally. Closes issue #13.
+
+Companion releases shipped on the v0.4 line during the same window:
+- **v0.4.2.5 (PR #16).** Issue #12 P2: Tier 3 reviewer prong timeouts + retries (60s timeout per prong, 1 retry on transport errors, surface `tier3-prong-timeout` finding when both prongs fail).
+- **v0.4.2.6 (PR #17).** Closed two structural bugs surfaced in v0.5.0-rc1's audit: State Auditor v2-schema-blind `paths_touched` read (silent no-op for every post-v2-migration `/implement` invocation) and `compact.py` v2 schema drift in the SessionStart hydrator. Both were rolled into v0.5.0-rc1's CLI surface as a structural fix.
 
 **Third prerelease toward v0.5.0. Phase 2C of issue #13 (heredoc replacement) — the two high-leverage targets in `skills/implement/SKILL.md` deferred from Phase 2B (because they needed new CLI surface). No behavioral changes to /vision or /implement flow.**
 
