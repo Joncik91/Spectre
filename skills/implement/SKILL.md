@@ -364,37 +364,21 @@ VERIFYING Step <N>: <verification>
 After verification passes but before the step advances, run the State Auditor for structural sanity. The auditor is **informational on first pass — it does NOT block step advance**. Its job is to surface structural drift across many steps; the spec's own verification is the gate.
 
 ```bash
-python3 - <<'PY'
-import json, sys
-sys.path.insert(0, ".")
-from bin import auditor, _scratchpad
-
-sp_path = "state/scratchpad.json"
-sp = _scratchpad.load(sp_path)
-# get_paths_touched handles both v1 (top-level) and v2 (tracks.<track>.paths_touched)
-paths = _scratchpad.get_paths_touched(sp, track="<current_track>")
-# If the active spec's current step has a `properties:` YAML block, populate
-# `properties` with that list of dicts before invoking. Otherwise leave None.
-properties = None
-results = auditor.audit_action("<current_action>", paths_touched=paths, properties=properties)
-out = {
-    "kinds": [r.kind for r in results],
-    "passed": all(r.passed for r in results),
-    "failures": [{"kind": r.kind, "message": r.message} for r in results if not r.passed],
-}
-track = sp.get("tracks", {}).get("<current_track>", {})
-track["last_audit_kinds"] = out["kinds"]
-track["last_audit_passed"] = out["passed"]
-track["last_audit_failures"] = out["failures"]
-if "tracks" not in sp:
-    sp["tracks"] = {}
-sp["tracks"]["<current_track>"] = track
-_scratchpad.atomic_write(sp_path, sp)
-print(f"AUDIT: {len(results)} checks, passed={out['passed']}")
-for failure in out["failures"]:
-    print(f"  FAIL: {failure['kind']} — {failure['message']}")
-PY
+python3 -m bin.auditor audit-and-clear \
+    --action "<current_action>" \
+    --scratchpad state/scratchpad.json \
+    --track "<current_track>"
 ```
+
+If the active spec's current step declares a `properties:` YAML block, pass it as a JSON array via `--properties '[{"kind":"type","target":"out.json","expected":"dict"}, ...]'`. Otherwise omit the flag.
+
+The CLI wraps the full §5.5 orchestration in a single atomic call: load `state/scratchpad.json` via `_scratchpad.load`, read `paths_touched` for the track via `_scratchpad.get_paths_touched` (handles both v1 top-level and v2 `tracks.<track>.paths_touched` schemas — a silent v2-schema bypass was the bug class behind the v0.4.2.6 fix), run `auditor.audit_action`, persist `last_audit_kinds` / `last_audit_passed` / `last_audit_failures` back to the track, and atomic-write the scratchpad via `_scratchpad.atomic_write` (no raw `json.dump` — corruption-safe under interrupt). Other tracks in the scratchpad are preserved.
+
+Stdout:
+- `AUDIT: N checks, passed=<True|False>` — exactly one summary line.
+- `  FAIL: <kind> — <message>` — one line per failed check (omitted if all passed).
+
+Pass `--json` instead to get the same `{"kinds","passed","failures"}` summary as a JSON object. Exit codes: `0` success (parse stdout), `1` runtime error (scratchpad load/write failure), `2` argparse error. A missing scratchpad is **not** an error — `_scratchpad.load` returns the v1 default and the auditor runs against an empty `paths_touched` list.
 
 If audits fail repeatedly across multiple steps in the same spec, halt and tell the user the spec needs `properties:` declarations or the actions are creating malformed artifacts. Otherwise, the failures sit in scratchpad and surface in the next compact's `additionalContext` for human review.
 
