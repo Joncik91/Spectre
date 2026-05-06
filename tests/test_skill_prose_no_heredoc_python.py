@@ -1,5 +1,5 @@
 """
-test_skill_prose_no_heredoc_python.py — issue #13 Phase 2B + 2C drift guard.
+test_skill_prose_no_heredoc_python.py — issue #13 Phase 2B + 2C + 2D drift guard.
 
 Phase 2B replaced 3 high-leverage `python3 - <<'PY' ... PY` blocks in
 `skills/vision/SKILL.md` (§6.4 evaluator, §6.6 resource node inference, §6.7
@@ -10,10 +10,16 @@ Phase 2C replaced the remaining 2 high-leverage heredocs in
 Auditor) with new `bin.tier evaluate-action` and `bin.auditor audit-and-clear`
 CLI invocations landed in the same PR.
 
-These tests guard against the heredocs creeping back in, and against new
-heredocs being added in those exact sections.  This file deliberately does NOT
-assert global heredoc absence; that is the Phase 2D check once all 18
-remaining heredocs are gone.
+Phase 2D replaced the remaining 18 medium-/low-leverage heredocs (7 in
+`skills/vision/SKILL.md` and 11 in `skills/implement/SKILL.md`) with new CLI
+entry points across `bin/_scratchpad.py`, `bin/adr.py`, `bin/cdlc_ledger.py`,
+`bin/observations.py`, `bin/personal_rules.py`, `bin/setup_wizard.py`,
+`bin/templates.py`, `bin/track.py`, plus a `yield-check` subcommand on the
+existing `bin/walker.py` __main__.
+
+Issue #13 is now fully closed; Phase 2D tightens both per-file ceilings to
+zero AND adds a global cross-file `test_no_python3_heredoc_anywhere_in_skills`
+guard so any future heredoc-Python in `skills/**/SKILL.md` breaks CI.
 """
 import pathlib
 import re
@@ -152,39 +158,49 @@ def test_implement_step_5_5_state_auditor_has_no_python_heredoc():
     )
 
 
-# ── Phase 2C count ceilings — guard against regression in skill files ─────────
+# ── Phase 2D count ceilings — zero heredocs anywhere in skills ────────────────
 
 
-def test_vision_skill_total_heredoc_count_at_or_below_phase_2c_ceiling():
-    """After Phase 2C, vision/SKILL.md still has 7 remaining heredoc-python
-    blocks (Phase 2C did not touch vision; it replaced the two implement-only
-    targets deferred from Phase 2B).
-
-    Phase 2D will reduce this further. This test asserts the count never rises
-    above 7 — adding a new heredoc to vision/SKILL.md should be a deliberate,
-    reviewed action, not an accident.
-    """
+def test_vision_skill_has_zero_python_heredocs():
+    """Phase 2D dropped vision/SKILL.md heredocs from 7 to 0. The ceiling is
+    now zero — any new heredoc-Python introduces the path-construction /
+    escape-layer bug class issue #13 was filed to eliminate."""
     text = _VISION_SKILL.read_text()
     count = _heredoc_count(text)
-    assert count <= 7, (
-        f"vision/SKILL.md has {count} heredoc-python blocks; "
-        "Phase 2B/2C set the ceiling at 7 (down from 10). "
-        "Adding more should require an intentional update to this test."
+    assert count == 0, (
+        f"vision/SKILL.md has {count} heredoc-python blocks; Phase 2D set the "
+        "ceiling at zero. Replace with a `python3 -m bin.<module> <subcommand>` "
+        "invocation against the corresponding CLI entry point."
     )
 
 
-def test_implement_skill_total_heredoc_count_at_or_below_phase_2c_ceiling():
-    """After Phase 2C, implement/SKILL.md has 11 remaining heredoc-python blocks
-    (down from 13 before Phase 2C; §3.5 and §5.5 replaced).
-
-    Phase 2D will reduce this further. This test asserts the count never rises
-    above 11 — adding a new heredoc to implement/SKILL.md should be a
-    deliberate, reviewed action, not an accident.
-    """
+def test_implement_skill_has_zero_python_heredocs():
+    """Phase 2D dropped implement/SKILL.md heredocs from 11 to 0. The ceiling
+    is now zero — any new heredoc-Python regresses issue #13's closure."""
     text = _IMPLEMENT_SKILL.read_text()
     count = _heredoc_count(text)
-    assert count <= 11, (
-        f"implement/SKILL.md has {count} heredoc-python blocks; "
-        "Phase 2C set the ceiling at 11 (down from 13: §3.5 + §5.5 replaced). "
-        "Adding more should require an intentional update to this test."
+    assert count == 0, (
+        f"implement/SKILL.md has {count} heredoc-python blocks; Phase 2D set "
+        "the ceiling at zero. Replace with a `python3 -m bin.<module> "
+        "<subcommand>` invocation against the corresponding CLI entry point."
+    )
+
+
+def test_no_python3_heredoc_anywhere_in_skills():
+    """Global guard — fail if ANY file under skills/**/SKILL.md contains a
+    `python3 - <<...PY` heredoc, even outside the two known skill files.
+
+    This is the load-bearing CI lock: once Phase 2D merges, no heredoc-Python
+    can re-enter Spectre's skill prose surface without breaking the build.
+    """
+    skills_dir = _REPO / "skills"
+    offenders: list[tuple[pathlib.Path, int]] = []
+    for skill_md in skills_dir.rglob("SKILL.md"):
+        text = skill_md.read_text(encoding="utf-8")
+        n = _heredoc_count(text)
+        if n > 0:
+            offenders.append((skill_md, n))
+    assert offenders == [], (
+        "heredoc-python found in skills/**/SKILL.md (issue #13 closure violated): "
+        + ", ".join(f"{p.relative_to(_REPO)}:{n}" for p, n in offenders)
     )
