@@ -1,7 +1,7 @@
 {
   "name": "spectre-marketplace",
   "metadata": {
-    "version": "0.4.2.2",
+    "version": "0.4.2.3",
     "description": "Spectre — SDL Vision Engine. Deterministic spec-driven Claude Code plugin (vision → spec → evaluate → lock → implement → verify)."
   },
   "owner": {
@@ -11,7 +11,7 @@
     {
       "name": "sdl-vision-engine",
       "description": "Three-tier pre-lock spec evaluator + persistence-tier classifier. /vision, /implement, and /implement auto skills with action/verification gates and auto-routed Spectre-finding capture.",
-      "version": "0.4.2.2",
+      "version": "0.4.2.3",
       "source": "./"
     }
   ]
