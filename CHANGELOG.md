@@ -51,7 +51,7 @@ Combined with Phase 2B (3 heredocs, vision/SKILL.md) and Phase 2C (2 heredocs, i
 
 ### Tests
 
-**1023 passing** (was 814 at v0.5.0-rc3 → +209 from Phase 2D's eight new CLI test files plus the global drift-prevention guard). New test files:
+**928 passing** (was 814 at v0.5.0-rc3 → +114 from Phase 2D's eight new CLI test files, four new walker yield-check tests, and the global drift-prevention guard). New test files:
 
 - `tests/test_cdlc_ledger_cli.py` — 16 tests (append happy path + payload formats + payload-kv + JSON file + stdin + bad input + read empty + read after append + round-trip).
 - `tests/test_observations_cli.py` — 15 tests (record-halt happy/persistence/fingerprint determinism/missing-flag + find-recurrences empty/below-threshold/at-threshold).
