@@ -28,8 +28,8 @@ def _secrets_path_default() -> pathlib.Path:
 def _resolve_secrets_file_path(explicit: pathlib.Path | None = None) -> pathlib.Path:
     """Resolve secrets file path: explicit > SPECTRE_SECRETS_FILE env > default.
 
-    Mirrors setup_wizard._resolve_secrets_file_path — kept here to avoid a
-    circular import (setup_wizard does not import llm_judge).
+    Mirrors setup_wizard._resolve_secrets_file_path — kept here to decouple
+    llm_judge from wizard internals (_resolve_secrets_file_path is private).
     """
     if explicit is not None:
         return explicit

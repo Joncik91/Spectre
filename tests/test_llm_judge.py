@@ -3,7 +3,6 @@ import json
 import os
 import pathlib
 import socket
-import tempfile
 from unittest import mock
 from urllib import error as url_error
 
