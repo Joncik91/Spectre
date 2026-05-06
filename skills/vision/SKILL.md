@@ -190,30 +190,24 @@ Outcomes: `exists` (no-op), `enabled` (key found, user opted in), `declined` (ke
 
 After the user replies `yes` (or `refine`), run the spec evaluator over a *review bundle* (preview ADRs + preview Resource nodes + preview tier classifications materialized but not committed). Tiers 1+2 always run (deterministic, local). Tier 3 (DeepSeek `deepseek-reasoner` adversarial reviewer) runs only when `~/.spectre/reviewer.toml` has `[tier3] enabled = true` AND the configured API key is present in the environment. When Tier 3 is unavailable for any reason, the evaluator emits an info-severity `tier3-unavailable` finding so the skip is **visible**, never silent.
 
-```bash
-python3 - <<'PY'
-import json, sys
-sys.path.insert(0, ".")
-from pathlib import Path
-from bin import spec_evaluator
+First derive the canonical draft path from the slug — never substitute the slug into a `Path("specs/<slug>...")` literal inline. Use the Phase 2A CLI, which validates the slug and emits the spec-file path (the draft path is the same string with `.draft` appended):
 
-CONFIG = Path.home() / ".spectre" / "reviewer.toml"
-result = spec_evaluator.evaluate(
-    Path("specs/<slug>.spec.md.draft"),
-    config_path=CONFIG,
-    bundle_persist_dir=Path("state"),
-)
-out = [{
-    "tier": f.tier, "kind": f.kind, "severity": f.severity,
-    "scope": f.location.scope, "step": f.location.step,
-    "ref": f.location.ref, "message": f.message, "fix": f.suggested_fix,
-    "dismissable": f.dismissable,
-} for f in result.findings]
-print(json.dumps(out, indent=2))
-print(f"TIERS_RUN: {result.sidecar_payload['tiers_run']}")
-print(f"MAX_SEVERITY: {result.max_severity}")
-PY
+```bash
+SPEC_PATH="$(python3 -m bin.spec_evaluator slug-to-path --slug "<slug>")"
+DRAFT_PATH="${SPEC_PATH}.draft"
 ```
+
+Then run the evaluator and capture the full result (findings + `sidecar_payload`) to `state/.eval-result.json` so §6.7 can re-use the same `policy_hash`/`tiers_run` without re-running the evaluator:
+
+```bash
+python3 -m bin.spec_evaluator evaluate \
+  --spec "$DRAFT_PATH" \
+  --config "$HOME/.spectre/reviewer.toml" \
+  --bundle-dir state \
+  --output state/.eval-result.json
+```
+
+The output JSON has top-level keys `findings` (list), `max_severity` (string), and `sidecar_payload` (dict — feeds §6.7). The bundle is also persisted at `state/.eval-bundle.json` for §6.6. Read `state/.eval-result.json` to surface findings; the `tiers_run` value is at `sidecar_payload.tiers_run` and `max_severity` is the top-level field.
 
 After running, surface a one-line tier status block before the findings:
 
@@ -307,32 +301,7 @@ In v0.2.1 the graph manifest may not have ADR nodes yet. The `update_graph_for_s
 
 The §6.4 evaluator already computed `preview_resources` in the bundle. Read that list (don't re-compute):
 
-```bash
-python3 - <<'PY'
-import sys, json
-sys.path.insert(0, ".")
-from pathlib import Path
-from bin import spec_evaluator, graph
-
-draft = Path("specs/<slug>.spec.md.draft")
-draft_text = draft.read_text(encoding="utf-8")
-import hashlib
-draft_sha = hashlib.sha256(draft_text.encode()).hexdigest()
-
-bundle = spec_evaluator.load_persisted_bundle(
-    Path("state/.eval-bundle.json"),
-    draft_sha256=draft_sha,
-    draft_path=draft,
-)
-if bundle is None:
-    print("BUNDLE_MISMATCH: rebuilding")
-    # Fallback: rebuild on the fly. Should not happen in normal flow.
-    bundle = spec_evaluator.build_bundle(draft)
-
-for r in bundle.preview_resources:
-    print(f"{r['id']} ({r['kind']}:{r['identifier']})")
-PY
-```
+§6.4 already persisted the bundle to `state/.eval-bundle.json` keyed by the draft's SHA-256, so the file on disk is current by the time §6.6 runs. Use the native `Read` tool on `state/.eval-bundle.json` and parse out the `preview_resources` array — each entry is an object `{"id": ..., "kind": ..., "identifier": ...}`. If the bundle file is missing (rare — only happens if §6.4 was skipped or `clear-bundle` was run), re-run the §6.4 evaluator command first to repopulate it.
 
 For each unique Resource:
 
@@ -383,30 +352,16 @@ Now that the user confirmed and ADRs are written:
 
 4. **Write the `<slug>.spec.md.eval.json` sidecar** (v0.3+, post-§6.4 evaluator). The sidecar filename is always the spec filename with `.eval.json` appended (append-suffix, not replace-suffix — `eval_metadata.sidecar_path_for(spec)` returns the canonical path). The evaluator's `result.sidecar_payload` carries the policy hash, tiers run, dismissals, findings summary, and DeepSeek model version. Persist next to the locked spec:
 
-   ```bash
-   python3 - <<'PY'
-   import sys
-   sys.path.insert(0, ".")
-   from pathlib import Path
-   from bin import eval_metadata, spec_evaluator
+   Use the Phase 2A CLI. Derive the locked-spec path from the slug (the same `slug-to-path` helper §6.4 used) and feed the `sidecar_payload` block §6.4 already saved to `state/.eval-result.json` straight into `write-sidecar`. Augmenting the payload with `config_path` keeps the sidecar's `config_path` field populated:
 
-   draft = Path("specs/<slug>.spec.md.draft")  # already renamed to .spec.md by step 1
-   spec = Path("specs/<slug>.spec.md")
-   # Re-load sidecar_payload from the persisted bundle (or recompute via evaluate())
-   # The cleanest path: the calling code captured `result.sidecar_payload` from §6.4.
-   eval_metadata.write_sidecar(
-       spec,
-       evaluator_version=spec_evaluator.EVALUATOR_VERSION,
-       tiers_run=result.sidecar_payload["tiers_run"],
-       findings=result.findings,
-       dismissals=result.sidecar_payload.get("dismissals", []),
-       config_path=Path.home() / ".spectre" / "reviewer.toml",
-       config_hash=result.sidecar_payload.get("config_hash"),
-       deepseek_model_version=result.sidecar_payload.get("deepseek_model_version"),
-       policy_hash=result.sidecar_payload["policy_hash"],
-   )
-   PY
+   ```bash
+   SPEC_PATH="$(python3 -m bin.spec_evaluator slug-to-path --slug "<slug>")"
+   python3 -c 'import json,sys; d=json.load(open("state/.eval-result.json"))["sidecar_payload"]; d["config_path"]=sys.argv[1]; json.dump(d,sys.stdout)' \
+     "$HOME/.spectre/reviewer.toml" \
+     | python3 -m bin.eval_metadata write-sidecar --spec "$SPEC_PATH"
    ```
+
+   The CLI prints the written sidecar path on stdout. `policy_hash`, `tiers_run`, `dismissals`, `findings_summary`, `evaluator_version`, `config_hash`, and `deepseek_model_version` are all carried verbatim from §6.4's `sidecar_payload` — there is no re-computation, no inline `Path("specs/<slug>...")` substitution, and no policy-hash drift between §6.4 and §6.7.
 
 5. **Clear the persisted bundle** — lock is complete, the bundle is no longer needed:
 
