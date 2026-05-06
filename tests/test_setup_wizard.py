@@ -288,3 +288,30 @@ def test_maybe_provision_personal_rules_skips_when_file_exists(tmp_path, monkeyp
     target.write_text("# pre-existing\n", encoding="utf-8")
     result = setup_wizard.maybe_provision_personal_rules(target)
     assert result == "exists"
+
+
+def test_maybe_provision_templates_dir_creates_subdirs(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    setup_wizard.maybe_provision_templates_dir()
+    assert (tmp_path / ".spectre" / "templates" / "specs").is_dir()
+
+
+def test_maybe_provision_templates_dir_skills_subdir(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    setup_wizard.maybe_provision_templates_dir()
+    assert (tmp_path / ".spectre" / "templates" / "skills").is_dir()
+
+
+def test_maybe_provision_template_patches_dir_creates_three_subdirs(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    setup_wizard.maybe_provision_template_patches_dir()
+    base = tmp_path / ".spectre" / "template-patches"
+    assert (base / "proposed").is_dir()
+
+
+def test_maybe_provision_template_patches_dir_creates_accepted_and_rejected(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    setup_wizard.maybe_provision_template_patches_dir()
+    base = tmp_path / ".spectre" / "template-patches"
+    actual = {p.name for p in base.iterdir() if p.is_dir()}
+    assert actual == {"proposed", "accepted", "rejected"}
