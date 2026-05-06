@@ -125,6 +125,26 @@ def expand_v1_to_v2(v1: dict[str, Any]) -> dict[str, Any]:
 _expand_v1_to_v2 = expand_v1_to_v2
 
 
+def get_paths_touched(data: dict[str, Any], track: str = "default") -> list[str]:
+    """Return paths_touched for *track* from a loaded scratchpad dict.
+
+    Handles both schema versions:
+    - v2: data["tracks"][track]["paths_touched"]
+    - v1: data["paths_touched"]  (top-level)
+
+    Returns [] when neither key is present — never raises.
+    """
+    # v2 path (preferred)
+    tracks = data.get("tracks")
+    if isinstance(tracks, dict):
+        track_data = tracks.get(track, {})
+        v2_val = track_data.get("paths_touched")
+        if v2_val is not None:
+            return v2_val
+    # v1 fallback (top-level)
+    return data.get("paths_touched", [])
+
+
 def save_track(path: Path, track: str, track_data: dict[str, Any]) -> None:
     data = load(path)
     if data.get("version") != 2:

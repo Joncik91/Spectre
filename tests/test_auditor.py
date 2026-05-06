@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from bin import auditor
+from bin import auditor, _scratchpad
 
 
 def test_audit_path_exists_passes(tmp_path):
@@ -224,3 +224,40 @@ def test_pbt_length_check_passes_on_dict_value(tmp_path):
     length_results = [r for r in results if r.kind == "length"]
     assert len(length_results) == 1
     assert length_results[0].passed
+
+
+# --- get_paths_touched schema-level tests ---
+
+
+def test_paths_touched_resolved_from_v2_schema_level():
+    """v2 scratchpad: paths_touched lives under tracks.<track>.paths_touched."""
+    v2_sp = {
+        "version": 2,
+        "active_mission": None,
+        "tracks": {
+            "default": {
+                "paths_touched": ["/some/file.py", "/other/file.md"],
+                "step": 3,
+            }
+        },
+    }
+    paths = _scratchpad.get_paths_touched(v2_sp, track="default")
+    assert paths == ["/some/file.py", "/other/file.md"]
+
+
+def test_paths_touched_falls_back_to_v1_schema_level():
+    """v1 scratchpad: paths_touched at top level; fallback must still return it."""
+    v1_sp = {
+        "active_spec": "specs/foo.spec.md",
+        "step": 2,
+        "paths_touched": ["/v1/path.txt"],
+    }
+    paths = _scratchpad.get_paths_touched(v1_sp, track="default")
+    assert paths == ["/v1/path.txt"]
+
+
+def test_paths_touched_returns_empty_for_missing_field():
+    """Neither v2 tracks key nor v1 top-level key present → empty list, no crash."""
+    sp = {"version": 2, "tracks": {"default": {"step": 1}}}
+    paths = _scratchpad.get_paths_touched(sp, track="default")
+    assert paths == []
