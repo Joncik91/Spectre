@@ -166,3 +166,50 @@ def test_init_walk_no_stop_reason_set():
         spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
     )
     assert state.stop_reason is None
+
+
+def test_next_concern_returns_first_pending_concern():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    c = walker.next_concern(state)
+    assert c is not None
+    assert c.id == "seed-1"
+
+
+def test_next_concern_skips_stale_concerns():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    state.stale.add("seed-1")
+    extra = walker.Concern(
+        id="c2",
+        kind="edge-case",
+        receivers=["implement"],
+        depends_on=[],
+        summary="non-stale concern",
+    )
+    state.pending.append(extra)
+    c = walker.next_concern(state)
+    assert c is not None
+    assert c.id == "c2"
+
+
+def test_next_concern_returns_none_when_pending_empty():
+    state = walker.WalkState(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    assert walker.next_concern(state) is None
+
+
+def test_next_concern_returns_none_when_all_pending_are_stale():
+    state = walker.init_walk(
+        spec_intent="x",
+        spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+    )
+    for c in state.pending:
+        state.stale.add(c.id)
+    assert walker.next_concern(state) is None

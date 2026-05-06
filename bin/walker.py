@@ -89,3 +89,11 @@ def init_walk(*, spec_intent: str, spec_draft_path: pathlib.Path) -> WalkState:
         spec_draft_path=spec_draft_path,
         pending=[seed],
     )
+
+
+def next_concern(state: WalkState) -> Concern | None:
+    """Return the first non-stale pending concern, or None if exhausted."""
+    for c in state.pending:
+        if c.id not in state.stale:
+            return c
+    return None
