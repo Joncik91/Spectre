@@ -102,7 +102,7 @@ def write_config(
     model: str = "deepseek-reasoner",
     base_url: str = "https://api.deepseek.com/v1",
     budget_tokens_per_spec: int = 50_000,
-    timeout_s: int = 30,
+    timeout_s: int = 180,
 ) -> None:
     """Atomically write reviewer.toml at mode 0600."""
     path.parent.mkdir(parents=True, exist_ok=True)
