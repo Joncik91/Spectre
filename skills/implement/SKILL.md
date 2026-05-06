@@ -101,34 +101,24 @@ Classify `current_action` by tier before executing. Run:
 
 ```bash
 python3 - <<'PY'
-import sys, pathlib, re
+import sys, pathlib
 sys.path.insert(0, ".")
-from bin import tier
+from bin import tier, coverage_gate
 
 current_action = """<current_action verbatim>"""
 t, reasons, na = tier.classify(current_action)
 
 # Read the active spec's §8.1 hard contract to populate spec_locked_paths.
-# Format: lines beginning with "- mutates:" or "- never-touches:" inside §8.1.
+# Delegates to bin.coverage_gate.parse_81_block — the canonical permissive
+# parser that handles both bare (`- mutates: /etc/`) and backticked-key
+# (`- `mutates:` /etc/`) syntax. Inline regex was too strict (v0.4.1 fix).
 spec_locked_paths = set()
 active_spec_path = pathlib.Path("specs") / "<active spec name>.spec.md"
 if active_spec_path.is_file():
     text = active_spec_path.read_text(encoding="utf-8")
-    in_8_1 = False
-    for line in text.splitlines():
-        if line.strip().startswith("### 8.1"):
-            in_8_1 = True
-            continue
-        if in_8_1 and line.startswith("##"):
-            break
-        if in_8_1:
-            m = re.match(r"^\s*-\s*(?:mutates|never-touches):\s*(.+)$", line)
-            if m:
-                # Comma-separated paths; strip whitespace
-                for p in m.group(1).split(","):
-                    p = p.strip().strip("`").strip()
-                    if p and p != "[]":
-                        spec_locked_paths.add(p)
+    parsed = coverage_gate.parse_81_block(text)
+    spec_locked_paths.update(parsed.get("mutates", []))
+    spec_locked_paths.update(parsed.get("never_touches", []))
 
 halt = tier.should_halt(
     t,
@@ -215,7 +205,10 @@ import sys
 sys.path.insert(0, ".")
 from bin import personal_rules
 
-if personal_rules.adoption_count_this_session() >= personal_rules.DEFAULT_BRAKE_THRESHOLD:
+# Persistent counter (state/scratchpad.json). The in-memory counter would
+# reset to 0 every fork — heredoc fork bug, v0.4.1 fix. append_adoption
+# auto-bumps the persistent value via its default scratchpad path.
+if personal_rules.adoption_count_this_session_persistent() >= personal_rules.DEFAULT_BRAKE_THRESHOLD:
     print("BRAKE: 3 adoptions this session. Edit ~/.spectre/personal-rules.toml to review or remove. Skipping prompt.")
     sys.exit(0)
 
@@ -224,7 +217,7 @@ personal_rules.append_adoption(
     fingerprint="<fp>",
     reason="<one-line user reason>",
 )
-print(f"ADOPTED. ({personal_rules.adoption_count_this_session()}/3 this session)")
+print(f"ADOPTED. ({personal_rules.adoption_count_this_session_persistent()}/3 this session)")
 PY
 ```
 
@@ -232,7 +225,7 @@ If `once-only`: do nothing — the halt fires again on the next run.
 
 If `never-ask-again`: in v0.4.1, treat as `once-only` (the placeholder schema lands in v0.4.2). Print "Note: never-ask-again is v0.4.2; treating as once-only."
 
-**Sandbox-paradox brake.** If `personal_rules.adoption_count_this_session()` already ≥ `personal_rules.DEFAULT_BRAKE_THRESHOLD` (default 3), the skill MUST skip the prompt entirely and print: "BRAKE: 3 adoptions this session. Edit ~/.spectre/personal-rules.toml to review or remove." The brake is session-scoped — restarting Claude Code resets it. Read the threshold dynamically from `personal_rules.DEFAULT_BRAKE_THRESHOLD` rather than hardcoding 3, so v0.4.2 schema bumps stay backward-compatible.
+**Sandbox-paradox brake.** If `personal_rules.adoption_count_this_session_persistent()` already ≥ `personal_rules.DEFAULT_BRAKE_THRESHOLD` (default 3), the skill MUST skip the prompt entirely and print: "BRAKE: 3 adoptions this session. Edit ~/.spectre/personal-rules.toml to review or remove." The brake is session-scoped via `state/scratchpad.json`'s `tracks.<track>.session_adoption_count` field — restarting Claude Code (or starting a new spec/track) resets it on the next `/vision`. The persistent variant is mandatory because each `python3 - <<'PY'` heredoc forks a fresh process, wiping any in-memory counter. Read the threshold dynamically from `personal_rules.DEFAULT_BRAKE_THRESHOLD` rather than hardcoding 3, so v0.4.2 schema bumps stay backward-compatible.
 
 **Why the brake exists.** Per `research/developing-a-safe.md` (vault), HITL approval gates create permission-fatigue: users rage-bypass safety once prompts feel persistent. The 3-adoption cap forces the user to re-read their personal-rules file rather than reflexively saying yes to everything.
 

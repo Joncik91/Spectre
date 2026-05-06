@@ -205,3 +205,79 @@ def test_brake_threshold_enforces_at_3_by_default(monkeypatch, tmp_path):
     """The skill checks adoption_count_this_session() >= DEFAULT_BRAKE_THRESHOLD
     to know when to stop prompting. The constant exists as a public surface."""
     assert personal_rules.DEFAULT_BRAKE_THRESHOLD == 3
+
+
+# ─── Persistent-counter tests (v0.4.1 senior-review fix) ──────────────────────
+#
+# The SKILL.md heredoc invokes `python3 - <<'PY' ... PY`, which forks a fresh
+# Python process every adoption prompt. Module-level state (the in-memory
+# _SESSION_ADOPTION_COUNT) resets to 0 on every fork, so the 3-adoption brake
+# never fires in production. The persistent helpers below disk-back the counter
+# under tracks.<track>.session_adoption_count in state/scratchpad.json.
+
+
+def test_adoption_count_persistent_starts_at_zero(tmp_path):
+    """Fresh project (no scratchpad.json yet) reads as zero, not an error."""
+    scratchpad_path = tmp_path / "state" / "scratchpad.json"
+    assert personal_rules.adoption_count_this_session_persistent(scratchpad_path) == 0
+
+
+def test_append_adoption_increments_persistent_counter(tmp_path, monkeypatch):
+    """append_adoption must bump the on-disk counter so the next forked
+    Python process sees the incremented value (the SKILL.md production path)."""
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    scratchpad_path = tmp_path / "state" / "scratchpad.json"
+    assert personal_rules.adoption_count_this_session_persistent(scratchpad_path) == 0
+    personal_rules.append_adoption(
+        classifier_label="permission-change: chmod",
+        fingerprint="a" * 64,
+        reason="ok in tmp",
+        scratchpad_path=scratchpad_path,
+    )
+    assert personal_rules.adoption_count_this_session_persistent(scratchpad_path) == 1
+    personal_rules.append_adoption(
+        classifier_label="dependency-add: pip install",
+        fingerprint="b" * 64,
+        reason="dev dep",
+        scratchpad_path=scratchpad_path,
+    )
+    assert personal_rules.adoption_count_this_session_persistent(scratchpad_path) == 2
+
+
+def test_persistent_counter_survives_module_reload(tmp_path, monkeypatch):
+    """Simulate the SKILL.md `python3 - <<'PY'` fork by reloading the
+    personal_rules module — that wipes _SESSION_ADOPTION_COUNT but the
+    persistent counter must survive."""
+    import importlib
+
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    scratchpad_path = tmp_path / "state" / "scratchpad.json"
+    personal_rules.append_adoption(
+        classifier_label="x",
+        fingerprint="a" * 64,
+        reason="r",
+        scratchpad_path=scratchpad_path,
+    )
+    # In-memory counter is now 1; reload nukes it.
+    reloaded = importlib.reload(personal_rules)
+    assert reloaded.adoption_count_this_session() == 0  # in-memory wiped (proves reload worked)
+    # Persistent counter still 1.
+    assert reloaded.adoption_count_this_session_persistent(scratchpad_path) == 1
+
+
+def test_persistent_counter_resets_via_helper(tmp_path, monkeypatch):
+    """reset_session_adoption_count_persistent zeroes the on-disk value so
+    test fixtures can assert on a fresh state without hand-editing JSON."""
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    scratchpad_path = tmp_path / "state" / "scratchpad.json"
+    personal_rules.append_adoption(
+        classifier_label="x", fingerprint="a"*64, reason="r",
+        scratchpad_path=scratchpad_path,
+    )
+    personal_rules.append_adoption(
+        classifier_label="y", fingerprint="b"*64, reason="r",
+        scratchpad_path=scratchpad_path,
+    )
+    assert personal_rules.adoption_count_this_session_persistent(scratchpad_path) == 2
+    personal_rules.reset_session_adoption_count_persistent(scratchpad_path)
+    assert personal_rules.adoption_count_this_session_persistent(scratchpad_path) == 0

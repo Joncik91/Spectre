@@ -16,8 +16,10 @@ Public API:
     load_personal_rules() -> dict
     is_classifier_halt_overridden(*, classifier_label, fingerprint) -> bool
     append_adoption(*, classifier_label, fingerprint, reason) -> None
-    adoption_count_this_session() -> int
-    reset_session_counter() -> None  # test-only helper
+    adoption_count_this_session() -> int                          # in-memory (unit tests)
+    adoption_count_this_session_persistent(scratchpad_path=None)  # disk-backed (production)
+    reset_session_counter() -> None                               # test-only, in-memory
+    reset_session_adoption_count_persistent(scratchpad_path)      # test-only, disk
 """
 from __future__ import annotations
 
@@ -27,13 +29,106 @@ import tempfile
 import tomllib
 from datetime import datetime, timezone
 
+from bin import _scratchpad
+
 PERSONAL_RULES_VERSION = "0.4.1"
 DEFAULT_BRAKE_THRESHOLD = 3
 
 # Module-level session counter. Reset only via reset_session_counter (tests)
-# or process restart. NOT persisted to disk — sandbox-paradox brake is
-# session-scoped, not lifetime-scoped.
+# or process restart. NOT persisted to disk — kept for unit-test compat.
+#
+# Production (the SKILL.md heredoc) MUST use the *_persistent helpers
+# below: the heredoc spawns a fresh `python3 -` process each invocation,
+# so an in-memory counter resets to 0 every prompt — defeating the
+# 3-adoption sandbox-paradox brake. v0.4.1 senior-review fix.
 _SESSION_ADOPTION_COUNT = 0
+
+# Default track name used by the v2 scratchpad when /implement is invoked
+# without an explicit <track> arg. Mirrors expand_v1_to_v2's "default" key.
+_DEFAULT_TRACK = "default"
+_PERSISTENT_COUNTER_KEY = "session_adoption_count"
+
+
+def _default_scratchpad_path() -> pathlib.Path:
+    """Project-relative scratchpad path. Resolved at call time so that
+    monkeypatching pathlib.Path.cwd or chdir-ing into a tmp project both
+    Just Work."""
+    return pathlib.Path("state/scratchpad.json")
+
+
+def _ensure_v2(data: dict) -> dict:
+    """Return a v2-shaped dict. Auto-promotes a v1 payload (the default
+    when scratchpad.json is absent) into v2 with tracks.default seeded
+    from track_default()."""
+    if data.get("version") == 2 and isinstance(data.get("tracks"), dict):
+        return data
+    return _scratchpad.expand_v1_to_v2(data)
+
+
+def _read_persistent_count(scratchpad_path: pathlib.Path, track: str) -> int:
+    """Load scratchpad and read tracks.<track>.session_adoption_count.
+
+    Missing file, missing track, or non-int field all read as 0.
+    """
+    data = _scratchpad.load(scratchpad_path)
+    tracks = data.get("tracks") or {}
+    track_data = tracks.get(track) or {}
+    val = track_data.get(_PERSISTENT_COUNTER_KEY, 0)
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _bump_persistent_count(scratchpad_path: pathlib.Path, track: str) -> int:
+    """Atomically increment tracks.<track>.session_adoption_count by 1.
+    Returns the new value. Auto-promotes v1 → v2 if needed."""
+    data = _scratchpad.load(scratchpad_path)
+    data = _ensure_v2(data)
+    tracks = data.setdefault("tracks", {})
+    track_data = tracks.get(track) or _scratchpad.track_default()
+    current = track_data.get(_PERSISTENT_COUNTER_KEY, 0)
+    try:
+        current = int(current)
+    except (TypeError, ValueError):
+        current = 0
+    new_value = current + 1
+    track_data[_PERSISTENT_COUNTER_KEY] = new_value
+    tracks[track] = track_data
+    _scratchpad.atomic_write(scratchpad_path, data)
+    return new_value
+
+
+def adoption_count_this_session_persistent(
+    scratchpad_path: pathlib.Path | None = None,
+    *,
+    track: str = _DEFAULT_TRACK,
+) -> int:
+    """Disk-backed adoption count for the active scratchpad track.
+
+    Production code (the SKILL.md heredoc) calls this — its in-memory
+    counterpart resets every fork. Defaults to the project-relative
+    `state/scratchpad.json` and the `default` track.
+    """
+    if scratchpad_path is None:
+        scratchpad_path = _default_scratchpad_path()
+    return _read_persistent_count(scratchpad_path, track)
+
+
+def reset_session_adoption_count_persistent(
+    scratchpad_path: pathlib.Path,
+    *,
+    track: str = _DEFAULT_TRACK,
+) -> None:
+    """Test-only helper: zero the persistent counter for `track`.
+    Production code never calls this."""
+    data = _scratchpad.load(scratchpad_path)
+    data = _ensure_v2(data)
+    tracks = data.setdefault("tracks", {})
+    track_data = tracks.get(track) or _scratchpad.track_default()
+    track_data[_PERSISTENT_COUNTER_KEY] = 0
+    tracks[track] = track_data
+    _scratchpad.atomic_write(scratchpad_path, data)
 
 
 def personal_rules_path_default() -> pathlib.Path:
@@ -116,12 +211,27 @@ def _escape_toml_string(s: str) -> str:
     return "".join(out_chars)
 
 
-def append_adoption(*, classifier_label: str, fingerprint: str, reason: str) -> None:
-    """Add an entry to personal-rules.toml. Increments the session counter.
+def append_adoption(
+    *,
+    classifier_label: str,
+    fingerprint: str,
+    reason: str,
+    scratchpad_path: pathlib.Path | None = None,
+    track: str = _DEFAULT_TRACK,
+) -> None:
+    """Add an entry to personal-rules.toml. Increments BOTH session counters.
 
-    The TOML body is rewritten in full each call (the file is small;
-    correctness wins over append-only speed). Existing entries are
-    preserved verbatim.
+    - In-memory `_SESSION_ADOPTION_COUNT` (kept for unit-test compat).
+    - Persistent `tracks.<track>.session_adoption_count` in scratchpad.json
+      (the brake the SKILL.md heredoc actually consults — survives
+      python3-heredoc forks). Pass `scratchpad_path` to override the default
+      `state/scratchpad.json` location (tests do this; production omits it).
+
+    Persistent-bump errors are swallowed when the scratchpad path is
+    unwritable/missing-parent — the in-memory counter and TOML write must
+    still succeed even on a read-only project. The TOML body is rewritten
+    in full each call (the file is small; correctness wins over append-only
+    speed). Existing entries are preserved verbatim.
     """
     global _SESSION_ADOPTION_COUNT
     rules = load_personal_rules()
@@ -157,6 +267,15 @@ def append_adoption(*, classifier_label: str, fingerprint: str, reason: str) -> 
 
     _atomic_write_toml(personal_rules_path_default(), body)
     _SESSION_ADOPTION_COUNT += 1
+
+    # Best-effort persistent bump. If state/ doesn't exist or is unwritable,
+    # the in-memory counter still incremented above so unit tests that don't
+    # touch disk still pass. Production always has state/ (created by /vision).
+    target = scratchpad_path if scratchpad_path is not None else _default_scratchpad_path()
+    try:
+        _bump_persistent_count(target, track)
+    except OSError:
+        pass
 
 
 def adoption_count_this_session() -> int:

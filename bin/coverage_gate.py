@@ -27,19 +27,34 @@ _ADR_REF_RE = re.compile(r"adr-ref:\s*(\S+)", re.IGNORECASE)
 _DECISION_LINE_RE = re.compile(r"^\s*[-*]?\s*decision:\s+\S", re.IGNORECASE | re.MULTILINE)
 
 
-def _parse_81_block(body: str) -> tuple[list[str], list[str]]:
-    """Return (mutates_prefixes, never_touches_prefixes) from §8.1 block.
+def parse_81_block(spec_text: str) -> dict[str, list[str]]:
+    """Parse §8.1 hard-contract block. Permissive of backticked-key syntax.
 
-    Parses the first `mutates:` and `never-touches:` lines found in the §8.1
-    block and splits their comma-separated values.
+    Public API. The skills/implement/SKILL.md heredoc imports this rather
+    than re-deriving an inline regex (the inline form was too strict and
+    silently produced empty sets on the `mutates:` /path/ backticked-key
+    style used in some specs — bug fix v0.4.1 task 10 review).
+
+    Returns a dict with stable keys:
+        {
+          "mutates": list[str],          # paths after `mutates:`
+          "never_touches": list[str],    # paths after `never-touches:`
+        }
+
+    Both are empty lists when §8.1 is missing or contains no matching lines.
+    Callers that want a flat set of locked paths can `.update()` both lists.
     """
-    m81 = re.search(r"^### 8\.1.*$", body, re.MULTILINE)
+    m81 = re.search(r"^### 8\.1.*$", spec_text, re.MULTILINE)
     if not m81:
-        return [], []
+        return {"mutates": [], "never_touches": []}
 
     block_start = m81.end()
-    next_h = re.search(r"^#{2,3} ", body[block_start:], re.MULTILINE)
-    block = body[block_start : block_start + next_h.start()] if next_h else body[block_start:]
+    next_h = re.search(r"^#{2,3} ", spec_text[block_start:], re.MULTILINE)
+    block = (
+        spec_text[block_start : block_start + next_h.start()]
+        if next_h
+        else spec_text[block_start:]
+    )
 
     mutates: list[str] = []
     never_touches: list[str] = []
@@ -56,7 +71,17 @@ def _parse_81_block(body: str) -> tuple[list[str], list[str]]:
             never_touches = [v.strip() for v in raw.split(",") if v.strip()]
             continue
 
-    return mutates, never_touches
+    return {"mutates": mutates, "never_touches": never_touches}
+
+
+def _parse_81_block(body: str) -> tuple[list[str], list[str]]:
+    """Backward-compat tuple shim around parse_81_block.
+
+    Kept so internal call sites (and any test that imported the private
+    name) keep working unchanged. Prefer parse_81_block (dict) for new code.
+    """
+    parsed = parse_81_block(body)
+    return parsed["mutates"], parsed["never_touches"]
 
 
 def _path_covered_by(path: str, prefixes: list[str]) -> bool:
