@@ -116,20 +116,47 @@ def test_maybe_provision_skips_when_config_exists(tmp_path):
     assert result == "exists"
 
 
-# ── 5. maybe_provision: setup-skipped path when user declines key setup ──────
+# ── 5. maybe_provision: silent setup-skipped when no key found ──────
 
 
-def test_maybe_provision_returns_setup_skipped_when_user_skips(tmp_path, monkeypatch):
+def test_maybe_provision_returns_setup_skipped_when_no_key(tmp_path, monkeypatch):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("SPECTRE_SECRETS_FILE", raising=False)
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
     target = tmp_path / "reviewer.toml"
-    result = setup_wizard.maybe_provision(
-        target, secrets_file_path=None, prompt_fn=lambda _msg: "skip"
-    )
+    result = setup_wizard.maybe_provision(target, secrets_file_path=None)
     text = target.read_text(encoding="utf-8")
     assert "enabled = false" in text
     assert result == "setup-skipped"
+
+
+def test_maybe_provision_no_key_does_not_call_prompt_fn(tmp_path, monkeypatch):
+    """v0.4.2.1: the no-key path is silent; prompt_fn must never be invoked
+    (otherwise non-interactive callers raise EOFError on input())."""
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("SPECTRE_SECRETS_FILE", raising=False)
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    target = tmp_path / "reviewer.toml"
+
+    def boom(_msg: str) -> str:
+        pytest.fail("prompt_fn must not be called on the no-key silent-skip path")
+
+    result = setup_wizard.maybe_provision(target, secrets_file_path=None, prompt_fn=boom)
+    assert result == "setup-skipped"
+
+
+def test_maybe_provision_no_key_emits_stderr_breadcrumb(tmp_path, monkeypatch, capsys):
+    """v0.4.2.1: silent-skip prints one stderr line that names both the env-var
+    and the resolved secrets path so the user can act on the breadcrumb."""
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("SPECTRE_SECRETS_FILE", raising=False)
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    target = tmp_path / "reviewer.toml"
+    setup_wizard.maybe_provision(target, secrets_file_path=None)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "DEEPSEEK_API_KEY" in captured.err
+    assert str(tmp_path / ".spectre" / "secrets.env") in captured.err
 
 
 # ── 6. maybe_provision: enables on yes when key present ───────────────────────
@@ -190,29 +217,6 @@ def test_maybe_provision_probes_spectre_secrets_env_when_no_arg(tmp_path, monkey
     (secrets_dir / "secrets.env").write_text("DEEPSEEK_API_KEY=sk-auto\n", encoding="utf-8")
     target = tmp_path / "reviewer.toml"
     result = setup_wizard.maybe_provision(target, prompt_fn=lambda _msg: "yes")
-    assert result == "enabled"
-
-
-def test_maybe_provision_retry_finds_key_after_user_drops_file(tmp_path, monkeypatch):
-    """retry → wizard re-probes ~/.spectre/secrets.env. If user dropped the file,
-    detection succeeds and the opt-in prompt fires."""
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    monkeypatch.delenv("SPECTRE_SECRETS_FILE", raising=False)
-    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
-    secrets_dir = tmp_path / ".spectre"
-    secrets_dir.mkdir()
-    secrets_file = secrets_dir / "secrets.env"
-    target = tmp_path / "reviewer.toml"
-
-    state = {"call": 0}
-    def fake_prompt(_msg: str) -> str:
-        if state["call"] == 0:
-            secrets_file.write_text("DEEPSEEK_API_KEY=sk-just-dropped\n", encoding="utf-8")
-            state["call"] += 1
-            return "retry"
-        return "yes"
-
-    result = setup_wizard.maybe_provision(target, prompt_fn=fake_prompt)
     assert result == "enabled"
 
 
