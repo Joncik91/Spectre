@@ -2,6 +2,23 @@
 
 All notable changes to the SDL Vision Engine plugin (Spectre).
 
+## v0.4.2.2 — 2026-05-06
+
+**Patch release — closes #10 (v0.4.2.1 regression).**
+
+### Fixed
+- **#10** — `bin/setup_wizard.maybe_provision()` no longer prompts on the detected-key path. v0.4.2.1 fixed only the no-key branch; the yes/no prompt for an existing key still called `input()` and raised `EOFError` in non-interactive contexts. Configuring the API key in `~/.spectre/secrets.env` (or the `DEEPSEEK_API_KEY` env var) is itself the opt-in signal — Tier 3 enables silently. To opt out: edit `~/.spectre/reviewer.toml` and set `[tier3] enabled = false`. To re-prompt provisioning: delete `~/.spectre/reviewer.toml`. The `prompt_fn` parameter and the `"declined"` outcome are removed from the public API; both branches (key-detected, key-absent) are now non-interactive.
+
+### Tests
+**670 passing.** New regression test `test_maybe_provision_detected_key_does_not_call_input` monkeypatches `builtins.input` to fail-on-call and asserts the detected-key path returns `"enabled"`. The legacy `test_maybe_provision_disables_on_user_no` (asserted the now-removed `"declined"` outcome) is deleted. Existing test `test_detect_api_key_returns_none_when_env_missing_and_no_openclaw` now monkeypatches HOME so it doesn't depend on host-side `~/.spectre/secrets.env`.
+
+### Changed
+- `bin/spec_evaluator.py:EVALUATOR_VERSION` 0.4.2.1 → 0.4.2.2.
+- `.claude-plugin/marketplace.json` plugin version 0.4.2.1 → 0.4.2.2.
+
+### References
+- Issue: https://github.com/Joncik91/Spectre/issues/10
+
 ## v0.4.2.1 — 2026-05-06
 
 **Patch release — two blocking bugs surfaced by the v0.4 end-to-end live test.**
