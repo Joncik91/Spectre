@@ -400,3 +400,92 @@ def test_dismissed_t3_count_reflects_actually_filtered_findings_not_dismissal_li
             spec_path, config_path=config_path, bundle_persist_dir=tmp_path
         )
     assert result.sidecar_payload["findings_summary"]["dismissed_t3_count"] == 1
+
+
+# ── v0.3.1: visible Tier 3 skip findings ──────────────────────────────────────
+# These tests assert that when /vision passes a config_path that doesn't satisfy
+# the gate, the evaluator emits a tier3-unavailable info finding so the user
+# sees Tier 3 was skipped (rather than silently running Tiers 1+2 only).
+
+
+def test_evaluate_emits_tier3_unavailable_when_config_file_missing(tmp_path):
+    """config_path provided but file does not exist → tier3-unavailable info finding."""
+    missing_config = tmp_path / "nonexistent" / "reviewer.toml"
+    result = spec_evaluator.evaluate(
+        _GOOD_MINIMAL, config_path=missing_config, bundle_persist_dir=tmp_path
+    )
+    t3_unavailable = [
+        f for f in result.findings
+        if f.kind == "tier3-unavailable" and f.tier == 3
+    ]
+    assert len(t3_unavailable) == 1
+
+
+def test_evaluate_tier3_unavailable_message_names_config_missing_reason(tmp_path):
+    missing_config = tmp_path / "nope.toml"
+    result = spec_evaluator.evaluate(
+        _GOOD_MINIMAL, config_path=missing_config, bundle_persist_dir=tmp_path
+    )
+    t3 = [f for f in result.findings if f.kind == "tier3-unavailable"]
+    assert "config-missing" in t3[0].message
+
+
+def test_evaluate_emits_tier3_unavailable_when_config_disables_tier3(tmp_path):
+    """Config exists but [tier3] enabled = false → tier3-unavailable info finding."""
+    toml_text = b"[tier3]\nenabled = false\napi_key_env = \"DEEPSEEK_API_KEY\"\n"
+    config_path = tmp_path / "reviewer.toml"
+    config_path.write_bytes(toml_text)
+    result = spec_evaluator.evaluate(
+        _GOOD_MINIMAL, config_path=config_path, bundle_persist_dir=tmp_path
+    )
+    t3_unavailable = [f for f in result.findings if f.kind == "tier3-unavailable"]
+    assert len(t3_unavailable) == 1
+
+
+def test_evaluate_tier3_unavailable_message_names_disabled_reason(tmp_path):
+    toml_text = b"[tier3]\nenabled = false\napi_key_env = \"DEEPSEEK_API_KEY\"\n"
+    config_path = tmp_path / "reviewer.toml"
+    config_path.write_bytes(toml_text)
+    result = spec_evaluator.evaluate(
+        _GOOD_MINIMAL, config_path=config_path, bundle_persist_dir=tmp_path
+    )
+    t3 = [f for f in result.findings if f.kind == "tier3-unavailable"]
+    assert "disabled-in-config" in t3[0].message
+
+
+def test_evaluate_emits_tier3_unavailable_when_api_key_env_missing(tmp_path, monkeypatch):
+    """Config enables Tier 3 but env var is unset → tier3-unavailable info finding."""
+    monkeypatch.delenv("SPECTRE_FAKE_KEY_NAME", raising=False)
+    toml_text = b"[tier3]\nenabled = true\napi_key_env = \"SPECTRE_FAKE_KEY_NAME\"\n"
+    config_path = tmp_path / "reviewer.toml"
+    config_path.write_bytes(toml_text)
+    result = spec_evaluator.evaluate(
+        _GOOD_MINIMAL, config_path=config_path, bundle_persist_dir=tmp_path
+    )
+    t3_unavailable = [f for f in result.findings if f.kind == "tier3-unavailable"]
+    # llm_judge.evaluate emits its own tier3-unavailable on missing key; check ≥1.
+    assert len(t3_unavailable) >= 1
+
+
+def test_evaluate_tier3_unavailable_message_names_no_api_key_reason(tmp_path, monkeypatch):
+    monkeypatch.delenv("SPECTRE_FAKE_KEY_NAME", raising=False)
+    toml_text = b"[tier3]\nenabled = true\napi_key_env = \"SPECTRE_FAKE_KEY_NAME\"\n"
+    config_path = tmp_path / "reviewer.toml"
+    config_path.write_bytes(toml_text)
+    result = spec_evaluator.evaluate(
+        _GOOD_MINIMAL, config_path=config_path, bundle_persist_dir=tmp_path
+    )
+    t3 = [f for f in result.findings if f.kind == "tier3-unavailable"]
+    msg_blob = " ".join(f.message for f in t3)
+    assert "no-api-key" in msg_blob or "missing API key" in msg_blob
+
+
+def test_evaluate_tiers_run_excludes_tier3_when_unavailable(tmp_path):
+    """When Tier 3 is unavailable, sidecar tiers_run stays [1, 2]."""
+    toml_text = b"[tier3]\nenabled = false\n"
+    config_path = tmp_path / "reviewer.toml"
+    config_path.write_bytes(toml_text)
+    result = spec_evaluator.evaluate(
+        _GOOD_MINIMAL, config_path=config_path, bundle_persist_dir=tmp_path
+    )
+    assert result.sidecar_payload["tiers_run"] == [1, 2]

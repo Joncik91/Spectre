@@ -126,9 +126,26 @@ DRAFT: specs/<slug>.spec.md.draft (N steps). Reply: yes / refine "<change>" / ca
 
 The draft-to-disk pattern eliminates the double-token-output friction (printing the full spec inline AND writing the file). The user reviews in their editor; we hold the spec in disk-only state until confirmed.
 
+### Step 6.3a — First-run setup wizard (v0.3.1+)
+
+Before running the evaluator, ensure `~/.spectre/reviewer.toml` exists. If it doesn't, the wizard auto-creates it — detecting any DeepSeek API key in the live environment, then optionally in a `.env`-style secrets file pointed to by the `SPECTRE_SECRETS_FILE` env var, and prompting once for opt-in. The TOML is always written (with `enabled=false` if the user declines or no key is found) so subsequent runs don't re-prompt.
+
+```bash
+python3 - <<'PY'
+import sys
+sys.path.insert(0, ".")
+from bin import setup_wizard
+target = setup_wizard.config_path_default()
+result = setup_wizard.maybe_provision(target)
+print(f"WIZARD: {result} ({target})")
+PY
+```
+
+Outcomes: `exists` (no-op), `enabled` (key found, user opted in), `declined` (key found, user opted out), `no-key` (no key anywhere — Tier 3 unavailable until user adds one and edits the TOML). After the wizard runs, `~/.spectre/reviewer.toml` is guaranteed to exist; §6.4 always passes that path to the evaluator.
+
 ### Step 6.4 — Pre-lock spec evaluator (CDLC Evaluate phase, v0.3+)
 
-After the user replies `yes` (or `refine`), run the spec evaluator over a *review bundle* (preview ADRs + preview Resource nodes + preview tier classifications materialized but not committed). Tiers 1+2 always run (deterministic, local). Tier 3 (DeepSeek v4 Pro adversarial reviewer) runs only if `~/.spectre/reviewer.toml` has `[tier3] enabled = true`.
+After the user replies `yes` (or `refine`), run the spec evaluator over a *review bundle* (preview ADRs + preview Resource nodes + preview tier classifications materialized but not committed). Tiers 1+2 always run (deterministic, local). Tier 3 (DeepSeek `deepseek-reasoner` adversarial reviewer) runs only when `~/.spectre/reviewer.toml` has `[tier3] enabled = true` AND the configured API key is present in the environment. When Tier 3 is unavailable for any reason, the evaluator emits an info-severity `tier3-unavailable` finding so the skip is **visible**, never silent.
 
 ```bash
 python3 - <<'PY'
@@ -140,7 +157,7 @@ from bin import spec_evaluator
 CONFIG = Path.home() / ".spectre" / "reviewer.toml"
 result = spec_evaluator.evaluate(
     Path("specs/<slug>.spec.md.draft"),
-    config_path=CONFIG if CONFIG.exists() else None,
+    config_path=CONFIG,
     bundle_persist_dir=Path("state"),
 )
 out = [{
@@ -150,9 +167,21 @@ out = [{
     "dismissable": f.dismissable,
 } for f in result.findings]
 print(json.dumps(out, indent=2))
+print(f"TIERS_RUN: {result.sidecar_payload['tiers_run']}")
 print(f"MAX_SEVERITY: {result.max_severity}")
 PY
 ```
+
+After running, surface a one-line tier status block before the findings:
+
+```
+tier 1: PASS (n findings)
+tier 2: PASS (n findings)
+tier 3: PASS (n findings)        # if tiers_run includes 3
+tier 3: SKIPPED (<reason>)        # if a tier3-unavailable finding is present
+```
+
+Reasons for SKIPPED come from the `tier3-unavailable` finding's `message` field: `config-missing`, `disabled-in-config`, or `no-api-key`. The user should always see one line per tier — the goal is to make Tier 3 status as visible as Tiers 1 and 2.
 
 Interpret the result:
 

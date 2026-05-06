@@ -39,13 +39,16 @@ from bin import eval_metadata as _eval_metadata
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-EVALUATOR_VERSION = "0.3.0"
+EVALUATOR_VERSION = "0.3.1"
 TIER1_TIMEOUT_MS = 100
 TIER2_TIMEOUT_S = 2
 TIER3_TIMEOUT_S = 30
 DEFAULT_FINDING_CAP = 20
 SIDECAR_SUFFIX = ".eval.json"
-DEEPSEEK_MODEL = "deepseek-v4-pro"
+# Note: DeepSeek's v1 API accepts `deepseek-chat` and `deepseek-reasoner`. The
+# v0.3.0 README/docs mentioned a non-existent "v4-pro" alias; v0.3.1 standardizes
+# on `deepseek-reasoner` because reasoning > chat for adversarial spec critique.
+DEEPSEEK_MODEL = "deepseek-reasoner"
 DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
 
 # ── Dismissal parser ──────────────────────────────────────────────────────────
@@ -384,7 +387,7 @@ def evaluate(
                 kind="tier3-unavailable",
                 severity="info",
                 location=_findings.FindingLocation(scope="spec-wide"),
-                message=f"Config file not found at {config_path}",
+                message=f"Tier 3 skipped (config-missing): {config_path}",
                 dismissable=False,
             ))
         else:
@@ -404,7 +407,21 @@ def evaluate(
                     timeout_s=tier3_cfg.get("timeout_s", TIER3_TIMEOUT_S),
                 )
                 tier3_findings = _llm_judge.evaluate(bundle.spec_text, config=judge_config)
-                tiers_run = [1, 2, 3]
+                # tiers_run only flips to [1, 2, 3] when llm_judge actually reached the API
+                # (i.e. didn't return a tier3-unavailable sentinel). Detect by absence of
+                # tier3-unavailable findings.
+                if not any(f.kind == "tier3-unavailable" for f in tier3_findings):
+                    tiers_run = [1, 2, 3]
+            else:
+                # Config exists but Tier 3 is explicitly disabled — emit a visible signal.
+                tier3_findings.append(_findings.Finding(
+                    tier=3,
+                    kind="tier3-unavailable",
+                    severity="info",
+                    location=_findings.FindingLocation(scope="spec-wide"),
+                    message=f"Tier 3 skipped (disabled-in-config): {config_path}",
+                    dismissable=False,
+                ))
 
     # ── Step 6: Aggregate ────────────────────────────────────────────────────
     all_findings = tier1_findings + tier2_findings + tier3_findings

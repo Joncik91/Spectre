@@ -24,7 +24,23 @@ _SOFT_VERIFY_PATTERNS: list[re.Pattern[str]] = [
 _CALIBRATION_REQUIRED_FIELDS = ("mutates:", "never-touches:", "decision-budget:", "reboot-survival:")
 
 # ── Path-like token regex (text-match heuristic for action-not-probed) ───────
+# Note: the leading `\b` boundary means `/dev/null` after a redirect like `2>/dev/null`
+# is captured as `/null` (the `\b` matches at the `>/` transition). The filter below
+# accounts for this by checking both the full /dev/<x> form and the bare /<x> form.
 _PATH_RE = re.compile(r"\b(/[a-zA-Z0-9_/.-]+)")
+
+# Stream-redirect targets that are not real writable filesystem artifacts. The
+# action-not-probed heuristic must skip these — capturing /dev/null in a step's
+# action shouldn't demand a corresponding probe in the verification.
+_DEV_STREAMS: frozenset[str] = frozenset({
+    "/dev/null", "/dev/stdout", "/dev/stderr",
+    # After regex word-boundary clipping, these can appear as bare suffixes too:
+    "/null", "/stdout", "/stderr",
+})
+
+# Pattern that detects when a "/null"/"/stdout"/"/stderr" capture is actually
+# a stream redirect (preceded by `/dev` so the original token was /dev/<name>).
+_DEV_REDIRECT_RE = re.compile(r"/dev/(null|stdout|stderr)\b")
 
 
 def _is_soft_verification(value: str) -> bool:
@@ -37,8 +53,28 @@ def _is_soft_verification(value: str) -> bool:
 
 
 def _extract_paths_from_text(text: str) -> list[str]:
-    """Return all path-like tokens found in text (text-match heuristic)."""
-    return _PATH_RE.findall(text)
+    """Return all path-like tokens found in text (text-match heuristic).
+
+    Filters /dev/null, /dev/stdout, /dev/stderr because they are stream redirects,
+    not writable artifacts that need probing in the verification.
+
+    Also filters bare `/null`, `/stdout`, `/stderr` captures — these are word-
+    boundary artifacts of the regex when the original token was `/dev/null` etc.
+    after a redirect like `2>/dev/null` (the `\\b` matches at the `>/` boundary).
+    """
+    raw = _PATH_RE.findall(text)
+    filtered: list[str] = []
+    for p in raw:
+        if p in _DEV_STREAMS:
+            continue
+        # If the original text contained `/dev/null` (etc.) and we captured `/null`,
+        # verify the source by re-checking the surrounding context.
+        if p in ("/null", "/stdout", "/stderr"):
+            stream_name = p[1:]
+            if f"/dev/{stream_name}" in text:
+                continue
+        filtered.append(p)
+    return filtered
 
 
 def _parse_steps_section(body: str) -> list[dict[str, str | int]]:
