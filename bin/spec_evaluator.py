@@ -31,6 +31,7 @@ from typing import Any
 
 from bin import findings as _findings
 from bin import spec_ast as _spec_ast
+from bin import spec_lint as _spec_lint
 from bin import coverage_gate as _coverage_gate
 from bin import resources as _resources
 from bin import tier as _tier
@@ -367,6 +368,9 @@ def evaluate(
 
     # ── Step 3: Tier 1 ──────────────────────────────────────────────────────
     tier1_findings = _spec_ast.classify(draft_path)
+    # Tier 1.5 spec-author lints (v0.3.1): runuser-no-cd, unsafe-heredoc.
+    # Folded into Tier 1 results so callers see a single deterministic group.
+    tier1_findings.extend(_spec_lint.lint_spec(draft_path))
 
     # ── Step 4: Tier 2 ──────────────────────────────────────────────────────
     tier2_findings = _coverage_gate.classify(
