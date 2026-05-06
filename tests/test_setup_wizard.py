@@ -15,8 +15,12 @@ def test_detect_api_key_finds_env_var(monkeypatch):
     assert found == ("env", "DEEPSEEK_API_KEY")
 
 
-def test_detect_api_key_returns_none_when_env_missing_and_no_openclaw(monkeypatch):
+def test_detect_api_key_returns_none_when_env_missing_and_no_openclaw(tmp_path, monkeypatch):
+    """Test isolation: monkeypatch HOME so we don't pick up a real
+    ~/.spectre/secrets.env on the host (default secrets path is HOME-relative)."""
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("SPECTRE_SECRETS_FILE", raising=False)
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
     found = setup_wizard.detect_api_key(env_var_name="DEEPSEEK_API_KEY", secrets_file_path=None)
     assert found is None
 
@@ -112,7 +116,7 @@ def test_config_path_default_returns_home_relative_path():
 def test_maybe_provision_skips_when_config_exists(tmp_path):
     target = tmp_path / "reviewer.toml"
     target.write_text("[tier3]\nenabled = true\n", encoding="utf-8")
-    result = setup_wizard.maybe_provision(target, prompt_fn=lambda _msg: "yes")
+    result = setup_wizard.maybe_provision(target)
     assert result == "exists"
 
 
@@ -130,18 +134,17 @@ def test_maybe_provision_returns_setup_skipped_when_no_key(tmp_path, monkeypatch
     assert result == "setup-skipped"
 
 
-def test_maybe_provision_no_key_does_not_call_prompt_fn(tmp_path, monkeypatch):
-    """v0.4.2.1: the no-key path is silent; prompt_fn must never be invoked
+def test_maybe_provision_no_key_does_not_call_input(tmp_path, monkeypatch):
+    """v0.4.2.1+: the no-key path is silent; input() must never be invoked
     (otherwise non-interactive callers raise EOFError on input())."""
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("SPECTRE_SECRETS_FILE", raising=False)
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr("builtins.input", lambda *_a, **_k: pytest.fail(
+        "input() must not be called on the no-key silent-skip path"
+    ))
     target = tmp_path / "reviewer.toml"
-
-    def boom(_msg: str) -> str:
-        pytest.fail("prompt_fn must not be called on the no-key silent-skip path")
-
-    result = setup_wizard.maybe_provision(target, secrets_file_path=None, prompt_fn=boom)
+    result = setup_wizard.maybe_provision(target, secrets_file_path=None)
     assert result == "setup-skipped"
 
 
@@ -159,29 +162,30 @@ def test_maybe_provision_no_key_emits_stderr_breadcrumb(tmp_path, monkeypatch, c
     assert str(tmp_path / ".spectre" / "secrets.env") in captured.err
 
 
-# ── 6. maybe_provision: enables on yes when key present ───────────────────────
+# ── 6. maybe_provision: silently enables when key is present ─────────────────
 
 
-def test_maybe_provision_enables_on_user_yes(tmp_path, monkeypatch):
+def test_maybe_provision_enables_silently_when_key_detected(tmp_path, monkeypatch):
+    """v0.4.2.2+: configuring the key in ~/.spectre/secrets.env (or env) is
+    itself the opt-in; no in-flow prompt fires. Tier 3 enables silently."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
     target = tmp_path / "reviewer.toml"
-    result = setup_wizard.maybe_provision(
-        target, secrets_file_path=None, prompt_fn=lambda _msg: "yes"
-    )
+    result = setup_wizard.maybe_provision(target, secrets_file_path=None)
     text = target.read_text(encoding="utf-8")
     assert "enabled = true" in text
     assert result == "enabled"
 
 
-def test_maybe_provision_disables_on_user_no(tmp_path, monkeypatch):
+def test_maybe_provision_detected_key_does_not_call_input(tmp_path, monkeypatch):
+    """v0.4.2.2+: the detected-key path must not invoke input() — otherwise
+    non-interactive callers raise EOFError. Closes #10."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    monkeypatch.setattr("builtins.input", lambda *_a, **_k: pytest.fail(
+        "input() must not be called on the detected-key path"
+    ))
     target = tmp_path / "reviewer.toml"
-    result = setup_wizard.maybe_provision(
-        target, secrets_file_path=None, prompt_fn=lambda _msg: "no"
-    )
-    text = target.read_text(encoding="utf-8")
-    assert "enabled = false" in text
-    assert result == "declined"
+    result = setup_wizard.maybe_provision(target, secrets_file_path=None)
+    assert result == "enabled"
 
 
 # ── v0.3.2: ~/.spectre/secrets.env as canonical key store ────────────────────
@@ -216,7 +220,7 @@ def test_maybe_provision_probes_spectre_secrets_env_when_no_arg(tmp_path, monkey
     secrets_dir.mkdir()
     (secrets_dir / "secrets.env").write_text("DEEPSEEK_API_KEY=sk-auto\n", encoding="utf-8")
     target = tmp_path / "reviewer.toml"
-    result = setup_wizard.maybe_provision(target, prompt_fn=lambda _msg: "yes")
+    result = setup_wizard.maybe_provision(target)
     assert result == "enabled"
 
 

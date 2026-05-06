@@ -34,7 +34,6 @@ import os
 import pathlib
 import sys
 import tempfile
-from typing import Callable
 
 
 def config_path_default() -> pathlib.Path:
@@ -140,41 +139,32 @@ def maybe_provision(
     target: pathlib.Path,
     *,
     secrets_file_path: pathlib.Path | None = None,
-    prompt_fn: Callable[[str], str] = input,
     api_key_env: str = "DEEPSEEK_API_KEY",
 ) -> str:
     """Provision reviewer.toml if missing.
 
     Outcomes:
       - "exists"        — config already present, no-op.
-      - "enabled"       — key found, user opted in.
-      - "declined"      — key found, user opted out.
-      - "setup-skipped" — no key found; placeholder written silently.
+      - "enabled"       — key found; Tier 3 enabled silently.
+      - "setup-skipped" — no key found; enabled=false placeholder written silently.
 
-    Adding the API key is a prerequisite to using Spectre, not a step inside
-    /vision. When no key is detected, this writes the enabled=false placeholder,
-    prints a single stderr breadcrumb directing the user to ~/.spectre/secrets.env,
-    and returns "setup-skipped" without prompting. This keeps the wizard safe
-    for non-interactive contexts (subagents, scripts, paste-stdin) where input()
-    would raise EOFError. When the user later drops their key into the secrets
-    file and re-runs /vision, the key-detected branch fires the yes/no prompt.
+    Both decisions are silent and non-interactive. Configuring the API key in
+    ~/.spectre/secrets.env (or DEEPSEEK_API_KEY env var) is itself the opt-in
+    signal — no in-flow prompt is fired. This keeps /vision safe for
+    non-interactive contexts (subagents, scripts, paste-stdin, observer flows)
+    where input() raises EOFError.
+
+    To opt out after enabling: edit ~/.spectre/reviewer.toml and set
+    [tier3] enabled = false (the file persists across runs once written).
+    To re-prompt provisioning: delete ~/.spectre/reviewer.toml.
     """
     if target.exists():
         return "exists"
 
     detection = detect_api_key(env_var_name=api_key_env, secrets_file_path=secrets_file_path)
     if detection is not None:
-        source, location = detection
-        msg = (
-            f"Tier 3 adversarial review available. {api_key_env} detected in {source} ({location}).\n"
-            f"Enable now? Cost ~$0.01 per spec. (yes/no): "
-        )
-        answer = prompt_fn(msg).strip().lower()
-        if answer in ("y", "yes"):
-            write_config(target, enabled=True, api_key_env=api_key_env)
-            return "enabled"
-        write_config(target, enabled=False, api_key_env=api_key_env)
-        return "declined"
+        write_config(target, enabled=True, api_key_env=api_key_env)
+        return "enabled"
 
     # No key. Silent skip + visible placeholder + stderr breadcrumb.
     write_config(target, enabled=False, api_key_env=api_key_env)
