@@ -2,6 +2,36 @@
 
 All notable changes to the SDL Vision Engine plugin (Spectre).
 
+## v0.4.2 — 2026-05-06
+
+**v0.4 line — CDLC Ledger + Distribute + Adapt (third and final v0.4 release).**
+
+### Added
+- `bin/cdlc_ledger.py` — per-project lifecycle transition log at `state/cdlc-ledger.json`. Records every Generate→Test→Lock→Implement→Halt→Adapt transition with timestamps and payloads. Public API: `append_transition`, `read_ledger`, `cdlc_ledger_path_default`.
+- `bin/templates.py` — Distribute leg. `~/.spectre/templates/{specs,skills}/` directory + import/export tooling. Public API: `list_templates`, `import_template`, `export_template`, `templates_dir_default`.
+- `bin/template_patcher.py` — Adapt's auto-patch proposer. When `observations.find_recurrences(threshold=3)` returns recurring fingerprints AND no personal-rules entry covers them, writes a markdown patch to `~/.spectre/template-patches/proposed/<slug>.md`. Public API: `detect_patch_candidates`, `propose_patch`, `list_proposed_patches`.
+- `bin/_scratchpad.track_default()` gains `pending_adoption_prompt: dict | None` so `/implement` §3.5b survives compact/restart.
+
+### Changed
+- `bin/hydrate.py` (SessionStart hook) surfaces "N pending template-patch proposals" when `~/.spectre/template-patches/proposed/` is non-empty.
+- `skills/vision/SKILL.md` Step 0 surfaces template-import as an option alongside codebase fingerprint scan.
+- `skills/implement/SKILL.md` §3.5 writes `pending_adoption_prompt` to scratchpad on TIER GATE halt + user=yes; §3.5b reads it post-Path-A and clears after prompt fires. Ledger writes at halt + Path A.
+- `bin/setup_wizard.py` extended to provision `~/.spectre/templates/{specs,skills}/` and `~/.spectre/template-patches/{proposed,accepted,rejected}/` (mode 0700 dirs, mode 0600 files inside).
+- `bin/spec_evaluator.py:EVALUATOR_VERSION` 0.4.1 → 0.4.2.
+- `.claude-plugin/marketplace.json` plugin version 0.4.1 → 0.4.2.
+
+### Tests
+**664 passing** (614 v0.4.1 baseline + 11 cdlc_ledger + 14 templates + 12 template_patcher + 2 scratchpad + 5 hydrate + 4 setup_wizard + 2 observations/personal_rules wire-up). Audit fixes during build: clear pending_adoption_prompt FIRST in §3.5b (prevent replay), ledger write non-blocking in §3.5, step number ambiguity in §6 Path A pinned to pre-increment, hydrate idempotency regression test for slug-parity contract.
+
+### Architecture references
+- Design: `docs/superpowers/specs/2026-05-06-spectre-v0.4-cdlc-closure.md`
+- Plan: `docs/superpowers/plans/2026-05-06-v0.4.2-cdlc-distribute.md`
+
+### Out of scope (v0.5+)
+- Remote sync of `~/.spectre/templates/` (git-backed team registries).
+- Auto-merge of template-patches (always proposes; manual accept).
+- Real-time observe→adapt loop (recurrence check fires only at SessionStart).
+
 ## v0.4.1 — 2026-05-06
 
 **v0.4 line — Observe + Adapt legs (second of three releases).**

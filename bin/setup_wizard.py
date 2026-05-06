@@ -286,3 +286,18 @@ def maybe_provision_personal_rules(target: pathlib.Path) -> str:
         return "exists"
     write_personal_rules_config(target)
     return "created"
+
+
+def maybe_provision_templates_dir() -> None:
+    """Create ~/.spectre/templates/{specs,skills}/ if missing. Idempotent."""
+    base = pathlib.Path.home() / ".spectre" / "templates"
+    (base / "specs").mkdir(parents=True, exist_ok=True)
+    (base / "skills").mkdir(parents=True, exist_ok=True)
+
+
+def maybe_provision_template_patches_dir() -> None:
+    """Create ~/.spectre/template-patches/{proposed,accepted,rejected}/ if missing."""
+    base = pathlib.Path.home() / ".spectre" / "template-patches"
+    (base / "proposed").mkdir(parents=True, exist_ok=True)
+    (base / "accepted").mkdir(parents=True, exist_ok=True)
+    (base / "rejected").mkdir(parents=True, exist_ok=True)

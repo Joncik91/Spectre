@@ -82,6 +82,7 @@ def track_default() -> dict[str, Any]:
         "last_audit_kinds": [],
         "last_audit_passed": None,
         "last_audit_failures": [],
+        "pending_adoption_prompt": None,
     }
 
 

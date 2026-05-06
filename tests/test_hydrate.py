@@ -1,3 +1,4 @@
+import pathlib
 import subprocess
 import sys
 from pathlib import Path
@@ -72,3 +73,80 @@ def test_hydrate_v2_scratchpad_no_migration_signal(plugin_root):
     target.write_text(json.dumps({"version": 2, "tracks": {}}))
     result = run_hydrate(plugin_root)
     assert "MIGRATED:" not in result.stdout
+
+
+def test_hydrate_emits_pending_patches_signal_when_proposed_dir_has_files(tmp_path, monkeypatch, capsys):
+    """v0.4.2: SessionStart hydrate surfaces pending template-patches."""
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    proposed = tmp_path / ".spectre" / "template-patches" / "proposed"
+    proposed.mkdir(parents=True)
+    (proposed / "patch-a.md").write_text("# a\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    from bin import hydrate
+    hydrate.surface_pending_template_patches()
+    out = capsys.readouterr().out
+    assert "PENDING_TEMPLATE_PATCHES: 1" in out
+
+
+def test_hydrate_emits_zero_when_proposed_dir_empty(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    proposed = tmp_path / ".spectre" / "template-patches" / "proposed"
+    proposed.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    from bin import hydrate
+    hydrate.surface_pending_template_patches()
+    out = capsys.readouterr().out
+    assert "PENDING_TEMPLATE_PATCHES: 0" in out
+
+
+def test_hydrate_emits_zero_when_proposed_dir_missing(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
+    from bin import hydrate
+    hydrate.surface_pending_template_patches()
+    out = capsys.readouterr().out
+    assert "PENDING_TEMPLATE_PATCHES: 0" in out
+
+
+def test_hydrate_proposes_new_patches_for_recurring_fingerprints(tmp_path, monkeypatch):
+    """If recurrences have hit threshold and no patch exists yet, hydrate
+    auto-proposes one."""
+    from bin import observations, hydrate
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
+    # Three halts of the same fingerprint → recurrence
+    for _ in range(3):
+        observations.record_halt(
+            kind="tier-gate", fingerprint="g"*64,
+            project_path="/p", spec_slug="s", action="x",
+            classifier_label="y",
+        )
+    hydrate.detect_and_propose_patches()
+    proposed = tmp_path / ".spectre" / "template-patches" / "proposed"
+    md_files = list(proposed.glob("*.md"))
+    assert len(md_files) >= 1
+
+
+def test_hydrate_does_not_reproprose_existing_patch(tmp_path, monkeypatch):
+    """Idempotency: hydrate must not duplicate a patch on a 2nd run when no new
+    halts have occurred. Locks the slug-parity contract between hydrate.detect_and_propose_patches
+    and template_patcher.propose_patch (a future divergence in slug computation
+    would silently break this and cause patch duplicates)."""
+    from bin import observations, hydrate
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
+    for _ in range(3):
+        observations.record_halt(
+            kind="tier-gate", fingerprint="g" * 64,
+            project_path="/p", spec_slug="s", action="x",
+            classifier_label="y",
+        )
+    hydrate.detect_and_propose_patches()
+    proposed_dir = tmp_path / ".spectre" / "template-patches" / "proposed"
+    first_run_files = sorted(proposed_dir.glob("*.md"))
+
+    # Second run with no new halts — must be idempotent.
+    hydrate.detect_and_propose_patches()
+    second_run_files = sorted(proposed_dir.glob("*.md"))
+
+    assert first_run_files == second_run_files
