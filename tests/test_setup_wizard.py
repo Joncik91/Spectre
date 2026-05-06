@@ -214,3 +214,42 @@ def test_maybe_provision_retry_finds_key_after_user_drops_file(tmp_path, monkeyp
 
     result = setup_wizard.maybe_provision(target, prompt_fn=fake_prompt)
     assert result == "enabled"
+
+
+def test_walker_path_default_returns_dotspectre_walker_toml():
+    p = setup_wizard.walker_path_default()
+    assert p == pathlib.Path.home() / ".spectre" / "walker.toml"
+
+
+def test_write_walker_config_creates_file_with_defaults(tmp_path):
+    target = tmp_path / "walker.toml"
+    setup_wizard.write_walker_config(target)
+    assert target.exists()
+    text = target.read_text(encoding="utf-8")
+    assert "max_rounds = 30" in text
+
+
+def test_write_walker_config_sets_mode_0600(tmp_path):
+    target = tmp_path / "walker.toml"
+    setup_wizard.write_walker_config(target)
+    mode = target.stat().st_mode & 0o777
+    assert mode == 0o600
+
+
+def test_maybe_provision_walker_skips_when_file_exists(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    spectre_dir = tmp_path / ".spectre"
+    spectre_dir.mkdir()
+    target = spectre_dir / "walker.toml"
+    target.write_text("# pre-existing\n", encoding="utf-8")
+    result = setup_wizard.maybe_provision_walker(target)
+    assert result == "exists"
+    assert target.read_text(encoding="utf-8") == "# pre-existing\n"
+
+
+def test_maybe_provision_walker_writes_default_when_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    target = tmp_path / ".spectre" / "walker.toml"
+    result = setup_wizard.maybe_provision_walker(target)
+    assert result == "created"
+    assert target.exists()
