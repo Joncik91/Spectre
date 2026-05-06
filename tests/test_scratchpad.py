@@ -173,3 +173,24 @@ def test_load_track_handles_null_tracks(plugin_root):
     target.write_text('{"version": 2, "tracks": null}')
     td = sp.load_track(target, "auth")
     assert td["step"] == 1
+
+
+def test_track_default_includes_pending_adoption_prompt_none():
+    """v0.4.2: §3.5 writes this on TIER GATE halt + user=yes; §3.5b reads
+    it post-Path-A and clears after the prompt fires. Default None."""
+    from bin import _scratchpad as sp
+    default = sp.track_default()
+    assert default["pending_adoption_prompt"] is None
+
+
+def test_track_default_pending_adoption_prompt_is_settable():
+    """The field should accept a dict with fingerprint/label/action/recorded_at."""
+    from bin import _scratchpad as sp
+    default = sp.track_default()
+    default["pending_adoption_prompt"] = {
+        "fingerprint": "a"*64,
+        "label": "permission-change: chmod",
+        "action": "chmod 755 /tmp/x",
+        "recorded_at": "2026-05-06T12:00:00+00:00",
+    }
+    assert default["pending_adoption_prompt"]["fingerprint"] == "a"*64
