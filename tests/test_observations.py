@@ -31,3 +31,60 @@ def test_fingerprint_halt_differs_for_different_classifier_labels():
 def test_fingerprint_halt_returns_64_char_hex_sha256():
     fp = observations.fingerprint_halt(action="x", classifier_label="y")
     assert len(fp) == 64
+
+
+def test_observations_path_default_returns_dotspectre_observations_jsonl():
+    p = observations.observations_path_default()
+    assert p == pathlib.Path.home() / ".spectre" / "observations.jsonl"
+
+
+def test_record_halt_creates_jsonl_file_when_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    observations.record_halt(
+        kind="tier-gate",
+        fingerprint="a" * 64,
+        project_path="/home/foo/proj",
+        spec_slug="my-spec",
+        action="rm -rf /tmp/x",
+    )
+    target = tmp_path / ".spectre" / "observations.jsonl"
+    assert target.exists()
+
+
+def test_record_halt_appends_one_line_per_call(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    observations.record_halt(
+        kind="tier-gate", fingerprint="a"*64,
+        project_path="/p", spec_slug="s", action="x",
+    )
+    observations.record_halt(
+        kind="tier-gate", fingerprint="b"*64,
+        project_path="/p", spec_slug="s", action="y",
+    )
+    target = tmp_path / ".spectre" / "observations.jsonl"
+    lines = [l for l in target.read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert len(lines) == 2
+
+
+def test_record_halt_includes_required_fields(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    observations.record_halt(
+        kind="tier-gate", fingerprint="abcd" * 16,
+        project_path="/home/foo/proj", spec_slug="my-spec",
+        action="rm -rf /tmp/x",
+    )
+    target = tmp_path / ".spectre" / "observations.jsonl"
+    record = json.loads(target.read_text(encoding="utf-8").strip())
+    actual_keys = set(record.keys())
+    assert {"ts", "kind", "fingerprint", "project_path", "spec_slug", "action"}.issubset(actual_keys)
+
+
+def test_record_halt_timestamp_is_iso_8601_utc(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    observations.record_halt(
+        kind="tier-gate", fingerprint="a"*64,
+        project_path="/p", spec_slug="s", action="x",
+    )
+    target = tmp_path / ".spectre" / "observations.jsonl"
+    record = json.loads(target.read_text(encoding="utf-8").strip())
+    assert record["ts"].endswith("+00:00") or record["ts"].endswith("Z")
