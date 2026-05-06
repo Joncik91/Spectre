@@ -100,43 +100,22 @@ If the user invoked `/implement check`:
 Classify `current_action` by tier before executing. Run:
 
 ```bash
-python3 - <<'PY'
-import sys, pathlib
-sys.path.insert(0, ".")
-from bin import tier, coverage_gate
-
-current_action = """<current_action verbatim>"""
-t, reasons, na = tier.classify(current_action)
-
-# Read the active spec's §8.1 hard contract to populate spec_locked_paths.
-# Delegates to bin.coverage_gate.parse_81_block — the canonical permissive
-# parser that handles both bare (`- mutates: /etc/`) and backticked-key
-# (`- `mutates:` /etc/`) syntax. Inline regex was too strict (v0.4.1 fix).
-spec_locked_paths = set()
-active_spec_path = pathlib.Path("specs") / "<active spec name>.spec.md"
-if active_spec_path.is_file():
-    text = active_spec_path.read_text(encoding="utf-8")
-    parsed = coverage_gate.parse_81_block(text)
-    spec_locked_paths.update(parsed.get("mutates", []))
-    spec_locked_paths.update(parsed.get("never_touches", []))
-
-halt = tier.should_halt(
-    t,
-    na,
-    action=current_action,
-    reasons=reasons,
-    spec_locked_paths=frozenset(spec_locked_paths),
-)
-print(f"TIER: {t}")
-for r in reasons:
-    print(f"  reason: {r}")
-if na:
-    print(f"NEVER_AUTONOMOUS: {na}")
-print(f"HALT: {halt}")
-PY
+python3 -m bin.tier evaluate-action \
+    --action "<current_action verbatim>" \
+    --spec "specs/<active spec name>.spec.md"
 ```
 
-Substitute the literal action text for `<current_action>` and the actual spec filename for `<active spec name>`. The classifier is in `bin/tier.py` and is the **single source of truth** for halt-vs-execute. Never substitute your own judgment about whether something is "safe enough" — if the classifier says halt, halt. The v0.4.1 `should_halt` signature consults `~/.spectre/personal-rules.toml` and respects §8.1 spec-locked paths (rules cannot override halts whose reason references a locked path).
+Substitute the literal action text for `<current_action>` and the actual spec filename for `<active spec name>`. The CLI wraps the §3.5 orchestration in a single call: it invokes `tier.classify`, reads §8.1 locked paths from the spec via `coverage_gate.parse_81_block` (the canonical permissive parser — handles both `- mutates: /etc/` and `- `mutates:` /etc/` syntax), then runs `tier.should_halt` and emits the §3.5 prose-format output. Pass `--json` instead to get a structured payload (`{"tier","reasons","never_autonomous","halt","spec_locked_paths"}`).
+
+Stdout (no `--json`):
+- `TIER: <silent|repo|host|network>` — exactly one line.
+- `  reason: <reason text>` — one line per classifier reason.
+- `NEVER_AUTONOMOUS: <label>` — present only when an intent-based override matched.
+- `HALT: true` / `HALT: false` — exactly one line.
+
+Exit codes: `0` success (parse stdout for the answer), `1` runtime error, `2` argparse error. Missing `--spec` or a missing spec file is **not** an error — locked paths default to empty.
+
+`bin/tier.py` is the **single source of truth** for halt-vs-execute. Never substitute your own judgment about whether something is "safe enough" — if `HALT: true`, halt. The v0.4.1 `should_halt` semantics consult `~/.spectre/personal-rules.toml` and respect §8.1 spec-locked paths (personal rules cannot override halts whose reason references a locked path).
 
 Interpret the output:
 
