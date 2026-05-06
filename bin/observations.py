@@ -72,6 +72,23 @@ def record_halt(
     with open(target, "a", encoding="utf-8") as f:
         f.write(line)
 
+    # v0.4.2: also append to per-project CDLC ledger.
+    try:
+        from bin import cdlc_ledger as _ledger
+        _ledger.append_transition(
+            kind="halt",
+            payload={
+                "fingerprint": fingerprint,
+                "kind": kind,
+                "spec_slug": spec_slug,
+                "action": action,
+            },
+            project_path=pathlib.Path.cwd(),
+        )
+    except Exception:
+        # Ledger write must not break the halt path.
+        pass
+
 
 def find_recurrences(*, kind: str | None = None, threshold: int = 3) -> list[dict]:
     """Return one record per fingerprint that recurs ≥ threshold times.

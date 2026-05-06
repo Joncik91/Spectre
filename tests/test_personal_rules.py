@@ -281,3 +281,18 @@ def test_persistent_counter_resets_via_helper(tmp_path, monkeypatch):
     assert personal_rules.adoption_count_this_session_persistent(scratchpad_path) == 2
     personal_rules.reset_session_adoption_count_persistent(scratchpad_path)
     assert personal_rules.adoption_count_this_session_persistent(scratchpad_path) == 0
+
+
+def test_append_adoption_also_writes_cdlc_ledger_transition(tmp_path, monkeypatch):
+    """v0.4.2: every adoption also appends an 'adapt' transition to the ledger."""
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
+    personal_rules.reset_session_counter()
+    personal_rules.append_adoption(
+        classifier_label="x", fingerprint="a"*64, reason="r",
+    )
+    import json as _json
+    ledger_path = tmp_path / "state" / "cdlc-ledger.json"
+    data = _json.loads(ledger_path.read_text(encoding="utf-8"))
+    adapt_kinds = [t["kind"] for t in data["transitions"]]
+    assert "adapt" in adapt_kinds

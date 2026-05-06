@@ -277,6 +277,21 @@ def append_adoption(
     except OSError:
         pass
 
+    # v0.4.2: also append to per-project CDLC ledger.
+    try:
+        from bin import cdlc_ledger as _ledger
+        _ledger.append_transition(
+            kind="adapt",
+            payload={
+                "classifier_label": classifier_label,
+                "fingerprint": fingerprint,
+                "reason": reason,
+            },
+            project_path=pathlib.Path.cwd(),
+        )
+    except Exception:
+        pass
+
 
 def adoption_count_this_session() -> int:
     """Number of personal-rules adoptions in this Python process so far.

@@ -135,3 +135,20 @@ def test_find_recurrences_filters_by_kind_when_specified(tmp_path, monkeypatch):
     result = observations.find_recurrences(kind="tier-gate", threshold=3)
     kinds = {r["kind"] for r in result}
     assert kinds == {"tier-gate"}
+
+
+def test_record_halt_also_writes_cdlc_ledger_transition(tmp_path, monkeypatch):
+    """v0.4.2: every halt observation also appends to state/cdlc-ledger.json."""
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)  # so project_path defaults to tmp_path
+    observations.record_halt(
+        kind="tier-gate",
+        fingerprint="a" * 64,
+        project_path="/p",
+        spec_slug="s",
+        action="x",
+    )
+    ledger_path = tmp_path / "state" / "cdlc-ledger.json"
+    data = json.loads(ledger_path.read_text(encoding="utf-8"))
+    halt_kinds = [t["kind"] for t in data["transitions"]]
+    assert "halt" in halt_kinds
