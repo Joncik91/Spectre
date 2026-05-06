@@ -2,6 +2,26 @@
 
 All notable changes to the SDL Vision Engine plugin (Spectre).
 
+## v0.3.2 — 2026-05-06
+
+**Setup-wizard usability follow-up to v0.3.1.**
+
+The v0.3.1 wizard silently wrote a disabled placeholder when no DeepSeek key was found anywhere — meaning a fresh user running `/vision` for the first time never saw a prompt, never learned Tier 3 existed, and stayed disabled forever. This release fixes that, and also moves the canonical secrets location from a host-specific path into Spectre's own config dir.
+
+### Added
+- `bin/setup_wizard.secrets_path_default()` — returns `~/.spectre/secrets.env`. Single, in-Spectre, host-agnostic location for the DeepSeek API key.
+- New wizard outcome `setup-skipped` (replaces v0.3.1's silent `no-key`). Returned only when the user explicitly types `skip` after seeing the setup banner.
+- New wizard outcome path: when no key is found, the wizard prints a setup banner with both the env-var route and the `~/.spectre/secrets.env` route, then loops on `(retry / skip)`. `retry` re-probes — drop the key, type `retry`, and the wizard detects + prompts for opt-in. No second `/vision` invocation needed.
+
+### Changed
+- `bin/setup_wizard._resolve_secrets_file_path()` now defaults to `~/.spectre/secrets.env` when no explicit path or `SPECTRE_SECRETS_FILE` env var is provided. v0.3.1 returned None (silent fall-through); v0.3.2 always probes the canonical location.
+- `README.md` — replaced the brief "Optional Tier 3" paragraph with a full "First-run setup" section that walks through the three-source key discovery order and the retry-loop behavior. Standard-Readme spec preserved.
+- `README.md` — added `/implement auto` to the Usage section (v0.3.1 introduced the mode but the README never documented it).
+- `EVALUATOR_VERSION` bumped 0.3.1 → 0.3.2; marketplace.json plugin version aligned.
+
+### Tests
+**504 passing** (500 v0.3.1 baseline + 4 new for v0.3.2 wizard outcomes: `secrets_path_default`, `~/.spectre/secrets.env` detection, auto-probe on `secrets_file_path=None`, retry-after-drop flow). The original `no-key` test was rewritten to assert `setup-skipped` since the contract changed.
+
 ## v0.3.1 — 2026-05-06
 
 **Closes [#1](https://github.com/Joncik91/Spectre/issues/1) — 9 UX/safety gaps surfaced by the v1.1.0 BTC proxy test run.**

@@ -41,18 +41,28 @@ def config_path_default() -> pathlib.Path:
     return pathlib.Path.home() / ".spectre" / "reviewer.toml"
 
 
-def _resolve_secrets_file_path(explicit: pathlib.Path | None) -> pathlib.Path | None:
+def secrets_path_default() -> pathlib.Path:
+    """Return the canonical secrets.env location.
+
+    v0.3.2: ~/.spectre/secrets.env is the single, in-Spectre place for the
+    DeepSeek API key. No host-specific paths, no env-var rituals.
+    """
+    return pathlib.Path.home() / ".spectre" / "secrets.env"
+
+
+def _resolve_secrets_file_path(explicit: pathlib.Path | None) -> pathlib.Path:
     """Resolve which secrets file to probe.
 
-    Priority: explicit argument > SPECTRE_SECRETS_FILE env var > None.
-    Never hardcodes a host-specific path.
+    Priority: explicit argument > SPECTRE_SECRETS_FILE env var > ~/.spectre/secrets.env.
+    The default is the canonical Spectre-owned location — no host-specific paths,
+    no env-var rituals required for first-time users.
     """
     if explicit is not None:
         return explicit
     env_path = os.environ.get("SPECTRE_SECRETS_FILE")
     if env_path:
         return pathlib.Path(env_path)
-    return None
+    return secrets_path_default()
 
 
 def detect_api_key(
@@ -72,7 +82,7 @@ def detect_api_key(
     if os.environ.get(env_var_name):
         return ("env", env_var_name)
     secrets_path = _resolve_secrets_file_path(secrets_file_path)
-    if secrets_path is not None and secrets_path.is_file():
+    if secrets_path.is_file():
         try:
             content = secrets_path.read_text(encoding="utf-8")
         except (OSError, PermissionError):
@@ -125,6 +135,19 @@ def write_config(
         raise
 
 
+_SETUP_BANNER = (
+    "Spectre wants to enable Tier 3 adversarial review (~$0.01/spec).\n"
+    "It needs a DeepSeek API key. Two ways to provide one:\n"
+    "  (a) export {env_name}=sk-... in your shell, OR\n"
+    "  (b) drop it in {secrets_path} (mode 0600):\n"
+    "        mkdir -p {secrets_dir}\n"
+    "        echo '{env_name}=sk-...' > {secrets_path}\n"
+    "        chmod 600 {secrets_path}\n"
+    "Get a key: https://platform.deepseek.com/api_keys\n"
+    "(retry / skip): "
+)
+
+
 def maybe_provision(
     target: pathlib.Path,
     *,
@@ -134,24 +157,46 @@ def maybe_provision(
 ) -> str:
     """Provision reviewer.toml if missing.
 
-    Returns one of: "exists", "enabled", "declined", "no-key".
+    Outcomes:
+      - "exists"        — config already present, no-op.
+      - "enabled"       — key found, user opted in.
+      - "declined"      — key found, user opted out.
+      - "setup-skipped" — no key, user chose to skip Tier 3 setup.
+
+    The "no-key" silent path from v0.3.1 is gone: when no key is detected, the
+    wizard prints a setup banner with both the env-var and ~/.spectre/secrets.env
+    routes, then loops on (retry / skip). retry re-probes; skip writes
+    enabled=false placeholder so subsequent runs don't re-prompt without
+    user re-engagement.
     """
     if target.exists():
         return "exists"
 
-    detection = detect_api_key(env_var_name=api_key_env, secrets_file_path=secrets_file_path)
-    if detection is None:
-        write_config(target, enabled=False, api_key_env=api_key_env)
-        return "no-key"
+    while True:
+        detection = detect_api_key(env_var_name=api_key_env, secrets_file_path=secrets_file_path)
+        if detection is not None:
+            source, location = detection
+            msg = (
+                f"Tier 3 adversarial review available. {api_key_env} detected in {source} ({location}).\n"
+                f"Enable now? Cost ~$0.01 per spec. (yes/no): "
+            )
+            answer = prompt_fn(msg).strip().lower()
+            if answer in ("y", "yes"):
+                write_config(target, enabled=True, api_key_env=api_key_env)
+                return "enabled"
+            write_config(target, enabled=False, api_key_env=api_key_env)
+            return "declined"
 
-    source, location = detection
-    msg = (
-        f"Tier 3 adversarial review available. {api_key_env} detected in {source} ({location}).\n"
-        f"Enable now? Cost ~$0.01 per spec. (yes/no): "
-    )
-    answer = prompt_fn(msg).strip().lower()
-    if answer in ("y", "yes"):
-        write_config(target, enabled=True, api_key_env=api_key_env)
-        return "enabled"
-    write_config(target, enabled=False, api_key_env=api_key_env)
-    return "declined"
+        # No key. Show setup banner and offer retry/skip.
+        secrets_path = _resolve_secrets_file_path(secrets_file_path)
+        banner = _SETUP_BANNER.format(
+            env_name=api_key_env,
+            secrets_path=secrets_path,
+            secrets_dir=secrets_path.parent,
+        )
+        answer = prompt_fn(banner).strip().lower()
+        if answer == "retry":
+            continue
+        # Default and explicit "skip" both write the placeholder.
+        write_config(target, enabled=False, api_key_env=api_key_env)
+        return "setup-skipped"

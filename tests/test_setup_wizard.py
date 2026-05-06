@@ -116,18 +116,20 @@ def test_maybe_provision_skips_when_config_exists(tmp_path):
     assert result == "exists"
 
 
-# ── 5. maybe_provision: writes disabled config when no key found ──────────────
+# ── 5. maybe_provision: setup-skipped path when user declines key setup ──────
 
 
-def test_maybe_provision_writes_disabled_when_no_key_found(tmp_path, monkeypatch):
+def test_maybe_provision_returns_setup_skipped_when_user_skips(tmp_path, monkeypatch):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("SPECTRE_SECRETS_FILE", raising=False)
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
     target = tmp_path / "reviewer.toml"
     result = setup_wizard.maybe_provision(
-        target, secrets_file_path=None, prompt_fn=lambda _msg: "yes"
+        target, secrets_file_path=None, prompt_fn=lambda _msg: "skip"
     )
     text = target.read_text(encoding="utf-8")
     assert "enabled = false" in text
-    assert result == "no-key"
+    assert result == "setup-skipped"
 
 
 # ── 6. maybe_provision: enables on yes when key present ───────────────────────
@@ -153,3 +155,62 @@ def test_maybe_provision_disables_on_user_no(tmp_path, monkeypatch):
     text = target.read_text(encoding="utf-8")
     assert "enabled = false" in text
     assert result == "declined"
+
+
+# ── v0.3.2: ~/.spectre/secrets.env as canonical key store ────────────────────
+
+
+def test_secrets_path_default_returns_dotspectre_secrets_env():
+    """Canonical secrets location for v0.3.2."""
+    p = setup_wizard.secrets_path_default()
+    assert p == pathlib.Path.home() / ".spectre" / "secrets.env"
+
+
+def test_detect_api_key_finds_spectre_secrets_env(tmp_path, monkeypatch):
+    """Default path: ~/.spectre/secrets.env (passed as secrets_file_path)."""
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("SPECTRE_SECRETS_FILE", raising=False)
+    secrets_dir = tmp_path / ".spectre"
+    secrets_dir.mkdir()
+    secrets_file = secrets_dir / "secrets.env"
+    secrets_file.write_text("DEEPSEEK_API_KEY=sk-from-spectre-dir\n", encoding="utf-8")
+    found = setup_wizard.detect_api_key(
+        env_var_name="DEEPSEEK_API_KEY", secrets_file_path=secrets_file
+    )
+    assert found == ("secrets-file", str(secrets_file))
+
+
+def test_maybe_provision_probes_spectre_secrets_env_when_no_arg(tmp_path, monkeypatch):
+    """When secrets_file_path is None, the wizard auto-probes ~/.spectre/secrets.env."""
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("SPECTRE_SECRETS_FILE", raising=False)
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    secrets_dir = tmp_path / ".spectre"
+    secrets_dir.mkdir()
+    (secrets_dir / "secrets.env").write_text("DEEPSEEK_API_KEY=sk-auto\n", encoding="utf-8")
+    target = tmp_path / "reviewer.toml"
+    result = setup_wizard.maybe_provision(target, prompt_fn=lambda _msg: "yes")
+    assert result == "enabled"
+
+
+def test_maybe_provision_retry_finds_key_after_user_drops_file(tmp_path, monkeypatch):
+    """retry → wizard re-probes ~/.spectre/secrets.env. If user dropped the file,
+    detection succeeds and the opt-in prompt fires."""
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("SPECTRE_SECRETS_FILE", raising=False)
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    secrets_dir = tmp_path / ".spectre"
+    secrets_dir.mkdir()
+    secrets_file = secrets_dir / "secrets.env"
+    target = tmp_path / "reviewer.toml"
+
+    state = {"call": 0}
+    def fake_prompt(_msg: str) -> str:
+        if state["call"] == 0:
+            secrets_file.write_text("DEEPSEEK_API_KEY=sk-just-dropped\n", encoding="utf-8")
+            state["call"] += 1
+            return "retry"
+        return "yes"
+
+    result = setup_wizard.maybe_provision(target, prompt_fn=fake_prompt)
+    assert result == "enabled"
