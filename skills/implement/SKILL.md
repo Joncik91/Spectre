@@ -60,7 +60,7 @@ ERROR: track <name> has no active spec. Run /vision <track> first.
 
 For backward compat: a v1 scratchpad is auto-migrated to v2 by the SessionStart hydrator. Plain `/implement` on the migrated `default` track works without further changes.
 
-### Step 0 — Tier 0 handoff integrity check (v0.6+)
+### Step 0.7 — Tier 0 handoff integrity check (v0.6+)
 
 Before reading the spec or executing any step, validate the handoff envelope:
 
