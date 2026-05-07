@@ -290,3 +290,98 @@ def test_write_sidecar_uses_findings_summary_override_when_provided(tmp_path):
     )
     on_disk = json.loads(sidecar_path.read_text(encoding="utf-8"))
     assert on_disk["findings_summary"] == override
+
+
+# ---------------------------------------------------------------------------
+# write_sidecar — contract_resolution
+# ---------------------------------------------------------------------------
+
+def test_write_sidecar_persists_contract_resolution_to_disk(tmp_path):
+    """contract_resolution kwarg must be written to the on-disk .eval.json.
+
+    Regression guard: sidecar_payload carries contract_resolution in memory but
+    write_sidecar() previously had no kwarg for it, so the field was silently
+    dropped from the on-disk file.
+    """
+    spec = tmp_path / "foo.spec.md"
+    spec.write_text("# spec\n", encoding="utf-8")
+    cr = {
+        "steps": {
+            "1": {
+                "produces": ["package:foo"],
+                "requires": [],
+                "resolution": {},
+            },
+            "2": {
+                "produces": [],
+                "requires": ["package:foo"],
+                "resolution": {"package:foo": {"resolved_by_step": 1}},
+            },
+        }
+    }
+    sidecar_path = eval_metadata.write_sidecar(
+        spec,
+        evaluator_version="0.5.2-test",
+        tiers_run=[1],
+        findings=[],
+        dismissals=[],
+        config_path=None,
+        config_hash=None,
+        deepseek_model_version=None,
+        policy_hash="deadbeef" * 8,
+        contract_resolution=cr,
+    )
+    on_disk = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    assert on_disk["contract_resolution"] == cr
+
+
+def test_write_sidecar_omits_contract_resolution_key_when_none(tmp_path):
+    """When contract_resolution=None (default), the key must not appear in the sidecar."""
+    spec = tmp_path / "bar.spec.md"
+    spec.write_text("# spec\n", encoding="utf-8")
+    sidecar_path = eval_metadata.write_sidecar(
+        spec,
+        evaluator_version="0.5.2-test",
+        tiers_run=[1],
+        findings=[],
+        dismissals=[],
+        config_path=None,
+        config_hash=None,
+        deepseek_model_version=None,
+        policy_hash="deadbeef" * 8,
+    )
+    on_disk = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    assert "contract_resolution" not in on_disk
+
+
+def test_evaluate_contract_spec_sidecar_contains_contract_resolution(tmp_path):
+    """End-to-end: evaluate a spec with contracts, write sidecar, assert key on disk."""
+    import shutil
+    import pathlib
+    from bin import spec_evaluator
+
+    fixtures = pathlib.Path(__file__).parent / "fixtures" / "specs"
+    # Copy fixture into tmp_path so the sidecar lands there too.
+    spec_copy = tmp_path / "contract_valid.spec.md"
+    shutil.copy(fixtures / "contract_valid.spec.md", spec_copy)
+
+    result = spec_evaluator.evaluate(
+        spec_copy,
+        bundle_persist_dir=tmp_path / "bundle",
+    )
+    cr = result.sidecar_payload.get("contract_resolution")
+    sidecar_path = eval_metadata.write_sidecar(
+        spec_copy,
+        evaluator_version=result.sidecar_payload["evaluator_version"],
+        tiers_run=result.sidecar_payload["tiers_run"],
+        findings=result.findings,
+        dismissals=result.sidecar_payload["dismissals"],
+        config_path=None,
+        config_hash=None,
+        deepseek_model_version=None,
+        policy_hash=result.sidecar_payload["policy_hash"],
+        findings_summary=result.sidecar_payload.get("findings_summary"),
+        contract_resolution=cr,
+    )
+    on_disk = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    assert "contract_resolution" in on_disk

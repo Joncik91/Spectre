@@ -162,6 +162,7 @@ def write_sidecar(
     deepseek_model_version: str | None,
     policy_hash: str,
     findings_summary: dict | None = None,
+    contract_resolution: dict | None = None,
 ) -> pathlib.Path:
     """Atomic write of <spec>.eval.json next to the spec file.
 
@@ -170,6 +171,26 @@ def write_sidecar(
     If *findings_summary* is provided it is used verbatim (round-trip from a
     caller-supplied payload).  When omitted (``None``) the summary is
     recomputed from *findings* and *dismissals* as before.
+
+    *contract_resolution* — when non-None, written verbatim under the
+    ``contract_resolution`` key.  Shape::
+
+        {
+            "steps": {
+                "<step_n>": {
+                    "produces": [...],
+                    "requires": [...],
+                    "resolution": {
+                        "<entry>": {"resolved_by_step": N} | null
+                    }
+                }
+            }
+        }
+
+    CLI note: the ``write-sidecar`` subcommand passes the full JSON payload
+    through; if the payload already contains a ``contract_resolution`` key it
+    is forwarded automatically (see the CLI handler below).  Python API callers
+    should pass the value from ``result.sidecar_payload.get("contract_resolution")``.
     """
     spec_path = pathlib.Path(spec_path)
     sidecar_path = sidecar_path_for(spec_path)
@@ -200,6 +221,9 @@ def write_sidecar(
         "deepseek_model_version": deepseek_model_version,
         "locked_at": locked_at,
     }
+
+    if contract_resolution is not None:
+        payload["contract_resolution"] = contract_resolution
 
     # Atomic write: mkstemp + os.replace
     fd, tmp = tempfile.mkstemp(
@@ -331,6 +355,7 @@ if __name__ == "__main__":
                 deepseek_model_version=payload.get("deepseek_model_version"),
                 policy_hash=payload["policy_hash"],
                 findings_summary=payload.get("findings_summary"),
+                contract_resolution=payload.get("contract_resolution"),
             )
         except KeyError as exc:
             print(f"ERROR: missing required payload field: {exc}", file=sys.stderr)
