@@ -28,6 +28,12 @@ _CHARS_PER_TOKEN = 4
 # Spec-wide sentinel location
 _SPEC_WIDE = FindingLocation(scope="spec-wide")
 
+# Maximum chars for action/verification summaries sent in the step table.
+# Prevents a single 5KB heredoc from consuming the entire input budget.
+# If a field is truncated, a suffix is appended so DeepSeek can flag
+# ambiguous-contract when the contract is incomplete.
+_STEP_FIELD_TRUNCATE = 1000
+
 # Taxonomy of allowed contradiction kinds (v0.5.2).
 # Must stay in sync with findings.TIER3_CONTRADICTION_SEVERITY.
 _CONTRADICTION_KINDS = frozenset({
@@ -246,6 +252,19 @@ def _parse_calibration_section(spec_text: str) -> tuple[list[str], list[str], li
     return physics, mutates, never_touches
 
 
+def _truncate_step_field(value: str) -> str:
+    """Truncate a step field (action/verification) to _STEP_FIELD_TRUNCATE chars.
+
+    If truncated, appends ``... [truncated, N more chars]`` so DeepSeek knows
+    the field is incomplete and can flag ambiguous-contract if needed.
+    Short fields pass through verbatim.
+    """
+    if len(value) <= _STEP_FIELD_TRUNCATE:
+        return value
+    remainder = len(value) - _STEP_FIELD_TRUNCATE
+    return value[:_STEP_FIELD_TRUNCATE] + f"... [truncated, {remainder} more chars]"
+
+
 def build_step_table(spec_text: str, step_objects: list | None = None) -> dict:
     """Build the structured step table sent to DeepSeek.
 
@@ -265,11 +284,13 @@ def build_step_table(spec_text: str, step_objects: list | None = None) -> dict:
     step_entries: list[dict] = []
     for raw in raw_steps:
         step_n = raw["step"]
+        action_raw = raw.get("action", "")
+        verification_raw = raw.get("verification", "")
         entry: dict = {
             "step": step_n,
             "why": raw.get("why", ""),
-            "action_summary": raw.get("action", ""),
-            "verification_summary": raw.get("verification", ""),
+            "action_summary": _truncate_step_field(action_raw),
+            "verification_summary": _truncate_step_field(verification_raw),
             "produces": [],
             "requires": [],
         }

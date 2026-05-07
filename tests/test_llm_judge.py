@@ -1134,3 +1134,78 @@ def test_evaluate_user_message_contains_step_table_json(mock_urlopen, monkeypatc
     # Step table JSON should contain the structured keys
     assert '"steps"' in user_msg
     assert '"action_summary"' in user_msg
+
+
+# ---------------------------------------------------------------------------
+# 51. build_step_table: 5000-char action is truncated to ≤ ~1050 chars with suffix
+# ---------------------------------------------------------------------------
+
+
+def test_build_step_table_truncates_long_action():
+    """A 5000-char action field must be truncated to ≤ _STEP_FIELD_TRUNCATE + suffix."""
+    long_action = "x" * 5000
+    spec = f"""\
+# Spec
+
+## 6. Steps
+
+```yaml
+- step: 1
+  why: test truncation
+  action: {long_action}
+  verification: check it
+```
+"""
+    table = llm_judge.build_step_table(spec)
+    step1 = next(s for s in table["steps"] if s["step"] == 1)
+    action_summary = step1["action_summary"]
+    # Must be capped: 1000 chars + suffix overhead (≤ ~1050 total)
+    assert len(action_summary) <= llm_judge._STEP_FIELD_TRUNCATE + 50
+    # Suffix must be present to signal incompleteness
+    assert "truncated" in action_summary
+    assert "4000 more chars" in action_summary
+
+
+# ---------------------------------------------------------------------------
+# 52. build_step_table: 5000-char verification is truncated with suffix
+# ---------------------------------------------------------------------------
+
+
+def test_build_step_table_truncates_long_verification():
+    """A 5000-char verification field must be truncated similarly."""
+    long_ver = "y" * 5000
+    spec = f"""\
+# Spec
+
+## 6. Steps
+
+```yaml
+- step: 1
+  why: test truncation
+  action: short action
+  verification: {long_ver}
+```
+"""
+    table = llm_judge.build_step_table(spec)
+    step1 = next(s for s in table["steps"] if s["step"] == 1)
+    ver_summary = step1["verification_summary"]
+    assert len(ver_summary) <= llm_judge._STEP_FIELD_TRUNCATE + 50
+    assert "truncated" in ver_summary
+
+
+# ---------------------------------------------------------------------------
+# 53. build_step_table: short fields pass through verbatim (no truncation)
+# ---------------------------------------------------------------------------
+
+
+def test_build_step_table_short_fields_pass_through_verbatim():
+    """Fields under the cap must not be modified."""
+    table = llm_judge.build_step_table(_SPEC_WITH_STEPS)
+    step1 = next(s for s in table["steps"] if s["step"] == 1)
+    # action from _SPEC_WITH_STEPS is "run pip install foo" — well under cap
+    assert step1["action_summary"] == "run pip install foo"
+    assert "truncated" not in step1["action_summary"]
+    # verification from _SPEC_WITH_STEPS is 'python -c "import foo"'
+    # The parser strips trailing quotes, so the value ends without the closing "
+    assert "import foo" in step1["verification_summary"]
+    assert "truncated" not in step1["verification_summary"]
