@@ -308,7 +308,7 @@ def test_curl_route_verification_without_prior_author_blocks():
     )
     try:
         fs = spec_ast.classify(p)
-        assert any(f.kind == "unowned-requirement" for f in fs)
+        assert any(f.kind == "unowned-requirement-heuristic" for f in fs)
     finally:
         _cleanup(p)
 
@@ -323,7 +323,7 @@ def test_curl_route_verification_severity_is_block():
     )
     try:
         fs = spec_ast.classify(p)
-        f = next(x for x in fs if x.kind == "unowned-requirement")
+        f = next(x for x in fs if x.kind == "unowned-requirement-heuristic")
         assert f.severity == "block"
     finally:
         _cleanup(p)
@@ -339,7 +339,7 @@ def test_curl_route_verification_location_ref_is_verification():
     )
     try:
         fs = spec_ast.classify(p)
-        f = next(x for x in fs if x.kind == "unowned-requirement")
+        f = next(x for x in fs if x.kind == "unowned-requirement-heuristic")
         assert f.location.ref == "verification"
     finally:
         _cleanup(p)
@@ -359,7 +359,7 @@ def test_curl_route_passes_when_prior_step_authored_it():
     )
     try:
         fs = spec_ast.classify(p)
-        assert not any(f.kind == "unowned-requirement" for f in fs)
+        assert not any(f.kind == "unowned-requirement-heuristic" for f in fs)
     finally:
         _cleanup(p)
 
@@ -375,7 +375,7 @@ def test_sql_select_without_prior_author_blocks():
     )
     try:
         fs = spec_ast.classify(p)
-        assert any(f.kind == "unowned-requirement" for f in fs)
+        assert any(f.kind == "unowned-requirement-heuristic" for f in fs)
     finally:
         _cleanup(p)
 
@@ -396,7 +396,7 @@ def test_sql_select_passes_when_prior_step_has_create_table():
     )
     try:
         fs = spec_ast.classify(p)
-        assert not any(f.kind == "unowned-requirement" for f in fs)
+        assert not any(f.kind == "unowned-requirement-heuristic" for f in fs)
     finally:
         _cleanup(p)
 
@@ -411,7 +411,7 @@ def test_python_import_verification_without_prior_author_blocks():
     )
     try:
         fs = spec_ast.classify(p)
-        assert any(f.kind == "unowned-requirement" for f in fs)
+        assert any(f.kind == "unowned-requirement-heuristic" for f in fs)
     finally:
         _cleanup(p)
 
@@ -430,6 +430,6 @@ def test_python_import_passes_when_prior_step_authored_module():
     )
     try:
         fs = spec_ast.classify(p)
-        assert not any(f.kind == "unowned-requirement" for f in fs)
+        assert not any(f.kind == "unowned-requirement-heuristic" for f in fs)
     finally:
         _cleanup(p)

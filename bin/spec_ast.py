@@ -210,6 +210,12 @@ def _parse_steps_section(body: str) -> list[dict[str, str | int | list[str]]]:
                 step["requires"] = _parse_contract_list(raw, "requires")
                 steps.append(step)
 
+    # W2 NOTE (known limitation, v0.5.2): multi-line YAML literal-block (`|`)
+    # and fold (`>`) values in action/verification fields are NOT captured here
+    # — only the first line is stored.  The spec template recommends single-line
+    # values; spec authors using multi-line blocks should be aware that checks
+    # relying on the full text will only see the inline portion.  Fixing this
+    # would require a real YAML parser (out-of-scope for stdlib-only policy).
     return steps
 
 
@@ -625,21 +631,114 @@ def _check_action_invokes_uncreated_artifact(
 
 # ── Gap C: unowned-requirement (e2e assertion without authoring prior step) ────
 
-# Patterns that imply a runtime capability being asserted
+# B1 FIX: Capture full URL path (after host[:port]) up to ?/space/pipe/&/;/quote.
+# The original pattern only captured the last path segment.
 _CURL_ROUTE_RE = re.compile(
-    r"\bcurl\b[^|&;]*(?:localhost|127\.0\.0\.1)[^|&;]*/([a-zA-Z0-9_/.-]+)"
+    r"\bcurl\b[^|&;'\"]*(?:localhost|127\.0\.0\.1)(?::\d+)?(/[a-zA-Z0-9_/.-]*[a-zA-Z0-9_/-])(?=[?'\"\s|&;]|$)"
 )
+
+# B1 FIX: Allowlist of universal health/probe routes that must NOT generate findings.
+# Hard-coded for v0.5.2; not configurable.
+_CURL_ROUTE_ALLOWLIST: frozenset[str] = frozenset({
+    "/",
+    "/healthz",
+    "/health",
+    "/ready",
+    "/metrics",
+    "/ping",
+    "/status",
+})
+
 _CURL_GREP_RE = re.compile(r"\bcurl\b[^|]*\|\s*grep\s+['\"]?([^'\"|\s]+)")
+
+# W1 FIX: Require stronger anchor for SQL ownership — `CREATE TABLE <name>` or
+# `<name>(` in a SQL context, not flat substring match on table/column names.
 _SQL_SELECT_RE = re.compile(
     r"\bSELECT\b[^;]*\bFROM\b\s+(\w+)\b[^;]*\bWHERE\b[^;]*\b(\w+)\b\s*=",
     re.IGNORECASE,
 )
-_PYTHON_IMPORT_RE = re.compile(
-    r"python3?\s+-c\s+['\"]from\s+([\w.]+)\s+import"
-)
-_PYTHON_IMPORT_ALT_RE = re.compile(
-    r"python3?\s+-c\s+['\"]import\s+([\w.]+)"
-)
+_SQL_CREATE_TABLE_RE = re.compile(r"\bCREATE\s+TABLE\s+(\w+)\s*\(", re.IGNORECASE)
+_SQL_CREATE_INDEX_RE = re.compile(r"\bCREATE\s+INDEX\b[^(]*\(([^)]+)\)", re.IGNORECASE)
+
+# B2+B3 FIX: These regexes now search INSIDE the extracted -c body (not anchored
+# to the start of the body). The outer shell extraction uses shlex.
+# _PYTHON_IMPORT_RE and _PYTHON_IMPORT_ALT_RE match anywhere inside the -c body.
+_PYTHON_IMPORT_RE = re.compile(r"\bfrom\s+([\w.]+)\s+import\b")
+_PYTHON_IMPORT_ALT_RE = re.compile(r"\bimport\s+([\w.]+)")
+
+# B3 FIX: stdlib top-level module names — bare `import X` for these is not flagged.
+# Covers Python 3.11 stdlib common tops; not exhaustive but prevents false positives
+# on the modules most frequently used in inline -c snippets.
+_STDLIB_TOPS: frozenset[str] = frozenset({
+    "abc", "ast", "asyncio", "base64", "binascii", "builtins", "calendar",
+    "cgi", "cgitb", "chunk", "cmath", "cmd", "code", "codecs", "codeop",
+    "collections", "colorsys", "compileall", "concurrent", "configparser",
+    "contextlib", "contextvars", "copy", "copyreg", "cProfile", "csv",
+    "ctypes", "curses", "dataclasses", "datetime", "dbm", "decimal",
+    "difflib", "dis", "doctest", "email", "encodings", "enum", "errno",
+    "faulthandler", "fcntl", "filecmp", "fileinput", "fnmatch", "fractions",
+    "ftplib", "functools", "gc", "getopt", "getpass", "gettext", "glob",
+    "grp", "gzip", "hashlib", "heapq", "hmac", "html", "http", "idlelib",
+    "imaplib", "importlib", "inspect", "io", "ipaddress", "itertools",
+    "json", "keyword", "lib2to3", "linecache", "locale", "logging", "lzma",
+    "mailbox", "marshal", "math", "mimetypes", "mmap", "modulefinder",
+    "multiprocessing", "netrc", "nis", "nntplib", "numbers", "operator",
+    "optparse", "os", "pathlib", "pdb", "pkgutil", "platform", "plistlib",
+    "poplib", "posix", "posixpath", "pprint", "profile", "pstats", "pty",
+    "pwd", "py_compile", "pyclbr", "pydoc", "queue", "quopri", "random",
+    "re", "readline", "reprlib", "resource", "rlcompleter", "runpy",
+    "sched", "secrets", "select", "selectors", "shelve", "shlex", "shutil",
+    "signal", "site", "smtpd", "smtplib", "sndhdr", "socket", "socketserver",
+    "spwd", "sqlite3", "sre_compile", "sre_constants", "sre_parse", "ssl",
+    "stat", "statistics", "string", "stringprep", "struct", "subprocess",
+    "sunau", "symtable", "sys", "sysconfig", "syslog", "tabnanny", "tarfile",
+    "telnetlib", "tempfile", "termios", "test", "textwrap", "threading",
+    "time", "timeit", "tkinter", "token", "tokenize", "tomllib", "trace",
+    "traceback", "tracemalloc", "tty", "turtle", "turtledemo", "types",
+    "typing", "unicodedata", "unittest", "urllib", "uu", "uuid",
+    "venv", "warnings", "wave", "weakref", "webbrowser", "wsgiref",
+    "xdrlib", "xml", "xmlrpc", "zipapp", "zipfile", "zipimport", "zlib",
+    "zoneinfo", "_thread",
+})
+
+
+_PYTHON_C_RE = re.compile(r"\bpython3?\s+-c\s+")
+
+
+def _extract_python_c_bodies(text: str) -> list[str]:
+    """Return the string bodies passed to `python3 -c '...'` in *text*.
+
+    Uses shlex to split the shell fragment so that the quoted -c argument is
+    extracted correctly regardless of quote style.
+
+    Resilience: the YAML field parser strips a trailing quote from the field
+    value (e.g. the `'` at the end of `"python3 -c 'body'"` becomes
+    `python3 -c 'body` after `.strip('"').strip("'")`).  When shlex raises
+    ValueError (unclosed quotation), we retry by appending `'` then `"` so
+    the body can still be extracted.
+
+    B3 FIX: callers should iterate over returned bodies and run
+    _PYTHON_IMPORT_RE / _PYTHON_IMPORT_ALT_RE over each body so that
+    statements like `import sys; from app import foo` are fully checked.
+    """
+    bodies: list[str] = []
+    for m in _PYTHON_C_RE.finditer(text):
+        fragment = text[m.start():]
+        tokens: list[str] | None = None
+        # First try as-is; if shlex chokes on a stripped trailing quote,
+        # retry with each closing-quote character appended.
+        for attempt in [fragment, fragment + "'", fragment + '"']:
+            try:
+                tokens = shlex.split(attempt)
+                break
+            except ValueError:
+                continue
+        if tokens is None or len(tokens) < 3:
+            continue
+        # tokens[0] = 'python3' / 'python', tokens[1] = '-c',
+        # tokens[2] = the body
+        bodies.append(tokens[2])
+    return bodies
 
 
 def _check_unowned_requirement(steps: list[dict]) -> list[_findings.Finding]:
@@ -661,8 +760,13 @@ def _check_unowned_requirement(steps: list[dict]) -> list[_findings.Finding]:
 
         if verification:
             # ── 1. curl route assertion ──────────────────────────────────────
+            # B1 FIX: regex now captures full URL path; group(1) already has
+            # the leading slash.  Skip paths in the universal-probe allowlist.
             for m in _CURL_ROUTE_RE.finditer(verification):
-                route = "/" + m.group(1)
+                route = m.group(1)
+                # Skip universal health/probe routes — no authorship required.
+                if route in _CURL_ROUTE_ALLOWLIST:
+                    continue
                 # Check if any prior action mentions this route
                 if route not in prior_corpus:
                     msg = (
@@ -673,7 +777,7 @@ def _check_unowned_requirement(steps: list[dict]) -> list[_findings.Finding]:
                         msg = msg[:137] + "..."
                     results.append(_findings.Finding(
                         tier=1,
-                        kind="unowned-requirement",
+                        kind="unowned-requirement-heuristic",
                         severity="block",
                         location=_findings.FindingLocation(
                             scope="step", step=step_n, ref="verification"
@@ -698,7 +802,7 @@ def _check_unowned_requirement(steps: list[dict]) -> list[_findings.Finding]:
                         msg = msg[:137] + "..."
                     results.append(_findings.Finding(
                         tier=1,
-                        kind="unowned-requirement",
+                        kind="unowned-requirement-heuristic",
                         severity="block",
                         location=_findings.FindingLocation(
                             scope="step", step=step_n, ref="verification"
@@ -708,12 +812,30 @@ def _check_unowned_requirement(steps: list[dict]) -> list[_findings.Finding]:
                     ))
 
             # ── 3. SQL SELECT asserting on table+column ──────────────────────
+            # W1 FIX: ownership requires `CREATE TABLE <name>(` or a column
+            # appearing inside a CREATE TABLE body in prior actions.  Flat
+            # substring on common English words (user, name, id) caused too
+            # many false passes.
             for m in _SQL_SELECT_RE.finditer(verification):
                 table = m.group(1)
                 column = m.group(2)
-                # Check if any prior action mentions the table+column
-                if table not in prior_corpus or column not in prior_corpus:
-                    missing = table if table not in prior_corpus else column
+                # A prior step "owns" the table if its action contains
+                # CREATE TABLE <table>( (case-insensitive).
+                table_owned = any(
+                    tm.group(1).lower() == table.lower()
+                    for act in prior_actions
+                    for tm in _SQL_CREATE_TABLE_RE.finditer(act)
+                )
+                # A prior step "owns" the column if it appears inside any
+                # CREATE TABLE body or CREATE INDEX clause in prior actions.
+                col_owned = table_owned and any(
+                    column.lower() in act.lower()
+                    for act in prior_actions
+                    if _SQL_CREATE_TABLE_RE.search(act) or
+                       _SQL_CREATE_INDEX_RE.search(act)
+                )
+                if not table_owned or not col_owned:
+                    missing = table if not table_owned else column
                     msg = (
                         f"Step {step_n} queries {missing!r} but no prior step "
                         f"authored it."
@@ -722,7 +844,7 @@ def _check_unowned_requirement(steps: list[dict]) -> list[_findings.Finding]:
                         msg = msg[:137] + "..."
                     results.append(_findings.Finding(
                         tier=1,
-                        kind="unowned-requirement",
+                        kind="unowned-requirement-heuristic",
                         severity="block",
                         location=_findings.FindingLocation(
                             scope="step", step=step_n, ref="verification"
@@ -731,31 +853,63 @@ def _check_unowned_requirement(steps: list[dict]) -> list[_findings.Finding]:
                         suggested_fix="Add a prior step that creates the table/column.",
                     ))
 
-            # ── 4. python3 -c "from module import ..." ──────────────────────
-            for m in _PYTHON_IMPORT_RE.finditer(verification):
-                module = m.group(1)
-                # Convert to path candidates for prior-step check
-                candidates = _module_path_candidates(module)
-                if not any(cand in prior_corpus for cand in candidates):
-                    # Also check plain module name mention in prior actions
+            # ── 4. python3 -c imports anywhere in body ──────────────────────
+            # B2+B3 FIX: use shlex to extract the -c body, then run both
+            # _PYTHON_IMPORT_RE (from X import Y) and _PYTHON_IMPORT_ALT_RE
+            # (import X) over the full body so leading statements like
+            # `import sys; from app import foo` are caught.
+            c_bodies = _extract_python_c_bodies(verification)
+            for body_text in c_bodies:
+                # from X import Y — always checked (no stdlib exemption needed
+                # since project packages dominate this form)
+                for im in _PYTHON_IMPORT_RE.finditer(body_text):
+                    module = im.group(1)
+                    candidates = _module_path_candidates(module)
+                    if not any(cand in prior_corpus for cand in candidates):
+                        mod_top = module.split(".")[0]
+                        if mod_top not in prior_corpus:
+                            msg = (
+                                f"Step {step_n} imports {module!r} but no prior "
+                                f"step authored its source."
+                            )
+                            if len(msg) > 140:
+                                msg = msg[:137] + "..."
+                            results.append(_findings.Finding(
+                                tier=1,
+                                kind="unowned-requirement-heuristic",
+                                severity="block",
+                                location=_findings.FindingLocation(
+                                    scope="step", step=step_n, ref="verification"
+                                ),
+                                message=msg,
+                                suggested_fix="Add a prior step that creates the module.",
+                            ))
+                # import X — B2 wire-up + B3 stdlib exemption
+                for im in _PYTHON_IMPORT_ALT_RE.finditer(body_text):
+                    module = im.group(1)
                     mod_top = module.split(".")[0]
-                    if mod_top not in prior_corpus:
-                        msg = (
-                            f"Step {step_n} imports {module!r} but no prior step "
-                            f"authored its source."
-                        )
-                        if len(msg) > 140:
-                            msg = msg[:137] + "..."
-                        results.append(_findings.Finding(
-                            tier=1,
-                            kind="unowned-requirement",
-                            severity="block",
-                            location=_findings.FindingLocation(
-                                scope="step", step=step_n, ref="verification"
-                            ),
-                            message=msg,
-                            suggested_fix="Add a prior step that creates the module.",
-                        ))
+                    # Skip stdlib modules — only flag project packages
+                    if mod_top in _STDLIB_TOPS:
+                        continue
+                    candidates = _module_path_candidates(module)
+                    if not any(cand in prior_corpus for cand in candidates):
+                        if mod_top not in prior_corpus:
+                            msg = (
+                                f"Step {step_n} imports {module!r} but no prior "
+                                f"step authored its source."
+                            )
+                            if len(msg) > 140:
+                                msg = msg[:137] + "..."
+                            results.append(_findings.Finding(
+                                tier=1,
+                                kind="unowned-requirement-heuristic",
+                                severity="block",
+                                location=_findings.FindingLocation(
+                                    scope="step", step=step_n, ref="verification"
+                                ),
+                                message=msg,
+                                suggested_fix="Add a prior step that creates the module.",
+                            ))
 
         # Record this step's action in the prior corpus for subsequent steps
         if action:
