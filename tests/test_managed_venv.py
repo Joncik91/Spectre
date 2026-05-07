@@ -213,3 +213,204 @@ def test_load_venv_python_returns_none_for_nonexistent_path(tmp_path):
     sp_path.write_text(json.dumps({"venv_python": "/nonexistent/bin/python"}))
     result = load_venv_python(sp_path)
     assert result is None
+
+
+# ── B1: shell operators preserved ────────────────────────────────────────────
+
+
+def test_normalize_action_preserves_double_ampersand(fake_venv_python):
+    """python3 a.py && python3 b.py must not quote && as a literal filename."""
+    action = "python3 a.py && python3 b.py"
+    result = normalize_action(action, fake_venv_python)
+    vp = str(fake_venv_python)
+    assert result == f"{vp} a.py && {vp} b.py", repr(result)
+    assert "'&&'" not in result, "shell operator && must not be quoted"
+
+
+def test_normalize_action_preserves_or_operator(fake_venv_python):
+    """python3 a.py || python3 b.py — || must not be quoted."""
+    action = "python3 a.py || python3 b.py"
+    result = normalize_action(action, fake_venv_python)
+    vp = str(fake_venv_python)
+    assert result == f"{vp} a.py || {vp} b.py", repr(result)
+
+
+def test_normalize_action_preserves_semicolon_operator(fake_venv_python):
+    """python3 a.py ; python3 b.py — semicolon must not be quoted."""
+    action = "python3 a.py ; python3 b.py"
+    result = normalize_action(action, fake_venv_python)
+    vp = str(fake_venv_python)
+    assert result == f"{vp} a.py ; {vp} b.py", repr(result)
+
+
+def test_normalize_action_preserves_pipe_operator(fake_venv_python):
+    """python3 a.py | grep foo — pipe must not be quoted."""
+    action = "python3 a.py | grep foo"
+    result = normalize_action(action, fake_venv_python)
+    vp = str(fake_venv_python)
+    assert result == f"{vp} a.py | grep foo", repr(result)
+
+
+def test_normalize_action_preserves_redirect(fake_venv_python):
+    """python3 a.py > out.txt 2>&1 — redirects must be byte-identical."""
+    action = "python3 a.py > out.txt 2>&1"
+    result = normalize_action(action, fake_venv_python)
+    vp = str(fake_venv_python)
+    assert result == f"{vp} a.py > out.txt 2>&1", repr(result)
+
+
+# ── B2: venv_python stored per-track ─────────────────────────────────────────
+
+
+def test_persist_venv_python_writes_per_track(tmp_path, fake_venv_python):
+    """persist_venv_python must store venv_python under tracks.<track>, not top-level."""
+    (tmp_path / "state").mkdir()
+    sp_path = tmp_path / "state" / "scratchpad.json"
+    sp_path.write_text(json.dumps({"step": 1}))
+
+    persist_venv_python(sp_path, fake_venv_python, track="default")
+    data = json.loads(sp_path.read_text())
+
+    # Must be in per-track location.
+    assert data["version"] == 2
+    assert data["tracks"]["default"]["venv_python"] == str(fake_venv_python.absolute())
+    # Must NOT be at top-level.
+    assert "venv_python" not in data, "venv_python must not be at scratchpad top-level"
+
+
+def test_load_venv_python_reads_per_track(tmp_path, fake_venv_python):
+    """load_venv_python must read venv_python from tracks.<track>."""
+    (tmp_path / "state").mkdir()
+    sp_path = tmp_path / "state" / "scratchpad.json"
+    sp_path.write_text(json.dumps({
+        "version": 2,
+        "tracks": {
+            "default": {"venv_python": str(fake_venv_python.absolute())},
+        },
+    }))
+
+    loaded = load_venv_python(sp_path, track="default")
+    assert loaded is not None
+    assert loaded.resolve() == fake_venv_python.resolve()
+
+
+def test_load_venv_python_v1_fallback(tmp_path, fake_venv_python):
+    """load_venv_python must fall back to top-level venv_python for v1 scratchpads."""
+    sp_path = tmp_path / "scratchpad.json"
+    sp_path.write_text(json.dumps({"step": 1, "venv_python": str(fake_venv_python.absolute())}))
+
+    loaded = load_venv_python(sp_path)
+    assert loaded is not None
+    assert loaded.resolve() == fake_venv_python.resolve()
+
+
+def test_v1_to_v2_migration_preserves_venv_python(tmp_path, fake_venv_python):
+    """expand_v1_to_v2 must migrate top-level venv_python into tracks.default."""
+    from bin._scratchpad import expand_v1_to_v2
+
+    v1 = {
+        "step": 3,
+        "active_spec": "specs/foo.spec.md",
+        "venv_python": str(fake_venv_python.absolute()),
+    }
+    v2 = expand_v1_to_v2(v1)
+
+    assert v2["version"] == 2
+    assert v2["tracks"]["default"]["venv_python"] == str(fake_venv_python.absolute())
+    # Must not be at top-level
+    assert "venv_python" not in v2, "venv_python must not remain at top-level after migration"
+    # Must not be in _v1_unknown either
+    assert "venv_python" not in v2["tracks"]["default"].get("_v1_unknown", {})
+
+
+# ── W1: heredoc structural detection ─────────────────────────────────────────
+
+
+def test_normalize_action_w1_no_false_positive_on_pythonpath(fake_venv_python):
+    """python3 -c \"print('PYTHONPATH')\" must not trigger heredoc bypass."""
+    # Under the old PY-substring check this would be bypassed.
+    action = "python3 -c \"print('PYTHONPATH')\""
+    result = normalize_action(action, fake_venv_python)
+    # Should still rewrite — not a heredoc.
+    assert result.startswith(str(fake_venv_python)), repr(result)
+
+
+def test_normalize_action_w1_heredoc_structural_bypassed(fake_venv_python):
+    """python3 - <<'PY' ... PY is a heredoc and must be left untouched."""
+    action = "python3 - <<'PY'\nprint('hello')\nPY"
+    result = normalize_action(action, fake_venv_python)
+    assert result == action
+
+
+def test_normalize_action_w1_heredoc_variant_noquotes_bypassed(fake_venv_python):
+    """python3 - <<PY ... PY (no quotes) must also be left untouched."""
+    action = "python3 - <<PY\nprint('x')\nPY"
+    result = normalize_action(action, fake_venv_python)
+    assert result == action
+
+
+# ── W2: stale pyvenv.cfg detection ───────────────────────────────────────────
+
+
+def test_ensure_venv_halts_on_stale_pyvenv_cfg(tmp_path):
+    """ensure_venv must HALT when pyvenv.cfg references a non-existent executable."""
+    # Build a minimal fake venv structure.
+    venv_dir = tmp_path / "state" / ".venv"
+    venv_bin = venv_dir / "bin"
+    venv_bin.mkdir(parents=True)
+    python_path = venv_bin / "python"
+    python_path.touch()
+
+    # Write a pyvenv.cfg pointing to a non-existent executable.
+    (venv_dir / "pyvenv.cfg").write_text(
+        "home = /usr/bin\nexecutable = /usr/bin/python3.99\n"
+    )
+
+    with pytest.raises(RuntimeError, match="HALT.*stale"):
+        ensure_venv(tmp_path)
+
+
+def test_ensure_venv_ok_when_pyvenv_cfg_executable_exists(tmp_path):
+    """ensure_venv must NOT raise when pyvenv.cfg executable exists."""
+    venv_dir = tmp_path / "state" / ".venv"
+    venv_bin = venv_dir / "bin"
+    venv_bin.mkdir(parents=True)
+    python_path = venv_bin / "python"
+    python_path.touch()
+
+    # Point executable at a real binary that exists on all systems.
+    import sys as _sys
+    (venv_dir / "pyvenv.cfg").write_text(
+        f"home = /usr/bin\nexecutable = {_sys.executable}\n"
+    )
+
+    # Must return without raising.
+    result = ensure_venv(tmp_path)
+    assert result == python_path
+
+
+# ── W3: env-var prefix handling ──────────────────────────────────────────────
+
+
+def test_normalize_action_env_var_prefix(fake_venv_python):
+    """PYTHONPATH=src python3 -m foo → PYTHONPATH=src <venv>/bin/python -m foo."""
+    action = "PYTHONPATH=src python3 -m foo"
+    result = normalize_action(action, fake_venv_python)
+    vp = str(fake_venv_python)
+    assert result == f"PYTHONPATH=src {vp} -m foo", repr(result)
+
+
+def test_normalize_action_multiple_env_var_prefixes(fake_venv_python):
+    """Multiple env-var assignments before python3 are all preserved."""
+    action = "PYTHONPATH=src MYVAR=1 python3 script.py"
+    result = normalize_action(action, fake_venv_python)
+    vp = str(fake_venv_python)
+    assert result == f"PYTHONPATH=src MYVAR=1 {vp} script.py", repr(result)
+
+
+def test_normalize_action_env_var_prefix_with_pip(fake_venv_python):
+    """ENV=val pip install foo → ENV=val <venv>/bin/python -m pip install foo."""
+    action = "ENV=val pip install foo"
+    result = normalize_action(action, fake_venv_python)
+    vp = str(fake_venv_python)
+    assert result == f"ENV=val {vp} -m pip install foo", repr(result)

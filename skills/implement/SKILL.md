@@ -96,11 +96,11 @@ python3 -m bin.managed_venv ensure \
     --scratchpad state/scratchpad.json
 ```
 
-Stdout: `VENV_PYTHON: <absolute-path>`. The CLI creates `state/.venv/` (mode 0700) on first call, is idempotent on subsequent calls, and writes the interpreter path to `state/scratchpad.json["venv_python"]` via atomic write.
+Stdout: `VENV_PYTHON: <absolute-path>`. The CLI creates `state/.venv/` (mode 0700) on first call, is idempotent on subsequent calls, and writes the interpreter path to `state/scratchpad.json["tracks"][<track>]["venv_python"]` via atomic write.
 
 If this command exits non-zero → **HALT immediately** with its stderr. Do not fall back to system Python.
 
-**On every step**, rewrite the step's `action:` and `verification:` strings through `normalize_action` before executing them. Use the `normalize` subcommand:
+**On every step**, rewrite the step's `action:` and `verification:` strings through `normalize_action` **before** tier classification (Step 3.5) and before execution. The result is the `normalized_action` used for all subsequent steps. Use the `normalize` subcommand:
 
 ```bash
 python3 -m bin.managed_venv normalize \
@@ -131,15 +131,15 @@ If the user invoked `/implement check`:
 
 ### Step 3.5 — Persistence-Tier classifier
 
-Classify `current_action` by tier before executing. Run:
+Classify `normalized_action` (the post-rewrite string from Step 1.5 — not the raw spec text) by tier before executing. Run:
 
 ```bash
 python3 -m bin.tier evaluate-action \
-    --action "<current_action verbatim>" \
+    --action "<normalized_action verbatim>" \
     --spec "specs/<active spec name>.spec.md"
 ```
 
-Substitute the literal action text for `<current_action>` and the actual spec filename for `<active spec name>`. The CLI wraps the §3.5 orchestration in a single call: it invokes `tier.classify`, reads §8.1 locked paths from the spec via `coverage_gate.parse_81_block` (the canonical permissive parser — handles both `- mutates: /etc/` and `- `mutates:` /etc/` syntax), then runs `tier.should_halt` and emits the §3.5 prose-format output. Pass `--json` instead to get a structured payload (`{"tier","reasons","never_autonomous","halt","spec_locked_paths"}`).
+Substitute the normalized action text for `<normalized_action>` and the actual spec filename for `<active spec name>`. The CLI wraps the §3.5 orchestration in a single call: it invokes `tier.classify`, reads §8.1 locked paths from the spec via `coverage_gate.parse_81_block` (the canonical permissive parser — handles both `- mutates: /etc/` and `- `mutates:` /etc/` syntax), then runs `tier.should_halt` and emits the §3.5 prose-format output. Pass `--json` instead to get a structured payload (`{"tier","reasons","never_autonomous","halt","spec_locked_paths"}`).
 
 Stdout (no `--json`):
 - `TIER: <silent|repo|host|network>` — exactly one line.

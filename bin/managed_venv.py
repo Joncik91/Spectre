@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import os
 import pathlib
-import shlex
+import re
 import stat
 import subprocess
 import sys
@@ -42,6 +42,20 @@ def ensure_venv(project_path: pathlib.Path) -> pathlib.Path:
     python_path = venv_dir / "bin" / "python"
 
     if python_path.exists():
+        # W2: detect stale venv (system Python referenced in pyvenv.cfg was removed/upgraded).
+        pyvenv_cfg = venv_dir / "pyvenv.cfg"
+        if pyvenv_cfg.exists():
+            for line in pyvenv_cfg.read_text(encoding="utf-8").splitlines():
+                if line.startswith("executable"):
+                    _, _, exe = line.partition("=")
+                    exe_path = pathlib.Path(exe.strip())
+                    if not exe_path.exists():
+                        raise RuntimeError(
+                            f"HALT: venv stale — executable {exe_path} referenced in "
+                            f"{pyvenv_cfg} no longer exists. "
+                            "Delete state/.venv to re-create the venv."
+                        )
+                    break
         return python_path
 
     # Create venv
@@ -103,62 +117,83 @@ def pip_install_editable(
         )
 
 
+# Regex for rewriting python/pip at the head of each shell-operator-delimited
+# command-list element.  Group 1: the leading prefix (start-of-string or a shell
+# operator followed by optional whitespace).  Group 2: optional env-var prefix(es)
+# of the form WORD=VALUE followed by whitespace.  Group 3: the bare python/pip token.
+#
+# Shell operators matched: &&, ||, ;, |, &  (order: longest first to avoid
+# partial matches, e.g. || before |).
+#
+# Heredoc limitation (§6.0): if a heredoc body contains "python" at the start of
+# a shell-operator-delimited segment, the regex will rewrite it.  This is
+# accepted as a known limitation — specs must not embed Python inside heredocs
+# in action/verification strings.
+_REWRITE_RE = re.compile(
+    r"(^|(?:&&|\|\||;|\||&)\s*)"   # group 1: start or shell operator + optional space
+    r"((?:\w+=\S+\s+)*)"           # group 2: zero-or-more env-var assignments
+    r"(python3?|pip3?)\b"          # group 3: the bare python/pip token (word-boundary)
+)
+
+# Detect heredocs by structural pattern: << optionally followed by - and an
+# optional quote, then a word (the delimiter tag).
+_HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)(\w+)\1")
+
+
 def normalize_action(action: str, venv_python: pathlib.Path) -> str:
     """Rewrite bare python/pip invocations to use the venv interpreter.
 
     Rules
     -----
-    - Rewrites top-level shell tokens only (via ``shlex``).
-    - Bare ``python3``, ``python``, ``pip3``, ``pip`` → ``<venv_python>`` (or
-      ``<venv_python> -m pip``).
-    - Preserves invocations that already start with an absolute path.
-    - Preserves heredoc blocks (``<<'PY'`` … ``PY`` / ``<<PY`` … ``PY``).
-    - Preserves invocations nested inside quoted strings (shlex separates them).
+    - Rewrites the head command token of every shell-operator-delimited segment
+      (``&&``, ``||``, ``;``, ``|``, ``&``) via regex — does **not** use
+      ``shlex.split``/``shlex.join``, so shell operators such as ``&&``, ``>``,
+      and ``2>&1`` are left byte-identical.
+    - Handles leading env-var prefixes (e.g. ``PYTHONPATH=src python3 -m foo``).
+    - Bare ``python3``/``python`` → ``<venv_python>``.
+    - Bare ``pip3``/``pip`` → ``<venv_python> -m pip``.
+    - Absolute paths (``/usr/bin/python3``) are not matched by the regex.
+    - Heredoc blocks (structurally detected via ``<<[delimiter]``) bypass
+      rewriting entirely.
 
     Returns the rewritten string, or the original if no change is needed.
     """
     venv_python = pathlib.Path(venv_python)
 
-    # Skip heredoc blocks — shlex cannot tokenize them safely and the spec
-    # prose invariant is "no heredoc-Python in actions/verifications".
-    if "<<" in action and ("PY" in action or "'PY'" in action):
+    # Skip heredoc blocks — structural detection to avoid false positives.
+    if _HEREDOC_RE.search(action):
         return action
 
-    try:
-        tokens = shlex.split(action)
-    except ValueError:
-        # Untokenisable (mismatched quotes etc.) — return unchanged.
-        return action
+    venv_bin = venv_python.parent
 
-    if not tokens:
-        return action
+    def _sub(m: re.Match) -> str:
+        prefix = m.group(1)
+        env_vars = m.group(2)
+        cmd = m.group(3)
+        if cmd.startswith("python"):
+            replacement = str(venv_python)
+        else:
+            # pip / pip3
+            replacement = f"{venv_python} -m pip"
+        return f"{prefix}{env_vars}{replacement}"
 
-    head = tokens[0]
-
-    # Already absolute — leave alone.
-    if head.startswith("/"):
-        return action
-
-    # pip / pip3 → <venv_python> -m pip
-    if head in ("pip", "pip3"):
-        rest = tokens[1:]
-        new_tokens = [str(venv_python), "-m", "pip"] + rest
-        return shlex.join(new_tokens)
-
-    # python / python3 → <venv_python>
-    if head in ("python", "python3"):
-        rest = tokens[1:]
-        new_tokens = [str(venv_python)] + rest
-        return shlex.join(new_tokens)
-
-    return action
+    return _REWRITE_RE.sub(_sub, action)
 
 
 # ── Scratchpad persistence helpers ────────────────────────────────────────────
 
 
-def load_venv_python(scratchpad_path: pathlib.Path) -> pathlib.Path | None:
-    """Read ``venv_python`` from top-level of scratchpad JSON, or None."""
+def load_venv_python(
+    scratchpad_path: pathlib.Path, track: str = "default"
+) -> pathlib.Path | None:
+    """Read ``venv_python`` for *track* from the scratchpad JSON, or None.
+
+    Lookup order (schema-version-aware):
+    1. v2: ``data["tracks"][<track>]["venv_python"]``
+    2. v1 fallback: ``data["venv_python"]`` (top-level, legacy placement)
+
+    Returns None when the stored path no longer exists on disk.
+    """
     import json
 
     scratchpad_path = pathlib.Path(scratchpad_path)
@@ -168,7 +203,17 @@ def load_venv_python(scratchpad_path: pathlib.Path) -> pathlib.Path | None:
         data = json.loads(scratchpad_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return None
-    val = data.get("venv_python")
+
+    # v2 per-track location (preferred)
+    tracks = data.get("tracks")
+    val: str | None = None
+    if isinstance(tracks, dict):
+        track_data = tracks.get(track) or {}
+        val = track_data.get("venv_python")
+    # v1 top-level fallback
+    if not val:
+        val = data.get("venv_python")
+
     if val:
         p = pathlib.Path(val)
         if p.exists():
@@ -177,17 +222,25 @@ def load_venv_python(scratchpad_path: pathlib.Path) -> pathlib.Path | None:
 
 
 def persist_venv_python(
-    scratchpad_path: pathlib.Path, venv_python: pathlib.Path
+    scratchpad_path: pathlib.Path,
+    venv_python: pathlib.Path,
+    track: str = "default",
 ) -> None:
-    """Write ``venv_python`` (absolute string) to top-level of scratchpad JSON.
+    """Write ``venv_python`` (absolute string) to ``tracks.<track>`` in scratchpad JSON.
 
-    Uses ``_scratchpad.atomic_write`` — safe under interrupt.
+    Auto-promotes v1 → v2 if needed.  Uses ``_scratchpad.atomic_write`` — safe under interrupt.
     """
     # Import here so managed_venv has no circular dependency at module level.
     from bin import _scratchpad as sp  # noqa: PLC0415
 
     data = sp.load(scratchpad_path)
-    data["venv_python"] = str(venv_python.absolute())
+    if data.get("version") != 2:
+        data = sp.expand_v1_to_v2(data)
+    if not isinstance(data.get("tracks"), dict):
+        data["tracks"] = {}
+    track_data = data["tracks"].get(track) or sp.track_default()
+    track_data["venv_python"] = str(venv_python.absolute())
+    data["tracks"][track] = track_data
     sp.atomic_write(scratchpad_path, data)
 
 
