@@ -28,6 +28,7 @@ KNOWN_CONCERN_KINDS: tuple[str, ...] = (
     "receiver-clarification",
     "assumption-surface",
     "branch-resolution",
+    "negative-path",
 )
 STOP_REASONS: tuple[str, ...] = (
     "author-arbitrated",
@@ -315,6 +316,89 @@ def load(path: pathlib.Path) -> WalkState | None:
         round_count=data.get("round_count", 0),
         yield_history=list(data.get("yield_history", [])),
     )
+
+
+def yield_status_line(
+    state: WalkState,
+    *,
+    yield_threshold: int = DEFAULT_YIELD_THRESHOLD,
+    yield_converge_rounds: int = DEFAULT_YIELD_CONVERGE_ROUNDS,
+) -> str:
+    """Return a human-readable countdown line for the yield convergence check.
+
+    Format:
+        "YIELD: round N added M new T3 findings; stopping when last K rounds all <T (currently: [a,b,c])"
+
+    where N = len(yield_history), M = yield_history[-1] (or 0 if empty),
+    K = yield_converge_rounds, T = yield_threshold, and the trailing list is
+    yield_history[-K:].
+
+    Examples:
+        round 1 with yield_history=[5]:
+            "YIELD: round 1 added 5 new T3 findings; stopping when last 3 rounds all <2 (currently: [5])"
+        round 4 with yield_history=[5,3,1,0]:
+            "YIELD: round 4 added 0 new T3 findings; stopping when last 3 rounds all <2 (currently: [3,1,0])"
+    """
+    history = state.yield_history
+    n = len(history)
+    m = history[-1] if history else 0
+    tail = history[-yield_converge_rounds:] if history else []
+    return (
+        f"YIELD: round {n} added {m} new T3 findings; "
+        f"stopping when last {yield_converge_rounds} rounds all <{yield_threshold} "
+        f"(currently: {tail})"
+    )
+
+
+def generate_negative_path_concerns(
+    state: WalkState,
+    steps: list[dict],
+) -> list[Concern]:
+    """For each step that has non-empty `produces` AND no `negative_paths` field,
+    generate one Concern asking the human about the obvious failure branch.
+
+    Idempotent: never emits a concern whose `id` already exists in state.asked
+    or state.pending.
+
+    Parameters
+    ----------
+    state:
+        Current walk state; used for idempotency check against asked/pending ids.
+    steps:
+        List of step dicts as returned by spec_ast._parse_steps_section, where each
+        dict may have 'produces' (list[str]) and 'negative_paths' (list[dict]).
+    """
+    existing_ids: set[str] = (
+        {c.id for c in state.asked}
+        | {c.id for c in state.pending}
+        | set(state.answered)
+    )
+    concerns: list[Concern] = []
+    for step in steps:
+        step_n = step.get("step")
+        if step_n is None:
+            continue
+        produces = step.get("produces", []) or []
+        if not produces:
+            continue
+        negative_paths = step.get("negative_paths", []) or []
+        if negative_paths:
+            continue
+        concern_id = f"negpath-{step_n}"
+        if concern_id in existing_ids:
+            continue
+        concerns.append(Concern(
+            id=concern_id,
+            kind="negative-path",
+            receivers=["human"],
+            depends_on=[],
+            summary=(
+                f"Step {step_n} declares produces:{produces} but no negative-paths. "
+                f"What is the obvious failure branch (yt-dlp 4xx? disk full? interrupted "
+                f"mid-write?) and how should we handle it (retry / reject / escalate)?"
+            ),
+        ))
+    return concerns
 
 
 # ── CLI entrypoint ────────────────────────────────────────────────────────────
