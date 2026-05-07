@@ -151,13 +151,123 @@ def _parse_contract_list(raw_block: str, key: str) -> list[str]:
     return entries
 
 
+def _parse_negative_paths(raw_block: str) -> list[dict[str, str]]:
+    """Parse a ``negative-paths:`` YAML list field from a raw step block.
+
+    Each entry is a small dict with ``trigger`` and ``handler`` keys.
+    Handles both inline-list (JSON-style) and block-sequence YAML.
+
+    Returns a list of parsed entry dicts (possibly empty).  Missing or
+    malformed entries are returned as partial dicts so the caller can
+    emit ``malformed-negative-path`` findings.
+    """
+    entries: list[dict[str, str]] = []
+    lines = raw_block.splitlines()
+
+    list_start = -1
+    for i, line in enumerate(lines):
+        m = re.match(r"^\s+negative-paths:\s*(.*)", line)
+        if m:
+            inline = m.group(1).strip()
+            if inline:
+                # Inline style: negative-paths: [{trigger: "x", handler: "y"}, ...]
+                # Best-effort: strip outer brackets and split on }, {
+                inner = inline.strip()
+                if inner.startswith("[") and inner.endswith("]"):
+                    inner = inner[1:-1]
+                # Split on "},{" boundaries (rough but tolerant)
+                item_strs = re.split(r"\}\s*,\s*\{", inner)
+                for item_str in item_strs:
+                    item_str = item_str.strip().strip("{").strip("}")
+                    entry: dict[str, str] = {}
+                    for kv in item_str.split(","):
+                        kv = kv.strip()
+                        kv_m = re.match(r"(['\"]?)(trigger|handler)\1\s*:\s*['\"]?(.*?)['\"]?\s*$", kv)
+                        if kv_m:
+                            entry[kv_m.group(2)] = kv_m.group(3).strip().strip("'\"")
+                    if entry:
+                        entries.append(entry)
+            else:
+                list_start = i + 1
+            break
+
+    if list_start >= 0:
+        # Block sequence: each entry starts with a list-item line "  - " and
+        # sub-keys appear on following lines at deeper indentation, e.g.:
+        #   negative-paths:
+        #     - trigger: "fetch fails"
+        #       handler: "retry"
+        #     - trigger: "disk full"
+        #       handler: "reject"
+        #
+        # Strategy: determine the indentation of the negative-paths: field line
+        # to know when we've moved back to step-level fields (which stop the scan).
+        # The negative-paths: line is at lines[list_start - 1].
+        np_line = lines[list_start - 1] if list_start > 0 else ""
+        np_indent = len(np_line) - len(np_line.lstrip())
+
+        current_entry: dict[str, str] | None = None
+        for line in lines[list_start:]:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            # Stop at next step block delimiter
+            if re.match(r"^\s*-\s+step:\s*\d+", line):
+                break
+            # Measure indentation of this line
+            line_indent = len(line) - len(line.lstrip())
+            # If this line is at or shallower than the negative-paths: field,
+            # it must be a sibling step-level field — stop.
+            if line_indent <= np_indent and not re.match(r"^\s*-\s+", line):
+                break
+            # New list item (has "- " marker at deeper-than-np_indent level)
+            m_item = re.match(r"^\s+-\s+(.*)", line)
+            if m_item:
+                if current_entry is not None:
+                    entries.append(current_entry)
+                current_entry = {}
+                rest = m_item.group(1).strip()
+                kv_m = re.match(r"(trigger|handler)\s*:\s*(.*)", rest)
+                if kv_m:
+                    current_entry[kv_m.group(1)] = kv_m.group(2).strip().strip("'\"")
+            else:
+                # Continuation sub-key for the current entry
+                if current_entry is not None:
+                    kv_m = re.match(r"^\s+(trigger|handler)\s*:\s*(.*)", line)
+                    if kv_m:
+                        current_entry[kv_m.group(1)] = kv_m.group(2).strip().strip("'\"")
+        if current_entry is not None:
+            entries.append(current_entry)
+
+    return entries
+
+
+def _parse_reboot_survival(body: str) -> str:
+    """Extract the ``reboot-survival:`` value from §8.1.
+
+    Returns the value string (e.g. ``"required"``, ``"best-effort"``, ``"none"``)
+    or ``""`` if not found.
+    """
+    m81 = re.search(r"^#{2,3}\s+8\.1\b.*$", body, re.MULTILINE)
+    if not m81:
+        return ""
+    block_start = m81.end()
+    next_h = re.search(r"^#{2,3} ", body[block_start:], re.MULTILINE)
+    block_81 = body[block_start : block_start + next_h.start()] if next_h else body[block_start:]
+    m = re.search(r"^\s*[`-]?\s*`?reboot-survival:`?\s*(.*)", block_81, re.MULTILINE)
+    if not m:
+        return ""
+    return m.group(1).strip().strip("`").strip("'\"")
+
+
 def _parse_steps_section(body: str) -> list[dict[str, str | int | list[str]]]:
     """
     Parse ## 6. Steps section from a spec body.
 
     Returns a list of dicts, each with keys: 'step' (int), and zero or
     more of 'why', 'action', 'verification' (all str), and 'produces',
-    'requires' (both list[str], possibly empty).
+    'requires' (both list[str], possibly empty), and 'negative_paths'
+    (list[dict[str, str]], possibly empty).
     """
     # Find ## 6. Steps heading
     steps_match = re.search(r"^## 6\. Steps\s*$", body, re.MULTILINE)
@@ -208,6 +318,7 @@ def _parse_steps_section(body: str) -> list[dict[str, str | int | list[str]]]:
                 # Parse produces/requires contract lists from the raw block
                 step["produces"] = _parse_contract_list(raw, "produces")
                 step["requires"] = _parse_contract_list(raw, "requires")
+                step["negative_paths"] = _parse_negative_paths(raw)
                 steps.append(step)
 
     # W2 NOTE (known limitation, v0.5.2): multi-line YAML literal-block (`|`)
@@ -927,6 +1038,99 @@ def _check_unowned_requirement(steps: list[dict]) -> list[_findings.Finding]:
     return results
 
 
+def _check_negative_paths(
+    steps: list[dict],
+    body: str,
+) -> list[_findings.Finding]:
+    """Tier 1 check for missing or malformed ``negative-paths:`` declarations.
+
+    Rules:
+    - Step with ``produces`` non-empty AND ``negative_paths`` empty:
+        - ``reboot-survival: required``  → block severity ``missing-negative-path``
+        - otherwise                      → warn severity ``missing-negative-path``
+    - Step with a malformed entry (missing ``trigger`` or ``handler``, or wrong
+      type) → warn ``malformed-negative-path``; evaluator continues.
+    """
+    results: list[_findings.Finding] = []
+    reboot_survival = _parse_reboot_survival(body)
+
+    for step in steps:
+        step_n: int = step.get("step")  # type: ignore[assignment]
+        if step_n is None:
+            continue
+        produces: list[str] = step.get("produces", []) or []  # type: ignore[assignment]
+        negative_paths: list[dict] = step.get("negative_paths", []) or []  # type: ignore[assignment]
+
+        if produces:
+            if not negative_paths:
+                # missing-negative-path
+                severity = "block" if reboot_survival == "required" else "warn"
+                if severity == "block":
+                    msg = (
+                        f"Step {step_n} declares produces but no negative-paths; "
+                        f"reboot-survival=required mandates failure-branch declaration."
+                    )
+                else:
+                    msg = (
+                        f"Step {step_n} declares produces but no negative-paths; "
+                        f"consider documenting the obvious failure branch."
+                    )
+                if len(msg) > 140:
+                    msg = msg[:137] + "..."
+                results.append(_findings.Finding(
+                    tier=1,
+                    kind="missing-negative-path",
+                    severity=severity,
+                    location=_findings.FindingLocation(
+                        scope="step", step=step_n, ref="negative-paths"
+                    ),
+                    message=msg,
+                    suggested_fix=(
+                        "Add negative-paths: with trigger: and handler: entries."
+                    ),
+                ))
+            else:
+                # Validate each entry
+                for entry in negative_paths:
+                    if not isinstance(entry, dict):
+                        msg = f"Step {step_n} negative-paths entry is not a dict: {entry!r}."
+                        if len(msg) > 140:
+                            msg = msg[:137] + "..."
+                        results.append(_findings.Finding(
+                            tier=1,
+                            kind="malformed-negative-path",
+                            severity="warn",
+                            location=_findings.FindingLocation(
+                                scope="step", step=step_n, ref="negative-paths"
+                            ),
+                            message=msg,
+                            suggested_fix="Each negative-paths entry must be a dict with trigger: and handler: keys.",
+                        ))
+                        continue
+                    missing = [k for k in ("trigger", "handler") if not entry.get(k)]
+                    if missing:
+                        missing_str = ", ".join(missing)
+                        msg = (
+                            f"Step {step_n} negative-paths entry missing required key(s): {missing_str}."
+                        )
+                        if len(msg) > 140:
+                            msg = msg[:137] + "..."
+                        results.append(_findings.Finding(
+                            tier=1,
+                            kind="malformed-negative-path",
+                            severity="warn",
+                            location=_findings.FindingLocation(
+                                scope="step", step=step_n, ref="negative-paths"
+                            ),
+                            message=msg,
+                            suggested_fix=(
+                                "Each negative-paths entry must have both trigger: and handler: keys."
+                            )[:140],
+                        ))
+
+    return results
+
+
 def classify(spec_path: pathlib.Path) -> list[_findings.Finding]:
     """Tier 1 deterministic classifier. Returns Finding list (possibly empty).
 
@@ -1012,5 +1216,8 @@ def classify(spec_path: pathlib.Path) -> list[_findings.Finding]:
 
     # ── Check 7 (Gap C): unowned-requirement (e2e assertions) ────────────────
     results.extend(_check_unowned_requirement(steps))
+
+    # ── Check 8 (v0.6): negative-path declarations ───────────────────────────
+    results.extend(_check_negative_paths(steps, body))
 
     return results

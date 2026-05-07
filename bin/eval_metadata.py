@@ -51,10 +51,13 @@ DEFAULT_SEVERITIES: dict[str, str] = {
     "verification-syntax-error": "block",
     "action-invokes-uncreated-artifact": "block",
     "unowned-requirement-heuristic": "block",
-    # v0.6 — handoff envelope integrity kinds
+    # v0.6 — handoff envelope integrity kinds (P1)
     "envelope-missing": "warn",
     "envelope-tampered": "block",
     "envelope-malformed": "block",
+    # v0.6 — walker/contract checks (P2)
+    "missing-negative-path": "warn",
+    "malformed-negative-path": "warn",
 }
 
 # Imported lazily at call sites to avoid circular imports in thin stdlib modules.
