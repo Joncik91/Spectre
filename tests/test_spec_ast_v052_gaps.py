@@ -433,3 +433,197 @@ def test_python_import_passes_when_prior_step_authored_module():
         assert not any(f.kind == "unowned-requirement-heuristic" for f in fs)
     finally:
         _cleanup(p)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# B1 — curl route captures full path; allowlist suppresses universal probes
+# ════════════════════════════════════════════════════════════════════════════
+
+
+def test_b1_curl_full_path_captured_blocks():
+    """`curl http://localhost:8080/api/convert` must block on /api/convert (full path)."""
+    p = _make_spec(
+        '- step: 1\n'
+        '  why: "verify endpoint"\n'
+        '  action: "echo started"\n'
+        '  verification: "curl http://localhost:8080/api/convert"\n'
+    )
+    try:
+        fs = spec_ast.classify(p)
+        assert any(f.kind == "unowned-requirement-heuristic" for f in fs)
+    finally:
+        _cleanup(p)
+
+
+def test_b1_curl_healthz_not_flagged():
+    """`curl http://localhost/healthz` is in the allowlist — must not block."""
+    p = _make_spec(
+        '- step: 1\n'
+        '  why: "health probe"\n'
+        '  action: "echo started"\n'
+        '  verification: "curl http://localhost/healthz"\n'
+    )
+    try:
+        fs = spec_ast.classify(p)
+        assert not any(f.kind == "unowned-requirement-heuristic" for f in fs)
+    finally:
+        _cleanup(p)
+
+
+def test_b1_curl_health_path_not_flagged():
+    """`curl http://localhost/health` allowlisted — must not block."""
+    p = _make_spec(
+        '- step: 1\n'
+        '  why: "health probe"\n'
+        '  action: "echo started"\n'
+        '  verification: "curl http://localhost/health"\n'
+    )
+    try:
+        fs = spec_ast.classify(p)
+        assert not any(f.kind == "unowned-requirement-heuristic" for f in fs)
+    finally:
+        _cleanup(p)
+
+
+def test_b1_curl_items_42_full_path_blocks():
+    """`curl http://localhost/api/items/42` must block on /api/items/42 (not just /42)."""
+    p = _make_spec(
+        '- step: 1\n'
+        '  why: "verify item endpoint"\n'
+        '  action: "echo started"\n'
+        '  verification: "curl http://localhost/api/items/42"\n'
+    )
+    try:
+        fs = spec_ast.classify(p)
+        findings = [f for f in fs if f.kind == "unowned-requirement-heuristic"]
+        assert any("/api/items/42" in f.message for f in findings)
+    finally:
+        _cleanup(p)
+
+
+def test_b1_prior_step_mentioning_convert_substring_does_not_bypass():
+    """A prior step mentioning `/other/convert` must NOT satisfy `/api/convert` authorship."""
+    p = _make_spec(
+        '- step: 1\n'
+        '  why: "unrelated route"\n'
+        '  action: "echo /other/convert route registered"\n'
+        '  verification: "true"\n'
+        '- step: 2\n'
+        '  why: "check api convert"\n'
+        '  action: "echo done"\n'
+        '  verification: "curl http://localhost:8080/api/convert | grep ok"\n'
+    )
+    try:
+        fs = spec_ast.classify(p)
+        # /api/convert is NOT in prior corpus (only /other/convert is)
+        assert any(f.kind == "unowned-requirement-heuristic" for f in fs)
+    finally:
+        _cleanup(p)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# B2 — bare `import X` in python3 -c body is checked
+# ════════════════════════════════════════════════════════════════════════════
+
+
+def test_b2_bare_import_without_prior_author_blocks():
+    """`python3 -c 'import yt_readable.server'` with no prior owner — must block."""
+    p = _make_spec(
+        '- step: 1\n'
+        '  why: "check module importable"\n'
+        '  action: "echo checking"\n'
+        "  verification: \"python3 -c 'import yt_readable.server'\"\n"
+    )
+    try:
+        fs = spec_ast.classify(p)
+        assert any(f.kind == "unowned-requirement-heuristic" for f in fs)
+    finally:
+        _cleanup(p)
+
+
+def test_b2_bare_import_passes_when_prior_step_authored():
+    """`import yt_readable.server` passes when prior step authored the module file."""
+    p = _make_spec(
+        '- step: 1\n'
+        '  why: "create module"\n'
+        '  action: "cat > /tmp/spectest/yt_readable/server.py <<EOF\\npass\\nEOF"\n'
+        '  verification: "test -f /tmp/spectest/yt_readable/server.py"\n'
+        '- step: 2\n'
+        '  why: "verify importable"\n'
+        '  action: "echo done"\n'
+        "  verification: \"python3 -c 'import yt_readable.server'\"\n"
+    )
+    try:
+        fs = spec_ast.classify(p)
+        assert not any(f.kind == "unowned-requirement-heuristic" for f in fs)
+    finally:
+        _cleanup(p)
+
+
+def test_b2_stdlib_bare_import_not_flagged():
+    """`python3 -c 'import os'` — stdlib module, must not block."""
+    p = _make_spec(
+        '- step: 1\n'
+        '  why: "check os module"\n'
+        '  action: "echo checking"\n'
+        "  verification: \"python3 -c 'import os; print(os.getcwd())'\"\n"
+    )
+    try:
+        fs = spec_ast.classify(p)
+        assert not any(f.kind == "unowned-requirement-heuristic" for f in fs)
+    finally:
+        _cleanup(p)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# B3 — `from X import Y` anywhere in -c body (not just at body start)
+# ════════════════════════════════════════════════════════════════════════════
+
+
+def test_b3_from_import_after_leading_statement_blocks():
+    """`python3 -c "import sys; from yt_readable.server import app"` — must block."""
+    p = _make_spec(
+        '- step: 1\n'
+        '  why: "verify app importable after sys"\n'
+        '  action: "echo checking"\n'
+        '  verification: \'python3 -c "import sys; from yt_readable.server import app"\'\n'
+    )
+    try:
+        fs = spec_ast.classify(p)
+        assert any(f.kind == "unowned-requirement-heuristic" for f in fs)
+    finally:
+        _cleanup(p)
+
+
+def test_b3_from_import_after_leading_statement_passes_when_authored():
+    """`import sys; from yt_readable.server import app` passes when module is authored."""
+    p = _make_spec(
+        '- step: 1\n'
+        '  why: "create module"\n'
+        '  action: "cat > /tmp/spectest/yt_readable/server.py <<EOF\\napp=1\\nEOF"\n'
+        '  verification: "test -f /tmp/spectest/yt_readable/server.py"\n'
+        '- step: 2\n'
+        '  why: "verify importable"\n'
+        '  action: "echo done"\n'
+        '  verification: \'python3 -c "import sys; from yt_readable.server import app"\'\n'
+    )
+    try:
+        fs = spec_ast.classify(p)
+        assert not any(f.kind == "unowned-requirement-heuristic" for f in fs)
+    finally:
+        _cleanup(p)
+
+
+def test_b3_multi_import_both_checked():
+    """`from yt_readable.db import migrate` in multi-statement body — must block."""
+    p = _make_spec(
+        '- step: 1\n'
+        '  why: "verify db module"\n'
+        '  action: "echo checking"\n'
+        '  verification: \'python3 -c "import os; from yt_readable.db import migrate"\'\n'
+    )
+    try:
+        fs = spec_ast.classify(p)
+        assert any(f.kind == "unowned-requirement-heuristic" for f in fs)
+    finally:
+        _cleanup(p)

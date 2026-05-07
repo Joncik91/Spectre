@@ -394,15 +394,27 @@ def _extract_python_c_bodies(text: str) -> list[str]:
     """Return all bodies from `python3 -c <body>` invocations in *text*.
 
     Uses shlex to tokenize the command so that quoted bodies with escaped
-    characters are handled correctly. Returns raw body strings (not yet
+    characters are handled correctly.  Returns raw body strings (not yet
     unescaped from the outer YAML quoting — that stripping happens in
     _parse_steps_section before we receive the action string).
+
+    Resilience: the YAML field parser strips a trailing quote from the field
+    value when the outer YAML wrapper uses a different quote style (e.g. the
+    `'` at the end of `"python3 -c 'body'"` is stripped by `.strip("'")`
+    leaving an unclosed quote in the shell fragment).  When shlex raises
+    ValueError we retry by appending `'` then `"` so the body is still
+    extracted.
     """
     bodies: list[str] = []
-    try:
-        tokens = shlex.split(text)
-    except ValueError:
-        # Unmatched quotes — can't parse reliably; skip.
+    tokens: list[str] | None = None
+    for attempt in [text, text + "'", text + '"']:
+        try:
+            tokens = shlex.split(attempt)
+            break
+        except ValueError:
+            continue
+    if tokens is None:
+        # All attempts failed — can't parse reliably; skip.
         return bodies
 
     i = 0
@@ -700,45 +712,6 @@ _STDLIB_TOPS: frozenset[str] = frozenset({
     "xdrlib", "xml", "xmlrpc", "zipapp", "zipfile", "zipimport", "zlib",
     "zoneinfo", "_thread",
 })
-
-
-_PYTHON_C_RE = re.compile(r"\bpython3?\s+-c\s+")
-
-
-def _extract_python_c_bodies(text: str) -> list[str]:
-    """Return the string bodies passed to `python3 -c '...'` in *text*.
-
-    Uses shlex to split the shell fragment so that the quoted -c argument is
-    extracted correctly regardless of quote style.
-
-    Resilience: the YAML field parser strips a trailing quote from the field
-    value (e.g. the `'` at the end of `"python3 -c 'body'"` becomes
-    `python3 -c 'body` after `.strip('"').strip("'")`).  When shlex raises
-    ValueError (unclosed quotation), we retry by appending `'` then `"` so
-    the body can still be extracted.
-
-    B3 FIX: callers should iterate over returned bodies and run
-    _PYTHON_IMPORT_RE / _PYTHON_IMPORT_ALT_RE over each body so that
-    statements like `import sys; from app import foo` are fully checked.
-    """
-    bodies: list[str] = []
-    for m in _PYTHON_C_RE.finditer(text):
-        fragment = text[m.start():]
-        tokens: list[str] | None = None
-        # First try as-is; if shlex chokes on a stripped trailing quote,
-        # retry with each closing-quote character appended.
-        for attempt in [fragment, fragment + "'", fragment + '"']:
-            try:
-                tokens = shlex.split(attempt)
-                break
-            except ValueError:
-                continue
-        if tokens is None or len(tokens) < 3:
-            continue
-        # tokens[0] = 'python3' / 'python', tokens[1] = '-c',
-        # tokens[2] = the body
-        bodies.append(tokens[2])
-    return bodies
 
 
 def _check_unowned_requirement(steps: list[dict]) -> list[_findings.Finding]:
