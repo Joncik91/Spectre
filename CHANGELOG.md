@@ -2,6 +2,61 @@
 
 All notable changes to the Spectre plugin.
 
+## v0.5.2 — 2026-05-07
+
+**Closure of the pre-lock evaluator regression surfaced by the v0.5.1 retest. Five gap classes shipped past three tiers in v0.5.1 (`tier 1: PASS (2 warn)`, `tier 2: PASS (0)`, `tier 3: PASS (21 info)`); `/implement auto` then halted five times on bugs the evaluator should have caught. Per Copilot/GPT-5.4 peer review (#32): the fix is deterministic contracts + executor-owned environment + hard gating, NOT prose-inferred graphs.**
+
+### Summary
+
+The v0.5.1 retest of yt-readable surfaced gap classes A (uncreated artifact), B (import-before-install), C (scaffold-without-implementation), D (unparseable Python in verification), E (PEP 668 / venv) — all detectable at lock time with deterministic checks. v0.5.2 closes all five plus reshapes Tier 3 from prose-adversarial-review to JSON contradiction tuples.
+
+### Added
+
+- **`bin/managed_venv.py`** (NEW) — executor-owned Python environment (closes Gap E from #31, design #32):
+  - `ensure_venv(project_path)` — creates `state/.venv/` mode 0700 idempotently. HALTs on a stale `pyvenv.cfg` referencing a missing system Python (e.g. after upgrade from 3.13 → 3.14).
+  - `pip_install_editable(project_path, target=None)` — editable install into the venv.
+  - `normalize_action(action, venv_python)` — regex-based head-token rewriter (anchored after `&&`/`||`/`;`/`|`/`&`). Preserves shell operators byte-identical, preserves heredocs (structural detection, not substring), preserves absolute paths, handles env-var prefixes (`PYTHONPATH=src python3 -m foo`).
+  - `persist_venv_python` / `load_venv_python` — per-track scratchpad helpers using v2 schema with v1 fallback.
+  - CLI: `python3 -m bin.managed_venv ensure|pip-install-editable|normalize`.
+  - Implement skill prose: new §6.0 "Environment policy" + Step 1.5 wires this in before tier classification.
+  - Spec template: §5 reframes venv as "Spectre executor invariant" not spec-author obligation.
+
+- **Explicit step contracts** (closes Gap C, design #32, P3):
+  - Two new optional fields on each step: `produces:` and `requires:` — list of `<type>:<value>` entries.
+  - 8 contract types: `file:<path>`, `package:<name>`, `console-script:<name>`, `route:<METHOD> <path>`, `module:<dotted.name>`, `binary:<name>`, `db-table:<name>`, `db-column:<table>.<col>`.
+  - Tier 1 cross-validates `requires:` against prior `produces:`. Mismatch → block-severity `unowned-requirement`.
+  - Step with no contracts → warn-severity `missing-contract` (backward compat — existing specs still work).
+  - Malformed entries → warn-severity `malformed-contract`, evaluator continues.
+  - `.eval.json` sidecar gets a `contract_resolution` block recording which `requires:` resolved to which step's `produces:`.
+  - Spec template documents the 8 contract types and lowercase-prefix convention.
+
+- **Tier 1 deterministic gap-closers** (closes Gaps A, C, D from #31, design #32, P1):
+  - `verification-syntax-error` (block) — every `python3 -c "<body>"` in actions/verifications is `compile()`-checked at lock time. Catches the v0.5.1 Step 5 bug (multi-statement `for x in y: assert x` doesn't parse).
+  - `action-invokes-uncreated-artifact` (block) — actions invoking absolute paths under `mutates:` that no prior step's heredoc/cp/tee/install authored.
+  - `unowned-requirement-heuristic` (block) — verifications asserting on curl routes, HTML tags, SQL columns, or Python imports with no prior owner. Curl-route allowlist for universal probes (`/`, `/healthz`, `/health`, `/ready`, `/metrics`, `/ping`, `/status`). Bare `import X` and `from X import Y` both checked anywhere in `-c "..."` body. SQL ownership requires `CREATE TABLE <name>(` anchor (tighter than substring match).
+  - P1↔P3 integration: heuristic respects explicit `produces:` declarations — if a step declares `produces: ["package:foo"]`, the import-foo heuristic shadows.
+
+- **Tier 3 contradiction-tuple protocol** (#32, P4):
+  - DeepSeek system prompt rewritten to ~540 tokens forcing JSON-only output.
+  - 10 contradiction kinds + `unrecognized` fallback: `missing-producer`, `shallow-ownership`, `ambiguous-contract`, `negative-path-omission`, `idempotency-risk`, `migration-on-existing-state`, `partial-failure-window`, `concurrency-race`, `verification-false-positive`.
+  - Single API call replaces three-prompt prose loop.
+  - Severity mapping: `missing-producer`/`shallow-ownership` → block; `ambiguous-contract`/`partial-failure-window`/`verification-false-positive` → warn; rest → info.
+  - `build_step_table()` truncates action/verification summaries to 1000 chars to cap input budget; truncation is annotated so DeepSeek can flag `ambiguous-contract` if needed.
+  - Parse-failure resilience: malformed JSON → `tier3-malformed-response` warn, evaluator does not crash.
+
+### Changed
+
+- **`DEEPSEEK_MODEL` default**: `deepseek-reasoner` → `deepseek-v4-flash` (`bin/spec_evaluator.py:53`, `bin/setup_wizard.py:102`). The new structured-input/structured-output Tier 3 protocol is faster and cheaper on v4-flash; reasoner's prose-style output isn't needed for tuple emission.
+
+### Tests
+
+- 121 new tests (988 → 1109 passing).
+
+### References
+
+- Issue #31 — original five gap classes from v0.5.1 retest.
+- Issue #32 — v0.5.2 design brief (deterministic contracts + executor-owned env + hard gating, per Copilot/GPT-5.4 peer review).
+
 ## v0.5.1 — 2026-05-07
 
 **Patch release from a v0.5.0 end-to-end live test — 5 issues filed, all closed. Net effect: every code path the live test exercised now succeeds without runtime heredoc fallback or schema guessing.**

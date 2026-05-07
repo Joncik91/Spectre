@@ -99,7 +99,7 @@ def write_config(
     *,
     enabled: bool,
     api_key_env: str,
-    model: str = "deepseek-reasoner",
+    model: str = "deepseek-v4-flash",
     base_url: str = "https://api.deepseek.com/v1",
     budget_tokens_per_spec: int = 50_000,
     chunk_timeout_s: int = 60,

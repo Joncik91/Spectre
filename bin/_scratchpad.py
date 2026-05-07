@@ -83,6 +83,7 @@ def track_default() -> dict[str, Any]:
         "last_audit_passed": None,
         "last_audit_failures": [],
         "pending_adoption_prompt": None,
+        "venv_python": None,
     }
 
 
@@ -100,6 +101,9 @@ def expand_v1_to_v2(v1: dict[str, Any]) -> dict[str, Any]:
 
     Unknown v1 keys (not in track_default and not v2-reserved) survive under
     tracks.default._v1_unknown so user-authored fields are not silently dropped.
+
+    Legacy ``venv_python`` at top-level is migrated into the track dict so it
+    is not lost during v1→v2 promotion.
     """
     new_data = dict(DEFAULT_V2)
     new_data["tracks"] = {}
@@ -111,6 +115,10 @@ def expand_v1_to_v2(v1: dict[str, Any]) -> dict[str, Any]:
             consumed.add(k)
     if v1.get("active_spec"):
         new_data["active_mission"] = v1["active_spec"]
+    # Migrate legacy top-level venv_python into the track.
+    if "venv_python" in v1 and not legacy.get("venv_python"):
+        legacy["venv_python"] = v1["venv_python"]
+        consumed.add("venv_python")
     unknown = {
         k: v for k, v in v1.items()
         if k not in consumed and k not in _V2_RESERVED_TOP_KEYS and k != "active_spec"

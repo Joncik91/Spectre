@@ -20,34 +20,62 @@
 ## 5. Physics Guardrails
 <Bullet list. System invariants that must remain true (filesystem state, root-level constraints, network reachability).>
 
+> **Spectre executor invariants (not spec-author obligations):** The executor
+> creates and manages `state/.venv/` automatically (v0.5.2+). Specs must not
+> declare a PEP 668 strategy (system Python, venv path,
+> `--break-system-packages`, pipx, etc.). All `python`/`python3`/`pip`/`pip3`
+> action tokens are rewritten to the venv interpreter by `normalize_action`
+> before execution. Only list invariants that your spec's actions must preserve
+> — not environment setup that Spectre owns.
+
 ## 6. Steps
 
-Each step is an atomic transaction with three required keys plus one optional:
+> **Python environment (v0.5.2+):** Spectre creates `state/.venv/` automatically.
+> Write bare `python3 script.py` or `pip install -e .` — the executor rewrites
+> them to use the venv interpreter. Do **not** hard-code `.venv/bin/python` or
+> declare `--break-system-packages` in actions.
+
+Each step is an atomic transaction with three required keys plus optional contract and resource fields:
 - `why:` one-line first-principles justification — *not* analogy. This is the "Reasoning in Public" line that gets printed before the action runs.
 - `action:` the exact shell command to execute (single line, no pipes spanning multiple commands unless necessary).
 - `verification:` the exact shell command that must exit 0 to prove the action succeeded.
+- `produces:` (optional) — list of contract entries this step creates. Each entry is `<type>:<value>`. The evaluator uses these to resolve later steps' `requires:` entries. Omitting produces/requires is allowed but emits a `missing-contract` warning (non-blocking).
+- `requires:` (optional) — list of contract entries this step needs. Every entry must appear in some prior step's `produces:`, or the evaluator emits an `unowned-requirement` block finding.
 - `properties:` (optional) — list of PBT-lite assertions the State Auditor will check after `verification` passes. Each property has `kind:` (one of `type` / `schema` / `length` / `range`), `target:` (path to a JSON file), and kind-specific fields. See `bin/auditor.py` for supported shapes. Auditor verdicts are informational, not blocking — they land in scratchpad and the next compact's additionalContext.
 - `resources:` (optional) — list of Resource node IDs this step needs to acquire before executing. Each entry is a string matching a Resource node in `specs/.graph.md`. The supervisor grants access; if at capacity, the track queues. Released automatically after the step's verification passes (or on terminal halt).
+
+**Contract types** (for `produces:` and `requires:`). Type prefixes are lowercase (`package:`, not `Package:`):
+- `file:<path>` — absolute path to a file authored by the action
+- `package:<name>` — Python package made importable (e.g. via `pip install -e .`)
+- `console-script:<name>` — shell-PATH-resolvable command registered by an editable install
+- `route:<METHOD> <path>` — HTTP route added (e.g. `route:POST /api/convert`)
+- `module:<dotted.name>` — Python module path
+- `binary:<name>` — system binary available on PATH (yt-dlp, curl, pip)
+- `db-table:<name>` — SQLite table created
+- `db-column:<table>.<col>` — column on a table
 
 ```yaml
 - step: 1
   why: "<one-line justification grounded in first principles>"
-  action: "<command>"
-  verification: "<post-condition check command>"
-  properties:                     # OPTIONAL — auditor runs PBT-lite checks if present
-    - kind: type                  # type | schema | length | range
-      target: "/path/to/output.json"
-      expected: dict
-    - kind: length
-      target: "/path/to/output.json"
-      target_field: "rows"
-      min: 1
-      max: 10
+  action: "pip install mypackage"
+  verification: "python3 -c 'import mypackage'"
+  produces:
+    - "package:mypackage"
+    - "console-script:mypackage-cli"
 
 - step: 2
   why: "<one-line justification grounded in first principles>"
-  action: "<command>"
-  verification: "<post-condition check command>"
+  action: "mypackage-cli --setup > /opt/mypackage/config.json"
+  verification: "test -f /opt/mypackage/config.json"
+  requires:
+    - "package:mypackage"
+    - "console-script:mypackage-cli"
+  produces:
+    - "file:/opt/mypackage/config.json"
+  properties:                     # OPTIONAL — auditor runs PBT-lite checks if present
+    - kind: type                  # type | schema | length | range
+      target: "/opt/mypackage/config.json"
+      expected: dict
 
 - step: 3
   why: "Server must bind a known TCP port; lock prevents two tracks racing for it."

@@ -30,16 +30,22 @@ Install completes in under 5 seconds on a warmed package cache.
   why: "The binary must exist on-disk before the service unit can reference it."
   action: "install -m 0755 hello /opt/hello/hello"
   verification: "test -x /opt/hello/hello"
+  produces:
+    - "file:/opt/hello/hello"
 
 - step: 2
   why: "systemd requires daemon-reload to see new unit files before enable/start."
   action: "cp hello.service /etc/systemd/system/hello.service && systemctl daemon-reload"
   verification: "test -f /etc/systemd/system/hello.service"
+  produces:
+    - "file:/etc/systemd/system/hello.service"
 
 - step: 3
   why: "Service must be enabled for reboot-survival and started for immediate effect."
   action: "systemctl enable --now hello.service"
   verification: "systemctl is-active hello.service"
+  requires:
+    - "file:/etc/systemd/system/hello.service"
 ```
 
 ## 7. Success Criteria

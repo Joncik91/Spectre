@@ -1,8 +1,14 @@
-"""Tier 3 DeepSeek client — three-prompt adversarial spec reviewer. Stdlib only."""
+"""Tier 3 DeepSeek client — structured contradiction reviewer. Stdlib only.
+
+v0.5.2: replaced three-prompt prose review with a single structured
+contradiction-tuple prompt. DeepSeek receives a normalised step table
+(JSON) and returns typed contradiction tuples instead of vague findings.
+"""
 import json
 import os
 import pathlib
 import random
+import re
 import socket
 import threading
 import time
@@ -13,14 +19,93 @@ from dataclasses import dataclass, field
 from bin import findings
 from bin.findings import Finding, FindingLocation
 
-# Maximum findings surfaced per prompt (cap per spec: 10 × 3 = 30 max)
-_FINDINGS_CAP_PER_PROMPT = 10
+# Maximum contradiction tuples surfaced per spec call
+_FINDINGS_CAP_PER_PROMPT = 20
 
 # Rough token estimate: 1 token ≈ 4 chars
 _CHARS_PER_TOKEN = 4
 
 # Spec-wide sentinel location
 _SPEC_WIDE = FindingLocation(scope="spec-wide")
+
+# Maximum chars for action/verification summaries sent in the step table.
+# Prevents a single 5KB heredoc from consuming the entire input budget.
+# If a field is truncated, a suffix is appended so DeepSeek can flag
+# ambiguous-contract when the contract is incomplete.
+_STEP_FIELD_TRUNCATE = 1000
+
+# Taxonomy of allowed contradiction kinds (v0.5.2).
+# Must stay in sync with findings.TIER3_CONTRADICTION_SEVERITY.
+_CONTRADICTION_KINDS = frozenset({
+    "missing-producer",
+    "shallow-ownership",
+    "ambiguous-contract",
+    "negative-path-omission",
+    "idempotency-risk",
+    "migration-on-existing-state",
+    "partial-failure-window",
+    "concurrency-race",
+    "verification-false-positive",
+    "unrecognized",
+})
+
+# System prompt for the structured contradiction reviewer (~600 tokens).
+# Intentionally terse — no adversarial-review boilerplate.
+_CONTRADICTION_SYSTEM_PROMPT = """\
+You are a spec contradiction detector. You receive a JSON step table and must \
+output ONLY a JSON array of contradiction tuples — no prose, no explanation outside \
+the tuples.
+
+Allowed "kind" values (pick exactly one per tuple, or use "unrecognized"):
+- missing-producer: step N requires an artifact that no earlier step produces
+- shallow-ownership: step claims to own/create X but only scaffolds it; \
+a later step's verification proves it was never fully built
+- ambiguous-contract: a step's action or verification is underspecified enough \
+that two engineers would implement it differently
+- negative-path-omission: no step handles the obvious failure branch of an \
+operation (e.g. service fails to start, file already exists with wrong content)
+- idempotency-risk: re-running the step on existing state would corrupt or \
+duplicate data
+- migration-on-existing-state: step assumes a clean slate but the verification \
+of a prior step confirms state already exists
+- partial-failure-window: step is a multi-part action with no rollback; \
+partial failure leaves the system in an inconsistent state
+- concurrency-race: two steps can interleave in a way the spec does not \
+serialise
+- verification-false-positive: the verification command would pass even if the \
+action failed (tautology or wrong probe)
+- unrecognized: real gap that does not fit above taxonomy
+
+Output schema — return a JSON array at the top level:
+[
+  {
+    "kind": "<one of the above>",
+    "consumer_step": <int|null>,
+    "missing": "<artifact name, if kind=missing-producer>",
+    "step": <int|null>,
+    "claimed": "<string, if kind=shallow-ownership>",
+    "actual": "<string, if kind=shallow-ownership>",
+    "ambiguous": "<string, if kind=ambiguous-contract>",
+    "description": "<free text, required when kind=unrecognized>",
+    "rationale": "<≤120 chars explaining the gap>"
+  },
+  ...
+]
+
+Rules:
+1. Every tuple MUST have "kind" and "rationale".
+2. If kind is "unrecognized", "description" is required.
+3. Do NOT emit anything outside the JSON array.
+4. Cap output at 20 tuples. Prefer high-signal tuples over exhaustive lists.
+5. If you find no contradictions, return an empty array: []
+"""
+
+# User prompt template — receives the serialised step table.
+_CONTRADICTION_USER_TEMPLATE = """\
+Review the following spec step table for cross-step contradictions:
+
+{step_table_json}
+"""
 
 
 def _secrets_path_default() -> pathlib.Path:
@@ -79,43 +164,275 @@ def resolve_api_key(api_key_env: str) -> tuple[str, str] | None:
     return None
 
 
-# Three prompt templates (per Plan Decision 2)
-_PROMPTS = [
-    {
-        "kind": "tier3-context-gap",
-        "system": (
-            "You are an adversarial reviewer. Find concrete missing context that would block correct "
-            "execution. Output JSON only: "
-            '{findings: [{kind: \'tier3-context-gap\', message: \'...\', step: <int|null>, '
-            "suggested_fix: '<≤140>'}]}. Up to 10 findings."
-        ),
-        "user": (
-            "Review this spec for missing context (assumptions, preconditions, system state, "
-            "environment variables, version constraints):\n\n{spec_text}"
-        ),
-    },
-    {
-        "kind": "tier3-spec-asserts-wrong",
-        "system": (
-            "You are an adversarial reviewer. Identify factual claims in the spec that contradict "
-            "known systemd, python stdlib, or Linux defaults. Output JSON only: "
-            '{findings: [{kind: \'tier3-spec-asserts-wrong\', message: \'...\', step: <int|null>, '
-            "suggested_fix: '<≤140>'}]}. Up to 10 findings."
-        ),
-        "user": "Review this spec for factual errors:\n\n{spec_text}",
-    },
-    {
-        "kind": "tier3-attacker-view",
-        "system": (
-            "You are an adversarial reviewer. If you were an attacker handed this spec to execute, "
-            "what would you exploit? Output JSON only: "
-            '{findings: [{kind: \'tier3-attacker-view\', message: \'...\', step: <int|null>, '
-            "suggested_fix: '<≤140>'}]}. Up to 10 findings."
-        ),
-        "user": "Review this spec for attack surfaces:\n\n{spec_text}",
-    },
-]
+# ── Step table builder ────────────────────────────────────────────────────────
 
+_FENCE_RE = re.compile(r"```(?:yaml)?\s*\n(.*?)```", re.DOTALL)
+_STEP_SPLIT_RE = re.compile(r"(?=^\s*- step:)", re.MULTILINE)
+
+
+def _parse_steps_raw(spec_text: str) -> list[dict]:
+    """Extract step dicts from ## 6. Steps section.
+
+    Returns list of dicts with keys: step (int), why, action, verification
+    (all str where present). Uses lightweight regex — not a full YAML parser.
+    """
+    steps_match = re.search(r"^## 6\. Steps\s*$", spec_text, re.MULTILINE)
+    if not steps_match:
+        return []
+
+    section_start = steps_match.end()
+    next_heading = re.search(r"^## ", spec_text[section_start:], re.MULTILINE)
+    section_body = (
+        spec_text[section_start : section_start + next_heading.start()]
+        if next_heading
+        else spec_text[section_start:]
+    )
+
+    yaml_blocks: list[str] = []
+    for m in _FENCE_RE.finditer(section_body):
+        yaml_blocks.append(m.group(1))
+    if not yaml_blocks:
+        yaml_blocks = [section_body]
+
+    steps: list[dict] = []
+    for yaml_text in yaml_blocks:
+        for raw in _STEP_SPLIT_RE.split(yaml_text):
+            raw = raw.strip()
+            if not raw:
+                continue
+            step: dict = {}
+            for line in raw.splitlines():
+                m_step = re.match(r"^\s*-\s+step:\s*(\d+)", line)
+                if m_step:
+                    step["step"] = int(m_step.group(1))
+                    continue
+                m_field = re.match(r"^\s+(why|action|verification):\s*(.*)", line)
+                if m_field:
+                    key = m_field.group(1)
+                    value = m_field.group(2).strip().strip('"').strip("'")
+                    step[key] = value
+            if "step" in step:
+                steps.append(step)
+    return steps
+
+
+def _parse_calibration_section(spec_text: str) -> tuple[list[str], list[str], list[str]]:
+    """Extract physics_guardrails, mutates, never_touches from §8.1.
+
+    Returns (physics_guardrails, mutates, never_touches) — each a list of strings.
+    Returns empty lists when section is absent.
+    """
+    m81 = re.search(r"^#{2,3}\s+8\.1\b.*$", spec_text, re.MULTILINE)
+    if not m81:
+        return [], [], []
+
+    block_start = m81.end()
+    next_h = re.search(r"^#{2,3} ", spec_text[block_start:], re.MULTILINE)
+    block = spec_text[block_start : block_start + next_h.start()] if next_h else spec_text[block_start:]
+
+    def _extract_list(key: str) -> list[str]:
+        """Pull comma/newline/bullet-separated values after 'key:'."""
+        m = re.search(rf"^\s*[-*]?\s*`?{re.escape(key)}`?\s*(.*)$", block, re.MULTILINE | re.IGNORECASE)
+        if not m:
+            return []
+        raw = m.group(1).strip()
+        # Values may be inline or on subsequent bullet lines; grab inline first.
+        items = [v.strip().strip('"').strip("'") for v in re.split(r"[,;]", raw) if v.strip()]
+        return [i for i in items if i and i not in ("-", "—", "none", "None")]
+
+    mutates = _extract_list("mutates:")
+    never_touches = _extract_list("never-touches:")
+    # physics_guardrails = decision-budget + reboot-survival entries (human-readable)
+    physics: list[str] = []
+    for key in ("decision-budget:", "reboot-survival:"):
+        vals = _extract_list(key)
+        if vals:
+            physics.extend(f"{key} {v}" for v in vals)
+
+    return physics, mutates, never_touches
+
+
+def _truncate_step_field(value: str) -> str:
+    """Truncate a step field (action/verification) to _STEP_FIELD_TRUNCATE chars.
+
+    If truncated, appends ``... [truncated, N more chars]`` so DeepSeek knows
+    the field is incomplete and can flag ambiguous-contract if needed.
+    Short fields pass through verbatim.
+    """
+    if len(value) <= _STEP_FIELD_TRUNCATE:
+        return value
+    remainder = len(value) - _STEP_FIELD_TRUNCATE
+    return value[:_STEP_FIELD_TRUNCATE] + f"... [truncated, {remainder} more chars]"
+
+
+def build_step_table(spec_text: str, step_objects: list | None = None) -> dict:
+    """Build the structured step table sent to DeepSeek.
+
+    Args:
+        spec_text: Full spec text (used for §8.1 extraction and fallback parsing).
+        step_objects: Optional list of step dataclass/dict objects from priority-3
+            contract parsing. When present, ``produces``/``requires`` fields are
+            read via ``getattr(obj, field, [])`` to handle the case where the
+            dataclass predates priority-3 (fields simply won't be there). When
+            absent, falls back to regex parsing of spec_text.
+
+    Returns dict with keys: steps, physics_guardrails, mutates, never_touches.
+    """
+    # Parse steps from text (always — we need why/action/verification).
+    raw_steps = _parse_steps_raw(spec_text)
+
+    step_entries: list[dict] = []
+    for raw in raw_steps:
+        step_n = raw["step"]
+        action_raw = raw.get("action", "")
+        verification_raw = raw.get("verification", "")
+        entry: dict = {
+            "step": step_n,
+            "why": raw.get("why", ""),
+            "action_summary": _truncate_step_field(action_raw),
+            "verification_summary": _truncate_step_field(verification_raw),
+            "produces": [],
+            "requires": [],
+        }
+
+        # If caller provided step objects (priority-3 contract fields), overlay them.
+        if step_objects is not None:
+            # Find the matching object by step number.
+            for obj in step_objects:
+                obj_step = getattr(obj, "step", None) or (obj.get("step") if isinstance(obj, dict) else None)
+                if obj_step == step_n:
+                    entry["produces"] = list(getattr(obj, "produces", None) or (obj.get("produces") if isinstance(obj, dict) else None) or [])
+                    entry["requires"] = list(getattr(obj, "requires", None) or (obj.get("requires") if isinstance(obj, dict) else None) or [])
+                    break
+
+        step_entries.append(entry)
+
+    physics, mutates, never_touches = _parse_calibration_section(spec_text)
+
+    return {
+        "steps": step_entries,
+        "physics_guardrails": physics,
+        "mutates": mutates,
+        "never_touches": never_touches,
+    }
+
+
+# ── Contradiction tuple parser ────────────────────────────────────────────────
+
+def _parse_contradiction_findings(content: str) -> list[Finding]:
+    """Parse DeepSeek's JSON array of contradiction tuples into Findings.
+
+    Raises json.JSONDecodeError or ValueError on malformed content — caller
+    handles these and emits the tier3-malformed-response fallback finding.
+    """
+    parsed = json.loads(content)
+
+    # DeepSeek might wrap in {"contradictions": [...]} or return bare list.
+    if isinstance(parsed, dict):
+        # Try common wrapper keys.
+        for key in ("contradictions", "findings", "results", "items"):
+            if key in parsed and isinstance(parsed[key], list):
+                parsed = parsed[key]
+                break
+        else:
+            # Try first list value in the dict.
+            for v in parsed.values():
+                if isinstance(v, list):
+                    parsed = v
+                    break
+            else:
+                raise ValueError("no top-level list found in response dict")
+
+    if not isinstance(parsed, list):
+        raise ValueError(f"expected list, got {type(parsed).__name__}")
+
+    result: list[Finding] = []
+    for item in parsed[:_FINDINGS_CAP_PER_PROMPT]:
+        if not isinstance(item, dict):
+            continue
+
+        raw_kind = str(item.get("kind", "unrecognized")).strip().lower()
+
+        # Map "unrecognized" (DeepSeek's taxonomy value) to our internal kind.
+        if raw_kind == "unrecognized":
+            kind = "tier3-contradiction-unrecognized"
+        elif raw_kind in findings.TIER3_CONTRADICTION_SEVERITY:
+            kind = raw_kind
+        else:
+            # Unknown kind from model — treat as unrecognized.
+            kind = "tier3-contradiction-unrecognized"
+
+        severity = findings.TIER3_CONTRADICTION_SEVERITY.get(kind, "info")
+
+        # Build message: prefer rationale; fall back to description.
+        rationale = str(item.get("rationale", "")).strip()
+        description = str(item.get("description", "")).strip()
+        message_parts: list[str] = []
+        if rationale:
+            message_parts.append(rationale)
+        elif description:
+            message_parts.append(description)
+        else:
+            message_parts.append(f"contradiction detected (kind={kind})")
+
+        # Enrich with structured fields for specific kinds.
+        if kind == "missing-producer":
+            missing = str(item.get("missing", "")).strip()
+            if missing:
+                message_parts.insert(0, f"missing: {missing};")
+        elif kind == "shallow-ownership":
+            claimed = str(item.get("claimed", "")).strip()
+            if claimed:
+                message_parts.insert(0, f"claimed: {claimed};")
+        elif kind == "ambiguous-contract":
+            ambiguous = str(item.get("ambiguous", "")).strip()
+            if ambiguous:
+                message_parts.insert(0, f"ambiguous: {ambiguous};")
+        elif kind == "tier3-contradiction-unrecognized" and description:
+            message_parts.insert(0, f"desc: {description};")
+
+        message = " ".join(message_parts)[:findings.MAX_MESSAGE_LEN]
+
+        # Determine step location.
+        # For missing-producer: consumer_step is the relevant step.
+        step_raw = (
+            item.get("consumer_step")
+            or item.get("step")
+        )
+        step = int(step_raw) if step_raw is not None else None
+
+        location = (
+            FindingLocation(scope="step", step=step)
+            if step is not None
+            else _SPEC_WIDE
+        )
+
+        result.append(Finding(
+            tier=3,
+            kind=kind,
+            severity=severity,
+            location=location,
+            message=message,
+            dismissable=True,
+        ))
+
+    return result
+
+
+def _malformed_response_finding(detail: str) -> Finding:
+    """Return a tier3-malformed-response finding (warn, not dismissable)."""
+    msg = f"Tier 3 response not valid JSON: {detail}"[:findings.MAX_MESSAGE_LEN]
+    return Finding(
+        tier=3,
+        kind="tier3-malformed-response",
+        severity=findings.TIER3_CONTRADICTION_SEVERITY["tier3-malformed-response"],
+        location=_SPEC_WIDE,
+        message=msg,
+        dismissable=False,
+    )
+
+
+# ── Network / retry infrastructure (unchanged from v0.5.1) ───────────────────
 
 class _TotalTimeoutError(Exception):
     """Raised when the wall-clock total budget is exhausted.
@@ -182,8 +499,8 @@ def _call_deepseek(prompts: dict, *, config: JudgeConfig) -> str:
       - chunk_timeout_s: per-recv socket timeout passed to urlopen. Fires as
         socket.timeout when no data arrives for that interval. This is a transient
         failure and IS retried per #12 P2 logic.
-      - total_timeout_s: hard wall-clock ceiling for the entire call (covering
-        chain-of-thought pauses between chunks). Implemented via threading.Timer.
+      - total_timeout_s: hard wall-clock ceiling for the entire call (including
+        chain-of-thought pauses). Implemented via threading.Timer.
         When it fires it raises _TotalTimeoutError. This is NOT retried.
 
     Retries up to _MAX_RETRIES times (4 total attempts) on transient errors:
@@ -308,93 +625,87 @@ def _unavailable(message: str) -> Finding:
     )
 
 
-def _parse_findings(content: str, expected_kind: str) -> list[Finding]:
-    """Parse JSON response content into Finding objects. Raises on malformed content."""
-    parsed = json.loads(content)
-    raw_items = parsed["findings"]
-    result: list[Finding] = []
-    for item in raw_items[:_FINDINGS_CAP_PER_PROMPT]:
-        kind = item.get("kind", expected_kind)
-        # Normalise kind to expected_kind — DeepSeek might vary
-        if kind not in findings.KNOWN_KINDS:
-            kind = expected_kind
-        message = str(item.get("message", ""))[:findings.MAX_MESSAGE_LEN]
-        step_raw = item.get("step")
-        step = int(step_raw) if step_raw is not None else None
-        fix_raw = item.get("suggested_fix")
-        fix = str(fix_raw)[:findings.MAX_FIX_LEN] if fix_raw is not None else None
-        location = (
-            FindingLocation(scope="step", step=step)
-            if step is not None
-            else _SPEC_WIDE
-        )
-        result.append(
-            Finding(
-                tier=3,
-                kind=kind,
-                severity="info",
-                location=location,
-                message=message,
-                suggested_fix=fix,
-                dismissable=True,
-            )
-        )
-    return result
+# ── Single contradiction-oriented prompt runner ───────────────────────────────
 
+def _run_contradiction_prompt(
+    step_table: dict,
+    *,
+    config: JudgeConfig,
+) -> list[Finding]:
+    """Run the single structured contradiction prompt.
 
-def _run_prompt(prompt_template: dict, spec_text: str, *, config: JudgeConfig) -> list[Finding]:
-    """Run one prompt. Returns findings on success; [unavailable] on any failure."""
+    Sends the step table as JSON; parses the contradiction tuple array response.
+    On JSON parse failure, returns a warn tier3-malformed-response finding and
+    does NOT crash (per spec requirement).
+
+    All network/timeout failures return tier3-unavailable sentinels.
+    """
+    step_table_json = json.dumps(step_table, indent=2)
     prompts = {
-        "system": prompt_template["system"],
-        "user": prompt_template["user"].format(spec_text=spec_text),
+        "system": _CONTRADICTION_SYSTEM_PROMPT,
+        "user": _CONTRADICTION_USER_TEMPLATE.format(step_table_json=step_table_json),
     }
-    expected_kind = prompt_template["kind"]
-    # Derive a short prong name from the kind (e.g. "tier3-context-gap" → "context-gap").
-    prong_name = expected_kind.removeprefix("tier3-")
     total_attempts = _MAX_RETRIES + 1
     try:
         content = _call_deepseek(prompts, config=config)
-        return _parse_findings(content, expected_kind)
+        try:
+            return _parse_contradiction_findings(content)
+        except (json.JSONDecodeError, ValueError) as parse_exc:
+            # JSON parse failure: return malformed-response warning, don't crash.
+            detail = str(parse_exc)[:80]
+            return [_malformed_response_finding(detail)]
     except _NoApiKeyError:
-        # Distinct skip reason: neither env var nor secrets file has the key.
         return [_unavailable(f"Tier 3 skipped (no-api-key): {config.api_key_env} not found")]
     except _TotalTimeoutError:
-        # Hard ceiling exceeded — not retried, distinct message.
         return [_unavailable(
-            f"Tier 3 unavailable: total-timeout in {prong_name}"
+            f"Tier 3 unavailable: total-timeout"
             f" ({config.total_timeout_s}s wall-clock budget exceeded)"
         )]
     except urllib.error.HTTPError as exc:
         kind_label = f"http-{exc.code}"
         return [_unavailable(
-            f"Tier 3 unavailable: timeout in {prong_name} after {total_attempts} attempts"
+            f"Tier 3 unavailable: contradiction-prompt after {total_attempts} attempts"
             f" (last error: {kind_label})"
         )]
-    except urllib.error.URLError as exc:
+    except urllib.error.URLError:
         return [_unavailable(
-            f"Tier 3 unavailable: timeout in {prong_name} after {total_attempts} attempts"
+            f"Tier 3 unavailable: contradiction-prompt after {total_attempts} attempts"
             f" (last error: connection-error)"
         )]
     except (TimeoutError, socket.timeout):
         return [_unavailable(
-            f"Tier 3 unavailable: timeout in {prong_name} after {total_attempts} attempts"
+            f"Tier 3 unavailable: contradiction-prompt after {total_attempts} attempts"
             f" (last error: socket-timeout)"
         )]
-    except json.JSONDecodeError:
-        return [_unavailable("Tier 3 unavailable: malformed JSON response")]
-    except KeyError as exc:
-        return [_unavailable(f"Tier 3 unavailable: missing field {exc}")]
     except RuntimeError as exc:
         return [_unavailable(f"Tier 3 unavailable: {exc}")]
     except Exception as exc:
         return [_unavailable(f"Tier 3 unavailable: {type(exc).__name__}")]
 
 
-def evaluate(spec_text: str, *, config: JudgeConfig) -> list[Finding]:
-    """Run the 3-prompt Tier 3 probing over spec_text.
+# ── Public API ────────────────────────────────────────────────────────────────
 
-    Returns Finding list (possibly empty, possibly with tier3-unavailable sentinel).
-    Never raises — all failure modes return findings.
+def evaluate(
+    spec_text: str,
+    *,
+    config: JudgeConfig,
+    step_objects: list | None = None,
+) -> list[Finding]:
+    """Run the Tier 3 structured contradiction review over spec_text.
+
+    Sends a single prompt with a normalised step table (JSON) and parses the
+    contradiction tuple array response.
+
+    Args:
+        spec_text: Full spec text.
+        config: JudgeConfig controlling model, key, timeouts, budget.
+        step_objects: Optional list of step dataclass objects with priority-3
+            contract fields (produces/requires). When absent (or the dataclass
+            predates priority-3), those fields are left empty — DeepSeek can
+            still reason from action/verification summaries.
+
+    Returns Finding list (possibly empty, possibly with tier3-unavailable
+    sentinel or tier3-malformed-response). Never raises.
     """
     if not config.enabled:
         return []
@@ -404,9 +715,5 @@ def evaluate(spec_text: str, *, config: JudgeConfig) -> list[Finding]:
     if estimated_tokens >= config.budget_tokens_per_spec:
         return [_unavailable("Tier 3 skipped: spec exceeds budget")]
 
-    all_findings: list[Finding] = []
-    for prompt_template in _PROMPTS:
-        batch = _run_prompt(prompt_template, spec_text, config=config)
-        all_findings.extend(batch)
-
-    return all_findings
+    step_table = build_step_table(spec_text, step_objects=step_objects)
+    return _run_contradiction_prompt(step_table, config=config)
