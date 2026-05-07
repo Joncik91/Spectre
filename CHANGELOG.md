@@ -2,6 +2,52 @@
 
 All notable changes to the Spectre plugin.
 
+## v0.6.0 — 2026-05-07
+
+**Vault-informed improvements: handoff envelope (Context Sled with bytewise integrity), walker yield countdown, negative-path enforcement, Tier 3 CoT faithfulness, executor-owned step heading.**
+
+Five vault concept pages mapped onto Spectre weak points after v0.5.2:
+- `concepts/context-as-cognitive-substrate.md` (marginal yield, assumption-killing)
+- `entities/standardized-handoff-envelope.md`, `entities/context-sled.md`, `entities/handoff-validator.md` (Tier 0 integrity)
+- `entities/planner-generator-evaluator-triad.md` (Spectre realization patterns)
+- `research/cot-monitorability.md` (Tier 3 faithfulness)
+- `random-internet-finds/.../harness-engineering-software-agents.md` (channel selection)
+
+User cut at concept #6 (Agent Security Bench) — out of scope for v0.6.
+
+### Added — Handoff envelope (Context Sled with bytewise integrity)
+
+- **`bin/handoff_envelope.py`** (NEW) — JSON-Schema-validated envelope wrapping vision→implement handoff. Hand-rolled validator (stdlib only). Schema: `protocol_version`, `receiver`, `spec_path`, `sidecar_path`, `policy_hash`, `spec_sha256`, `sidecar_sha256`, `contract_resolution`, `walker_yield_history`, `walker_stop_reason`, `decisions_indexed`, `integrity_hash`, `created_at`. Critical: integrity hash covers actual artifact bytes (spec.md + sidecar.eval.json), not just envelope metadata — closes Gap E from the v0.5.2 essay-followup.
+- **`bin/handoff_validator.py`** (NEW) — Tier 0 check `validate_on_implement_start(project_path)`. Distinguishes `envelope-missing` (warn, pre-v0.6 spec), `envelope-tampered` (block, content modified after lock), `envelope-malformed` (block, schema violation). CLI: `python3 -m bin.handoff_validator check --project-path <path>`.
+- **`bin/eval_metadata.py`** — `write_envelope_alongside_sidecar()` helper + `write-envelope` CLI subcommand.
+
+### Added — Walker yield countdown + negative-path concern
+
+- **`bin/walker.py`** — `yield_status_line(state)` returning prediction-ready `"YIELD: round N added M new T3 findings; stopping when last K rounds all <T (currently: [a,b,c])"` instead of raw delta. New `negative-path` concern kind + `generate_negative_path_concerns(state, steps)` with idempotency guard.
+
+### Added — Negative-path Tier 1 enforcement
+
+- **`bin/spec_ast.py`** — new optional `negative-paths:` block on each step (list of `{trigger, handler}` dicts). Tier 1 check: warn `missing-negative-path` when `produces:` is non-empty and `negative-paths:` is missing; **block** when `reboot-survival: required` (data-loss hazard). Malformed-only declarations under `reboot-survival: required` also escalate to block (cannot be dodged with a half-broken entry). Case-insensitive `reboot-survival` matching.
+
+### Added — Tier 3 CoT faithfulness check
+
+- **`bin/llm_judge.py`** — single batched cite-and-verify pass after primary contradiction tuples. Block-severity tuples (`missing-producer`, `shallow-ownership`) demoted to warn `tier3-unfaithful-contradiction` if DeepSeek can't cite supporting spec text (case-insensitive substring match). Parse failure → conservative: keep block, append `tier3-faithfulness-malformed` warn. Zero extra API calls when no block tuples exist.
+
+### Changed — Skill prose + spec template
+
+- **`skills/vision/SKILL.md`** Step 6.7 — extends lock with envelope write via `python3 -m bin.eval_metadata write-envelope`.
+- **`skills/implement/SKILL.md`** new **Step 0.7 — Tier 0 handoff integrity check** (between Step 0.5 track selection and Step 1 read context). Calls `python3 -m bin.handoff_validator check`. Documents 4 outcomes (envelope-missing warn, envelope-tampered block, no active spec block, schema violation block).
+- **`specs/template.spec.md`** — `negative-paths:` documented in §6 with trigger/handler schema, warn/block calibration. v0.6 envelope invariant added to §5 (alongside v0.5.2 venv invariant).
+
+### Tests
+
+- 1109 → 1265 passing (+156 new tests).
+
+### References
+
+- v0.5.2 closure — issue #32, PR #33.
+- v0.6.0 design — informed by `/root/claude-obsidian/concepts/context-as-cognitive-substrate.md` and adjacent vault concept pages (no GitHub design issue filed; this was a direct improvement plan).
+
 ## v0.5.2 — 2026-05-07
 
 **Closure of the pre-lock evaluator regression surfaced by the v0.5.1 retest. Five gap classes shipped past three tiers in v0.5.1 (`tier 1: PASS (2 warn)`, `tier 2: PASS (0)`, `tier 3: PASS (21 info)`); `/implement auto` then halted five times on bugs the evaluator should have caught. Per Copilot/GPT-5.4 peer review (#32): the fix is deterministic contracts + executor-owned environment + hard gating, NOT prose-inferred graphs.**
