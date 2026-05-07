@@ -206,7 +206,7 @@ Reference:
 
 **Ledger.** Every Generate→Test→Lock→Implement→Halt→Adapt transition is appended to per-project `state/cdlc-ledger.json` via atomic write. Read-only audit surface — no user-facing command. Call sites: `/vision` §6.7 (lock=generate), `/implement` §6 Path A (implement) and §3.5 (halt), `bin/observations.record_halt` (halt), `bin/personal_rules.append_adoption` (adapt).
 
-**Distribute.** `~/.spectre/templates/{specs,skills}/` is the per-user template store. `bin/templates.import_template` copies a stored template into a new project (specs land at `./specs/<name>.spec.md.draft` so the /vision flow still gates the lock; skills land at `./skills/<name>.md`). `bin/templates.export_template` is the reverse. Local-only — remote sync deferred to v0.5+.
+**Distribute.** `~/.spectre/templates/{specs,skills}/` is the per-user template store. `bin/templates.import_template` copies a stored template into a new project (specs land at `./specs/<name>.spec.md.draft` so the /vision flow still gates the lock; skills land at `./skills/<name>.md`). `bin/templates.export_template` is the reverse. Local-only — remote sync is still deferred (not in v0.5 or v0.6; tentatively v0.7+).
 
 **Adapt-patches.** When `observations.find_recurrences(threshold=3)` returns recurring halt fingerprints AND those fingerprints aren't already covered by `personal_rules`, `bin/template_patcher.detect_patch_candidates` lists them and `template_patcher.propose_patch` writes a markdown patch to `~/.spectre/template-patches/proposed/<slug>.md`. SessionStart's `bin/hydrate.surface_pending_template_patches` reports the count; `bin/hydrate.detect_and_propose_patches` writes new proposals at session start. Manual accept/reject only.
 
@@ -279,3 +279,64 @@ Three principles drive every choice:
 3. **Adversarial review at the spec layer.** Code review catches code bugs; spec review catches spec bugs. v0.3.0 ships the spec-review layer because the cost of a wrong spec is N steps of wrong implementation, and the cheapest place to halt is before lock.
 
 For the historical context behind specific decisions, see `docs/superpowers/specs/` (architecture briefs) and `docs/superpowers/plans/` (implementation plans). Both directories are archival — they record what was built and why, not what to do next.
+
+## CLI surface + heredoc elimination (v0.5.0)
+
+**Hard problem:** skill prose contained 20 `python3 - <<'PY' ... PY` heredoc blocks that forked fresh interpreter processes, bypassed argparse schemas, and let slug substitutions, path drift, and inline `Path(...)` constructions silently diverge from the underlying `bin/` functions they called. Any bug in the heredoc was invisible to the test suite.
+
+**Design decision:** Every heredoc becomes a `python3 -m bin.<module> <subcommand>` invocation against a versioned CLI surface. No new business logic — only `__main__` entry points wrapping existing public functions. The CLIs ship in PRs #18 (Phase 2A), #19 (Phase 2B), #20 (Phase 2C), and #33's predecessor (Phase 2D).
+
+**Load-bearing files:**
+
+- `bin/cdlc_ledger.py`, `bin/observations.py`, `bin/_scratchpad.py`, `bin/personal_rules.py`, `bin/track.py`, `bin/adr.py`, `bin/templates.py`, `bin/setup_wizard.py`, `bin/walker.py` — all gained `__main__` entry points in v0.5.0.
+- `tests/test_skill_prose_no_heredoc_python.py` — drift-prevention guard; per-file ceilings tightened to zero. Any future `python3 - <<'PY'` in `skills/**/SKILL.md` breaks CI immediately.
+
+**Cumulative effect:** 20 heredocs gone, ~192 LOC removed from skill prose, 928 tests at release.
+
+References: Issue #13 (closed), `docs/superpowers/audits/2026-05-06-issue-13-heredoc-audit.md`.
+
+## Deterministic gap-closers + executor-owned venv (v0.5.2)
+
+**Hard problem:** the v0.5.1 live test of yt-readable surfaced five gap classes (A–E) where the pre-lock evaluator returned `PASS` but `/implement auto` halted on bugs the evaluator should have caught: uncreated artifacts (Gap A), import-before-install (Gap B), scaffold-without-implementation (Gap C), unparseable Python in verifications (Gap D), and PEP 668 / venv isolation (Gap E). Per Copilot/GPT-5.4 peer review (#32): the fix is deterministic contracts + executor-owned environment + hard gating, not prose-inferred graphs.
+
+**Design decisions:**
+
+1. **Executor-owned venv** (`bin/managed_venv.py`). The implementor creates and owns `state/.venv/` (mode 0700) rather than relying on the system Python. `normalize_action` rewrites action head-tokens to use the venv Python, preserving shell operators byte-identical. Stale `pyvenv.cfg` (e.g. after Python upgrade) triggers HALT rather than silent misbehavior.
+
+2. **Explicit step contracts** (`produces:` / `requires:`). Eight contract types: `file:`, `package:`, `console-script:`, `route:`, `module:`, `binary:`, `db-table:`, `db-column:`. Tier 1 cross-validates `requires:` against prior `produces:`. Mismatch → block `unowned-requirement`. Steps with no contracts → warn `missing-contract` (backward-compatible). `contract_resolution` block added to `.eval.json` sidecar.
+
+3. **Tier 1 deterministic gap-closers.** `verification-syntax-error` (block) — every `python3 -c "<body>"` compile-checked at lock time. `action-invokes-uncreated-artifact` (block) — absolute paths under `mutates:` with no prior authoring step. `unowned-requirement-heuristic` (block) — curl routes, HTML tags, SQL columns, Python imports with no prior owner. Allowlists for universal probes and `produces:` declarations shadow heuristics.
+
+4. **Tier 3 contradiction-tuple protocol.** DeepSeek system prompt rewritten (~540 tokens) to force JSON-only output. Ten contradiction kinds + `unrecognized` fallback. Single API call replaces the prior three-prompt prose loop. `DEEPSEEK_MODEL` default changed from `deepseek-reasoner` → `deepseek-v4-flash` — structured I/O protocol doesn't need reasoner-style prose output.
+
+**Load-bearing files:** `bin/managed_venv.py` (new), `bin/spec_ast.py` (contracts + gap-closers), `bin/llm_judge.py` (tuple protocol), `bin/eval_metadata.py` (contract_resolution in sidecar), `bin/spec_evaluator.py` (DEEPSEEK_MODEL default).
+
+References: Issues #31 (gap classes), #32 (design brief + Copilot/GPT-5.4 review), PR #33.
+
+## Handoff envelope + negative paths + CoT faithfulness (v0.6.0)
+
+**Hard problem:** five vault concept pages mapped onto Spectre's weak points after v0.5.2 identified that the bytewise integrity of the vision→implement handoff was not enforced: the sidecar could be tampered or the spec body replaced without the executor noticing (Gap E from the v0.5.2 essay-followup).
+
+**Design decisions:**
+
+1. **Handoff envelope** (`bin/handoff_envelope.py` + `bin/handoff_validator.py`). A JSON-Schema-validated envelope wraps the vision→implement handoff. Schema: `protocol_version`, `receiver`, `spec_path`, `sidecar_path`, `policy_hash`, `spec_sha256`, `sidecar_sha256`, `contract_resolution`, `walker_yield_history`, `walker_stop_reason`, `decisions_indexed`, `integrity_hash`, `created_at`. The integrity hash covers the actual artifact bytes (spec.md + sidecar.eval.json), not just envelope metadata.
+
+   Step 0.7 in `/implement` (`skills/implement/SKILL.md`) is the new Tier 0 check, inserted between Step 0.5 (track selection) and Step 1 (read context). Four outcomes: `envelope-missing` (warn — pre-v0.6 spec, allow), `envelope-tampered` (block — content modified after lock), `envelope-malformed` (block — schema violation), clean (proceed).
+
+2. **Walker yield countdown.** `bin/walker.py` emits prediction-ready status lines: `"YIELD: round N added M new T3 findings; stopping when last K rounds all <T (currently: [a,b,c])"` instead of raw delta numbers. New `negative-path` concern kind + `generate_negative_path_concerns` with idempotency guard.
+
+3. **Negative-path Tier 1 enforcement** (`bin/spec_ast.py`). New optional `negative-paths:` block per step (list of `{trigger, handler}` dicts). Tier 1 warns `missing-negative-path` when `produces:` is non-empty and `negative-paths:` is absent. Blocks when `reboot-survival: required` (data-loss hazard). Malformed-only entries under `reboot-survival: required` also escalate to block.
+
+4. **Tier 3 CoT faithfulness** (`bin/llm_judge.py`). A single batched cite-and-verify pass runs after the primary contradiction tuples. Block-severity tuples (`missing-producer`, `shallow-ownership`) are demoted to warn `tier3-unfaithful-contradiction` if DeepSeek can't cite supporting spec text (case-insensitive substring). Parse failure → conservative: keep block, append `tier3-faithfulness-malformed` warn. Zero extra API calls when no block tuples exist.
+
+**Load-bearing files:** `bin/handoff_envelope.py` (new), `bin/handoff_validator.py` (new), `bin/eval_metadata.py` (`write_envelope_alongside_sidecar()`), `bin/walker.py` (yield countdown + negative-path concerns), `bin/spec_ast.py` (negative-paths enforcement), `bin/llm_judge.py` (faithfulness pass), `skills/vision/SKILL.md` (Step 6.7 envelope write), `skills/implement/SKILL.md` (Step 0.7 Tier 0 check).
+
+References: vault pages `concepts/context-as-cognitive-substrate.md`, `entities/standardized-handoff-envelope.md`, `entities/context-sled.md`, `entities/handoff-validator.md`, `entities/planner-generator-evaluator-triad.md`, `research/cot-monitorability.md`.
+
+## PYTHONPATH consistency (v0.6.1)
+
+**Hard problem:** skill prose's `python3 -m bin.X` invocations are run from the user's project cwd, where `bin/` may not be on `sys.path`. Without an explicit `PYTHONPATH="${CLAUDE_PLUGIN_ROOT}"` prefix, plugin-internal module resolution silently fails at runtime in any project that doesn't happen to have a `bin/` directory at cwd (issue #30).
+
+**Fix:** every `python3 -m bin.X` invocation in `skills/vision/SKILL.md` and `skills/implement/SKILL.md` now carries the `PYTHONPATH="${CLAUDE_PLUGIN_ROOT}"` prefix. A PYTHONPATH note section at the top of both skill files explains the requirement. CI sentinel `tests/test_skill_pythonpath_consistency.py` scans all `skills/**/SKILL.md` bash code blocks and asserts every `python3 -m bin.X` line carries the prefix.
+
+References: Issue #30 (closed).
