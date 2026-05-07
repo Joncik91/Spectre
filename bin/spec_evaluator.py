@@ -193,6 +193,60 @@ def _extract_preview_resources(spec_text: str) -> list[dict]:
     return result
 
 
+def _build_contract_resolution(spec_text: str) -> dict:
+    """Build the resolved contract graph for the sidecar payload.
+
+    Walks steps in order, tracking cumulative produces.  For each requires
+    entry, records which step's produces satisfies it (or null if unresolved).
+
+    Returns a dict shaped as:
+      {
+        "steps": {
+          "<step_n>": {
+            "produces": ["file:/foo", ...],
+            "requires": ["package:bar", ...],
+            "resolution": {
+              "package:bar": {"resolved_by_step": 1}  # or null
+            }
+          }
+        }
+      }
+    """
+    steps = _spec_ast._parse_steps_section(spec_text)
+    # produces_by_entry: entry -> step_n that first declared it
+    produces_index: dict[str, int] = {}
+    result_steps: dict[str, dict] = {}
+
+    for step in steps:
+        step_n: int = step["step"]  # type: ignore[assignment]
+        raw_produces: list[str] = step.get("produces", [])  # type: ignore[assignment]
+        raw_requires: list[str] = step.get("requires", [])  # type: ignore[assignment]
+
+        # Only valid entries participate in resolution
+        valid_produces = [e for e in raw_produces if _spec_ast._validate_contract_entry(e)]
+        valid_requires = [e for e in raw_requires if _spec_ast._validate_contract_entry(e)]
+
+        resolution: dict[str, dict | None] = {}
+        for entry in valid_requires:
+            if entry in produces_index:
+                resolution[entry] = {"resolved_by_step": produces_index[entry]}
+            else:
+                resolution[entry] = None
+
+        result_steps[str(step_n)] = {
+            "produces": valid_produces,
+            "requires": valid_requires,
+            "resolution": resolution,
+        }
+
+        # Accumulate for subsequent steps (first declaration wins)
+        for entry in valid_produces:
+            if entry not in produces_index:
+                produces_index[entry] = step_n
+
+    return {"steps": result_steps}
+
+
 def _extract_tier_classifications(spec_text: str) -> dict[int, dict]:
     """Per step: run tier.classify(action) and store as dict."""
     steps = _parse_steps_from_text(spec_text)
@@ -487,6 +541,7 @@ def evaluate(
             "info_count": sum(1 for f in filtered if f.severity == "info"),
             "dismissed_t3_count": actually_dismissed_count,
         },
+        "contract_resolution": _build_contract_resolution(bundle.spec_text),
     }
 
     return EvaluatorResult(

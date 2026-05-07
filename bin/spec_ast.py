@@ -23,6 +23,20 @@ _SOFT_VERIFY_PATTERNS: list[re.Pattern[str]] = [
 # ── §8.1 required fields ──────────────────────────────────────────────────────
 _CALIBRATION_REQUIRED_FIELDS = ("mutates:", "never-touches:", "decision-budget:", "reboot-survival:")
 
+# ── v0.5.2 step contract types ─────────────────────────────────────────────
+# Contract entries are "<type>:<value>" strings.  The set below is the
+# exhaustive list of recognised type prefixes.
+_CONTRACT_TYPES: frozenset[str] = frozenset({
+    "file",
+    "package",
+    "console-script",
+    "route",
+    "module",
+    "binary",
+    "db-table",
+    "db-column",
+})
+
 # ── Path-like token regex (text-match heuristic for action-not-probed) ───────
 # Note: the leading `\b` boundary means `/dev/null` after a redirect like `2>/dev/null`
 # is captured as `/null` (the `\b` matches at the `>/` transition). The filter below
@@ -77,12 +91,72 @@ def _extract_paths_from_text(text: str) -> list[str]:
     return filtered
 
 
-def _parse_steps_section(body: str) -> list[dict[str, str | int]]:
+def _parse_contract_list(raw_block: str, key: str) -> list[str]:
+    """Parse a YAML list field (produces: or requires:) from a raw step block.
+
+    Handles both inline-list and block-sequence styles:
+      produces: ["file:/tmp/x", "package:foo"]
+      produces:
+        - "file:/tmp/x"
+        - package:foo
+
+    Returns a list of unquoted entry strings (possibly empty).
+    """
+    entries: list[str] = []
+    lines = raw_block.splitlines()
+
+    # Find the line that starts the list field
+    list_start = -1
+    for i, line in enumerate(lines):
+        m = re.match(r"^\s+" + re.escape(key) + r":\s*(.*)", line)
+        if m:
+            inline = m.group(1).strip()
+            if inline:
+                # Inline style: produces: ["a", "b"]  or  produces: [a, b]
+                # Strip surrounding brackets if present
+                inner = inline.strip()
+                if inner.startswith("[") and inner.endswith("]"):
+                    inner = inner[1:-1]
+                # Split by comma, respecting quotes (simple approach: split on ,)
+                for part in inner.split(","):
+                    part = part.strip().strip('"').strip("'")
+                    if part:
+                        entries.append(part)
+            else:
+                # Block sequence: entries on following lines indented with '  - '
+                list_start = i + 1
+            break
+
+    if list_start >= 0:
+        for line in lines[list_start:]:
+            # Stop at a line that looks like a new scalar field (not a list item)
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if re.match(r"^\s+-\s+step:\s*\d+", line):
+                break
+            # Another scalar field at the same or shallower indentation
+            if re.match(r"^\s+\w[\w-]*:\s*\S", line) and not re.match(r"^\s+-\s+", line):
+                break
+            m_item = re.match(r"^\s+-\s+(.*)", line)
+            if m_item:
+                val = m_item.group(1).strip().strip('"').strip("'")
+                if val:
+                    entries.append(val)
+            else:
+                # Line is not a list item and not empty — stop
+                break
+
+    return entries
+
+
+def _parse_steps_section(body: str) -> list[dict[str, str | int | list[str]]]:
     """
     Parse ## 6. Steps section from a spec body.
 
     Returns a list of dicts, each with keys: 'step' (int), and zero or
-    more of 'why', 'action', 'verification' (all str).
+    more of 'why', 'action', 'verification' (all str), and 'produces',
+    'requires' (both list[str], possibly empty).
     """
     # Find ## 6. Steps heading
     steps_match = re.search(r"^## 6\. Steps\s*$", body, re.MULTILINE)
@@ -107,7 +181,7 @@ def _parse_steps_section(body: str) -> list[dict[str, str | int]]:
         # No fenced block — treat section_body itself as yaml
         yaml_blocks = [section_body]
 
-    steps: list[dict[str, str | int]] = []
+    steps: list[dict[str, str | int | list[str]]] = []
     for yaml_text in yaml_blocks:
         # Split on lines beginning with '- step:' (step block delimiters)
         # We use re.split but keep the delimiter so we can reconstruct step_n
@@ -116,7 +190,7 @@ def _parse_steps_section(body: str) -> list[dict[str, str | int]]:
             raw = raw.strip()
             if not raw:
                 continue
-            step: dict[str, str | int] = {}
+            step: dict[str, str | int | list[str]] = {}
             for line in raw.splitlines():
                 # step number
                 m_step = re.match(r"^\s*-\s+step:\s*(\d+)", line)
@@ -130,9 +204,125 @@ def _parse_steps_section(body: str) -> list[dict[str, str | int]]:
                     value = m_field.group(2).strip().strip('"').strip("'")
                     step[key] = value
             if "step" in step:
+                # Parse produces/requires contract lists from the raw block
+                step["produces"] = _parse_contract_list(raw, "produces")
+                step["requires"] = _parse_contract_list(raw, "requires")
                 steps.append(step)
 
     return steps
+
+
+def _validate_contract_entry(entry: str) -> bool:
+    """Return True if entry is a valid contract string ("<type>:<value>").
+
+    Validity requires: at least one ':' separator, the type prefix is in
+    _CONTRACT_TYPES, and the value (right of ':') is non-empty.
+    """
+    if ":" not in entry:
+        return False
+    prefix, _, value = entry.partition(":")
+    return prefix in _CONTRACT_TYPES and bool(value.strip())
+
+
+def _check_step_contracts(
+    steps: list[dict],
+) -> list[_findings.Finding]:
+    """Run contract checks across all steps.
+
+    Emits:
+      - warn/malformed-contract  — entry present but type prefix unknown or value missing
+      - warn/missing-contract    — step has no produces: AND no requires: declared
+      - block/unowned-requirement — step.requires entry not produced by any earlier step
+
+    Returns list of findings (possibly empty).
+    """
+    results: list[_findings.Finding] = []
+
+    # Build the running set of produced contracts as we walk steps in order.
+    # Each entry is the normalised string exactly as written (after strip/unquote).
+    cumulative_produces: set[str] = set()
+
+    for step in steps:
+        step_n: int = step["step"]  # type: ignore[assignment]
+        raw_produces: list[str] = step.get("produces", [])  # type: ignore[assignment]
+        raw_requires: list[str] = step.get("requires", [])  # type: ignore[assignment]
+
+        # ── validate + collect produces ──────────────────────────────────────
+        valid_produces: list[str] = []
+        for entry in raw_produces:
+            if _validate_contract_entry(entry):
+                valid_produces.append(entry)
+            else:
+                msg = f"Step {step_n} produces entry {entry!r} is not a recognised contract type."
+                if len(msg) > 140:
+                    msg = msg[:137] + "..."
+                results.append(_findings.Finding(
+                    tier=1,
+                    kind="malformed-contract",
+                    severity="warn",
+                    location=_findings.FindingLocation(scope="step", step=step_n, ref="produces"),
+                    message=msg,
+                    suggested_fix=(
+                        "Use <type>:<value> — valid types: "
+                        + ", ".join(sorted(_CONTRACT_TYPES))
+                    )[:140],
+                ))
+
+        # ── validate + check requires ────────────────────────────────────────
+        valid_requires: list[str] = []
+        for entry in raw_requires:
+            if _validate_contract_entry(entry):
+                valid_requires.append(entry)
+            else:
+                msg = f"Step {step_n} requires entry {entry!r} is not a recognised contract type."
+                if len(msg) > 140:
+                    msg = msg[:137] + "..."
+                results.append(_findings.Finding(
+                    tier=1,
+                    kind="malformed-contract",
+                    severity="warn",
+                    location=_findings.FindingLocation(scope="step", step=step_n, ref="requires"),
+                    message=msg,
+                    suggested_fix=(
+                        "Use <type>:<value> — valid types: "
+                        + ", ".join(sorted(_CONTRACT_TYPES))
+                    )[:140],
+                ))
+
+        # ── missing-contract (opt-in, warn only) ────────────────────────────
+        # A step without any valid contract entries is "undeclared" — warn only.
+        if not valid_produces and not valid_requires:
+            msg = f"Step {step_n} declares no produces: or requires: contract entries."
+            results.append(_findings.Finding(
+                tier=1,
+                kind="missing-contract",
+                severity="warn",
+                location=_findings.FindingLocation(scope="step", step=step_n, ref="produces"),
+                message=msg,
+                suggested_fix="Declare produces:/requires: to make step contracts machine-readable.",
+            ))
+
+        # ── unowned-requirement (block) ──────────────────────────────────────
+        for entry in valid_requires:
+            if entry not in cumulative_produces:
+                msg = (
+                    f"Step {step_n} requires {entry!r} but no prior step's produces: declares it."
+                )
+                if len(msg) > 140:
+                    msg = msg[:137] + "..."
+                results.append(_findings.Finding(
+                    tier=1,
+                    kind="unowned-requirement",
+                    severity="block",
+                    location=_findings.FindingLocation(scope="step", step=step_n, ref="requires"),
+                    message=msg,
+                    suggested_fix="Add the entry to a prior step's produces:, or remove the requires: entry.",
+                ))
+
+        # Accumulate valid produces for subsequent steps
+        cumulative_produces.update(valid_produces)
+
+    return results
 
 
 def _check_receiver_calibration(body: str) -> list[_findings.Finding]:
@@ -258,5 +448,8 @@ def classify(spec_path: pathlib.Path) -> list[_findings.Finding]:
 
     # ── Check 4: missing-receiver-calibration ────────────────────────────────
     results.extend(_check_receiver_calibration(body))
+
+    # ── Check 5: step contracts (produces/requires) ───────────────────────────
+    results.extend(_check_step_contracts(steps))
 
     return results
