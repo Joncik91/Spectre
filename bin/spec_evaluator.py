@@ -47,10 +47,12 @@ TIER3_TIMEOUT_S = 180  # legacy default — now used as chunk_timeout_s fallback
 TIER3_CHUNK_TIMEOUT_S = 60   # per-recv socket timeout default
 TIER3_TOTAL_TIMEOUT_S = 600  # total wall-clock budget default
 DEFAULT_FINDING_CAP = 20
-# Note: DeepSeek's v1 API accepts `deepseek-chat` and `deepseek-reasoner`. The
-# v0.3.0 README/docs mentioned a non-existent "v4-pro" alias; v0.3.1 standardizes
-# on `deepseek-reasoner` because reasoning > chat for adversarial spec critique.
-DEEPSEEK_MODEL = "deepseek-reasoner"
+# Note: v0.5.2 reshaped Tier 3 to use structured input (JSON step table) and
+# contradiction-tuple output. deepseek-v4-flash is faster, cheaper, and equally
+# capable for the new protocol — the old reasoning-heavy approach no longer
+# applies. deepseek-reasoner was preferred pre-v0.5.2 for adversarial prose
+# critique; that model is now superseded for this use case.
+DEEPSEEK_MODEL = "deepseek-v4-flash"
 DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
 
 # ── Dismissal parser ──────────────────────────────────────────────────────────
