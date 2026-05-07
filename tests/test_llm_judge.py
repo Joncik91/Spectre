@@ -3,6 +3,7 @@ import json
 import os
 import pathlib
 import socket
+import threading
 import time
 from unittest import mock
 from urllib import error as url_error
@@ -589,13 +590,17 @@ def test_run_prompt_includes_prong_name_in_timeout_message(mock_urlopen, monkeyp
 
 
 # ---------------------------------------------------------------------------
-# 31. JudgeConfig default timeout_s is 180
+# 31. JudgeConfig default timeout_s back-compat alias returns chunk_timeout_s
 # ---------------------------------------------------------------------------
 
 
 def test_default_timeout_s_is_180(monkeypatch):
+    # Old code reads cfg.timeout_s — must still work via back-compat property.
+    # New default chunk_timeout_s is 60; but a config created with the old
+    # timeout_s=180 kwarg must read back 180 via the alias.
     cfg = llm_judge.JudgeConfig(enabled=True, api_key_env="DEEPSEEK_API_KEY", model="deepseek-reasoner")
-    assert cfg.timeout_s == 180
+    # Default chunk_timeout_s=60; the alias reflects it.
+    assert cfg.timeout_s == cfg.chunk_timeout_s
 
 
 # ---------------------------------------------------------------------------
@@ -619,3 +624,224 @@ def test_backoff_capped_at_60_seconds(mock_urlopen, monkeypatch):
     # Without cap: 2^1=2, 2^2=4, 2^3=8 — all under 60. Verify all ≤ 60.
     assert all(d <= llm_judge._MAX_BACKOFF_S for d in sleep_calls)
     assert len(sleep_calls) == 3
+
+
+# ---------------------------------------------------------------------------
+# 33. chunk_timeout fires → retries (preserves #12 P2 behavior)
+# ---------------------------------------------------------------------------
+
+
+@mock.patch("urllib.request.urlopen")
+def test_call_deepseek_chunk_timeout_does_retry(mock_urlopen, monkeypatch):
+    """socket.timeout (per-chunk recv) IS retried — #12 P2 behavior preserved."""
+    monkeypatch.setenv("TEST_DEEPSEEK_KEY", "fake-key-for-tests")
+    monkeypatch.setattr(time, "sleep", lambda _d: None)
+
+    mock_urlopen.side_effect = [
+        socket.timeout("chunk timeout"),
+        _make_fake_resp("tier3-context-gap"),
+    ]
+    cfg = llm_judge.JudgeConfig(
+        enabled=True,
+        api_key_env="TEST_DEEPSEEK_KEY",
+        model="deepseek-reasoner",
+        chunk_timeout_s=60,
+        total_timeout_s=600,
+    )
+    prompts = {"system": "s", "user": "u"}
+    result = llm_judge._call_deepseek(prompts, config=cfg)
+    assert mock_urlopen.call_count == 2  # first failed, second succeeded
+    assert "findings" in result  # parsed content contains findings key
+
+
+# ---------------------------------------------------------------------------
+# 34. total_timeout fires → NOT retried, _TotalTimeoutError propagates
+# ---------------------------------------------------------------------------
+
+
+@mock.patch("urllib.request.urlopen")
+def test_call_deepseek_total_timeout_does_not_retry(mock_urlopen, monkeypatch):
+    """_TotalTimeoutError is NOT retried — hard ceiling."""
+    monkeypatch.setenv("TEST_DEEPSEEK_KEY", "fake-key-for-tests")
+    monkeypatch.setattr(time, "sleep", lambda _d: None)
+
+    # Strategy: replace threading.Timer with a synchronous stub that immediately
+    # invokes the callback on start(). The callback sets _total_exc and closes
+    # the resp. We make resp.read() check _total_exc and raise _TotalTimeoutError
+    # directly — no real thread timing needed.
+    #
+    # But _fire_total_timeout is a closure inside _call_deepseek, so we can't
+    # call it directly. Instead: use a Timer stub that stores the fn, then
+    # make the fake resp.read() call timer_fn() FIRST (populating _total_exc)
+    # and then raise OSError (as if the closed socket did so).
+
+    timer_fn_holder: list = []
+
+    class _SyncTimer:
+        def __init__(self, interval, fn, *args, **kwargs):
+            timer_fn_holder.append(fn)
+            self.daemon = True
+
+        def start(self):
+            pass  # don't auto-fire — let resp.read() trigger it
+
+        def cancel(self):
+            pass
+
+    monkeypatch.setattr("bin.llm_judge.threading.Timer", _SyncTimer)
+
+    class _FakeResp:
+        def read(self):
+            # Simulate the timer firing: call _fire_total_timeout directly,
+            # then raise OSError as a closed socket would.
+            if timer_fn_holder:
+                timer_fn_holder[0]()  # sets _total_exc
+            raise OSError("connection closed by timer")
+
+        def close(self):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+    mock_urlopen.return_value = _FakeResp()
+
+    cfg = llm_judge.JudgeConfig(
+        enabled=True,
+        api_key_env="TEST_DEEPSEEK_KEY",
+        model="deepseek-reasoner",
+        chunk_timeout_s=60,
+        total_timeout_s=600,
+    )
+    prompts = {"system": "s", "user": "u"}
+    with pytest.raises(llm_judge._TotalTimeoutError):
+        llm_judge._call_deepseek(prompts, config=cfg)
+
+    # Must NOT have retried — only 1 urlopen call.
+    assert mock_urlopen.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# 35. total_timeout takes precedence even after partial success
+# ---------------------------------------------------------------------------
+
+
+@mock.patch("urllib.request.urlopen")
+def test_call_deepseek_total_timeout_takes_precedence_over_chunk_count(mock_urlopen, monkeypatch):
+    """Even if chunk-timeout retry would succeed, _TotalTimeoutError aborts at 2nd attempt."""
+    monkeypatch.setenv("TEST_DEEPSEEK_KEY", "fake-key-for-tests")
+    monkeypatch.setattr(time, "sleep", lambda _d: None)
+
+    # Same sync-timer strategy: first attempt raises socket.timeout (chunk timeout,
+    # retried). On second attempt the timer fires during read() → _TotalTimeoutError.
+    timer_fn_holder: list = []
+
+    class _SyncTimer:
+        def __init__(self, interval, fn, *args, **kwargs):
+            timer_fn_holder.append(fn)
+            self.daemon = True
+
+        def start(self):
+            pass
+
+        def cancel(self):
+            pass
+
+    monkeypatch.setattr("bin.llm_judge.threading.Timer", _SyncTimer)
+
+    call_count = [0]
+
+    class _TimerFiringResp:
+        def read(self):
+            # On second call, fire the total timeout.
+            if timer_fn_holder:
+                timer_fn_holder[-1]()  # sets _total_exc for this attempt
+            raise OSError("connection closed by total-timeout")
+
+        def close(self):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+    # First call: chunk timeout (retried). Second call: total timeout fires.
+    mock_urlopen.side_effect = [
+        socket.timeout("chunk timeout"),
+        _TimerFiringResp(),
+    ]
+
+    cfg = llm_judge.JudgeConfig(
+        enabled=True,
+        api_key_env="TEST_DEEPSEEK_KEY",
+        model="deepseek-reasoner",
+        chunk_timeout_s=60,
+        total_timeout_s=600,
+    )
+    prompts = {"system": "s", "user": "u"}
+    with pytest.raises(llm_judge._TotalTimeoutError):
+        llm_judge._call_deepseek(prompts, config=cfg)
+
+    # Two urlopen calls: attempt 0 (chunk-timeout) + attempt 1 (total-timeout).
+    assert mock_urlopen.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# 36. back-compat: old timeout_s key in JudgeConfig loads as chunk_timeout_s
+# ---------------------------------------------------------------------------
+
+
+def test_judge_config_back_compat_timeout_s_loads_as_chunk_timeout_s():
+    """Setting timeout_s= kwarg (legacy) reflects in chunk_timeout_s."""
+    cfg = llm_judge.JudgeConfig(
+        enabled=True,
+        api_key_env="DEEPSEEK_API_KEY",
+        model="deepseek-reasoner",
+    )
+    # Use the back-compat setter.
+    cfg.timeout_s = 180
+    assert cfg.chunk_timeout_s == 180
+    # Reading back via the alias also works.
+    assert cfg.timeout_s == 180
+
+
+# ---------------------------------------------------------------------------
+# 37. JudgeConfig default total_timeout_s is 600
+# ---------------------------------------------------------------------------
+
+
+def test_judge_config_default_total_timeout_is_600():
+    cfg = llm_judge.JudgeConfig(
+        enabled=True,
+        api_key_env="DEEPSEEK_API_KEY",
+        model="deepseek-reasoner",
+    )
+    assert cfg.total_timeout_s == 600
+
+
+# ---------------------------------------------------------------------------
+# 38. setup_wizard.write_config emits both chunk_timeout_s and total_timeout_s
+# ---------------------------------------------------------------------------
+
+
+def test_setup_wizard_writes_both_timeouts(tmp_path):
+    """write_config must write chunk_timeout_s and total_timeout_s to TOML."""
+    from bin import setup_wizard
+
+    target = tmp_path / "reviewer.toml"
+    setup_wizard.write_config(target, enabled=True, api_key_env="DEEPSEEK_API_KEY")
+    text = target.read_text(encoding="utf-8")
+    assert "chunk_timeout_s = 60" in text
+    assert "total_timeout_s = 600" in text
+    # Old timeout_s key must NOT appear (new configs use the new names).
+    # Note: this check excludes the new keys themselves (they contain "timeout_s").
+    lines_with_bare_timeout = [
+        ln for ln in text.splitlines()
+        if ln.strip().startswith("timeout_s")
+    ]
+    assert lines_with_bare_timeout == [], f"Unexpected bare timeout_s line: {lines_with_bare_timeout}"

@@ -43,7 +43,9 @@ from bin import eval_metadata as _eval_metadata
 EVALUATOR_VERSION = "0.5.0"
 TIER1_TIMEOUT_MS = 100
 TIER2_TIMEOUT_S = 2
-TIER3_TIMEOUT_S = 180
+TIER3_TIMEOUT_S = 180  # legacy default — now used as chunk_timeout_s fallback
+TIER3_CHUNK_TIMEOUT_S = 60   # per-recv socket timeout default
+TIER3_TOTAL_TIMEOUT_S = 600  # total wall-clock budget default
 DEFAULT_FINDING_CAP = 20
 # Note: DeepSeek's v1 API accepts `deepseek-chat` and `deepseek-reasoner`. The
 # v0.3.0 README/docs mentioned a non-existent "v4-pro" alias; v0.3.1 standardizes
@@ -405,13 +407,21 @@ def evaluate(
             severity_overrides = config_dict.get("severity_overrides", {})
 
             if tier3_cfg.get("enabled", False):
+                # Back-compat: old configs may use `timeout_s` only. Treat it as
+                # chunk_timeout_s when the new key is absent.
+                chunk_timeout = tier3_cfg.get(
+                    "chunk_timeout_s",
+                    tier3_cfg.get("timeout_s", TIER3_CHUNK_TIMEOUT_S),
+                )
+                total_timeout = tier3_cfg.get("total_timeout_s", TIER3_TOTAL_TIMEOUT_S)
                 judge_config = _llm_judge.JudgeConfig(
                     enabled=True,
                     api_key_env=tier3_cfg.get("api_key_env", "DEEPSEEK_API_KEY"),
                     model=tier3_cfg.get("model", DEEPSEEK_MODEL),
                     base_url=tier3_cfg.get("base_url", DEEPSEEK_BASE_URL),
                     budget_tokens_per_spec=tier3_cfg.get("budget_tokens_per_spec", 50_000),
-                    timeout_s=tier3_cfg.get("timeout_s", TIER3_TIMEOUT_S),
+                    chunk_timeout_s=chunk_timeout,
+                    total_timeout_s=total_timeout,
                 )
                 tier3_findings = _llm_judge.evaluate(bundle.spec_text, config=judge_config)
                 # tiers_run only flips to [1, 2, 3] when llm_judge actually reached the API
