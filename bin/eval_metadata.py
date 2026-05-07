@@ -51,6 +51,9 @@ DEFAULT_SEVERITIES: dict[str, str] = {
     "verification-syntax-error": "block",
     "action-invokes-uncreated-artifact": "block",
     "unowned-requirement-heuristic": "block",
+    # v0.6 — handoff envelope integrity kinds
+    "envelope-missing": "warn",
+    "envelope-tampered": "block",
 }
 
 # Imported lazily at call sites to avoid circular imports in thin stdlib modules.
@@ -243,6 +246,30 @@ def write_sidecar(
         raise
 
     return sidecar_path
+
+
+# ---------------------------------------------------------------------------
+# write_envelope_alongside_sidecar  (v0.6)
+# ---------------------------------------------------------------------------
+
+def write_envelope_alongside_sidecar(
+    spec_path: pathlib.Path,
+    sidecar_path: pathlib.Path,
+    walk_path: pathlib.Path | None,
+    decisions_dir: pathlib.Path | None,
+) -> pathlib.Path:
+    """Build and write the v0.6 handoff envelope. Returns envelope path.
+
+    Called from the /vision skill's lock step after the sidecar has been written.
+    Imports handoff_envelope lazily to avoid circular-import risk in thin callers.
+    """
+    import importlib
+    he = importlib.import_module("handoff_envelope")
+
+    envelope = he.build(spec_path, sidecar_path, walk_path, decisions_dir)
+    envelope_path = he.envelope_path_for(pathlib.Path(spec_path))
+    he.write(envelope, envelope_path)
+    return envelope_path
 
 
 # ── CLI entrypoint ────────────────────────────────────────────────────────────
