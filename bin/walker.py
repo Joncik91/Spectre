@@ -352,6 +352,32 @@ if __name__ == "__main__":
         default="state/.walk.json",
         help="Path to walk state JSON (default: state/.walk.json).",
     )
+    p_ior.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_mode",
+        help="Emit full walk state as JSON instead of the one-line summary.",
+    )
+
+    # ── peek-pending ──────────────────────────────────────────────────────────
+    p_pp = sub.add_parser(
+        "peek-pending",
+        help=(
+            "Return the next pending concern's full body. "
+            "Prints EMPTY and exits 0 if no pending concerns remain."
+        ),
+    )
+    p_pp.add_argument(
+        "--state-path",
+        default="state/.walk.json",
+        help="Path to walk state JSON (default: state/.walk.json).",
+    )
+    p_pp.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_mode",
+        help="Emit the concern as JSON instead of the human-readable format.",
+    )
 
     # ── yield-check ───────────────────────────────────────────────────────────
     p_yc = sub.add_parser(
@@ -472,9 +498,49 @@ if __name__ == "__main__":
                 print(f"ERROR: could not persist walk state: {exc}", file=sys.stderr)
                 sys.exit(1)
 
-        stop = state.stop_reason if state.stop_reason else "none"
-        pending_count = sum(1 for c in state.pending if c.id not in state.stale)
-        print(f"WALK: {state.round_count} rounds, {pending_count} pending, stop={stop}")
+        if args.json_mode:
+            payload: dict[str, Any] = {
+                "walker_version": WALKER_VERSION,
+                "spec_intent": state.spec_intent,
+                "spec_draft_path": str(state.spec_draft_path),
+                "asked": [_serialize_concern(c) for c in state.asked],
+                "answered": dict(state.answered),
+                "pending": [_serialize_concern(c) for c in state.pending],
+                "stale": sorted(state.stale),
+                "stop_reason": state.stop_reason,
+                "round_count": state.round_count,
+                "yield_history": list(state.yield_history),
+            }
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            stop = state.stop_reason if state.stop_reason else "none"
+            pending_count = sum(1 for c in state.pending if c.id not in state.stale)
+            print(f"WALK: {state.round_count} rounds, {pending_count} pending, stop={stop}")
+
+    elif args.cmd == "peek-pending":
+        state_path = pathlib.Path(args.state_path)
+        try:
+            state = load(state_path)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        if state is None:
+            print("ERROR: walk state not found", file=sys.stderr)
+            sys.exit(1)
+
+        concern = next_concern(state)
+        if concern is None:
+            print("EMPTY")
+            sys.exit(0)
+
+        if args.json_mode:
+            print(json.dumps(_serialize_concern(concern), indent=2, sort_keys=True))
+        else:
+            print(f"id: {concern.id}")
+            print(f"kind: {concern.kind}")
+            print(f"receiver: {', '.join(concern.receivers)}")
+            print(f"depends_on: {', '.join(concern.depends_on) if concern.depends_on else 'none'}")
+            print(f"summary: {concern.summary}")
 
     elif args.cmd == "yield-check":
         from bin import spec_evaluator as _se  # lazy import — avoid cost on init-or-resume
