@@ -16,6 +16,10 @@ At the start of every `/implement` session the runner calls `ensure_venv` (see `
 
 Every step's `action:` and `verification:` strings are passed through `normalize_action` before execution. This rewrites bare `python`, `python3`, `pip`, and `pip3` tokens to use the venv interpreter — top-level shell tokens only (shlex-parsed), so absolute paths, heredoc blocks, and nested quoted strings are left untouched. If `ensure_venv` fails for any reason (missing `python3-venv`, out of disk, etc.), the skill **HALTs** with a clear error — it never falls back to system Python.
 
+## PYTHONPATH note
+
+Spectre's `bin/` modules live under the plugin install at `${CLAUDE_PLUGIN_ROOT}/bin/`, not on the user's project sys.path. Every `python3 -m bin.X` invocation in this skill prefixes with `PYTHONPATH="${CLAUDE_PLUGIN_ROOT}"`. Do not strip or alter this prefix when adapting commands.
+
 ## Hard rules (read every invocation)
 
 - **All paths are user-project-cwd-relative.** Read `specs/.active` and `state/scratchpad.json` from the user's `pwd`, never from the plugin install dir (`${CLAUDE_PLUGIN_ROOT}` or `~/.claude/plugins/...`). If `pwd` looks like a plugin cache, HALT and tell the user to restart from their project directory.
@@ -65,7 +69,7 @@ For backward compat: a v1 scratchpad is auto-migrated to v2 by the SessionStart 
 Before reading the spec or executing any step, validate the handoff envelope:
 
 ```bash
-python3 -m bin.handoff_validator check --project-path .
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.handoff_validator check --project-path .
 ```
 
 Stdout: one finding per line (e.g. `envelope-missing: pre-v0.6 spec, continuing`) or `ENVELOPE OK` when the envelope is present and valid. Exit code: `0` on OK or warn-only findings, `1` on block-severity violations.
@@ -107,7 +111,7 @@ After reading the active spec (Step 1) and before classifying the action (Step 3
 **Once per `/implement` session** (skip if `venv_python` is already set in the scratchpad for this session):
 
 ```bash
-python3 -m bin.managed_venv ensure \
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.managed_venv ensure \
     --project-path . \
     --scratchpad state/scratchpad.json
 ```
@@ -119,7 +123,7 @@ If this command exits non-zero → **HALT immediately** with its stderr. Do not 
 **On every step**, rewrite the step's `action:` and `verification:` strings through `normalize_action` **before** tier classification (Step 3.5) and before execution. The result is the `normalized_action` used for all subsequent steps. Use the `normalize` subcommand:
 
 ```bash
-python3 -m bin.managed_venv normalize \
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.managed_venv normalize \
     --action "<step action verbatim>" \
     --venv-python "<venv_python from scratchpad>"
 ```
@@ -150,7 +154,7 @@ If the user invoked `/implement check`:
 Classify `normalized_action` (the post-rewrite string from Step 1.5 — not the raw spec text) by tier before executing. Run:
 
 ```bash
-python3 -m bin.tier evaluate-action \
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.tier evaluate-action \
     --action "<normalized_action verbatim>" \
     --spec "specs/<active spec name>.spec.md"
 ```
@@ -187,7 +191,7 @@ Proceed? (yes / halt / skip)
 **Record observation BEFORE accepting input:** every TIER GATE halt — regardless of the user's answer — produces a fingerprint and an observation row. Run:
 
 ```bash
-python3 -m bin.observations record-halt \
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.observations record-halt \
     --action "<current_action>" \
     --label "<the first reason from the classifier output>" \
     --spec-slug "<active spec slug from .active>"
@@ -198,7 +202,7 @@ Stdout: `OBSERVED: <fp[:12]>...`. The CLI computes the SHA-256 fingerprint, appe
 **Append to CDLC ledger (v0.4.2+).** Every TIER GATE halt — regardless of yes/halt/skip — also records a `halt` transition in `state/cdlc-ledger.json` with the user's answer captured:
 
 ```bash
-python3 -m bin.cdlc_ledger append --kind halt \
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.cdlc_ledger append --kind halt \
     --payload-kv "fingerprint=<fp from observation block>" \
     --payload-kv "label=<label>" \
     --payload-kv "action=<current_action>" \
@@ -214,7 +218,7 @@ Stdout: `APPENDED: kind=halt`. The CLI exits non-zero on JSON-corruption / disk-
 **Persist pending_adoption_prompt for §3.5b durability (v0.4.2+).**
 
 ```bash
-python3 -m bin._scratchpad set-pending-adoption \
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin._scratchpad set-pending-adoption \
     --scratchpad state/scratchpad.json \
     --track "<active track from invocation, default 'default'>" \
     --fingerprint "<fp from §3.5 observation block>" \
@@ -229,7 +233,7 @@ Stdout: `PENDING_ADOPTION_PROMPT_PERSISTED: <fp[:12]>...`. The CLI atomic-writes
 After §6 Path A (verification passes) completes successfully, READ `pending_adoption_prompt` from `state/scratchpad.json` for the active track. If `None`, skip §3.5b entirely — no halt was queued. If present, fire the prompt using the persisted structured fields (fingerprint, label, action). The field is read once and CLEARED immediately after the prompt runs (regardless of adopt/once-only/never-ask-again). This survives compact/restart since scratchpad.json is durable across sessions.
 
 ```bash
-python3 -m bin._scratchpad get-pending-adoption \
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin._scratchpad get-pending-adoption \
     --scratchpad state/scratchpad.json \
     --track "<active track from invocation, default 'default'>"
 ```
@@ -239,7 +243,7 @@ Stdout (one of): `NO_PENDING_PROMPT` (skip §3.5b entirely) or `PROMPT: fp=<fp[:
 **Clear pending_adoption_prompt FIRST (v0.4.2+).** As soon as §3.5b reads the field successfully and BEFORE running the adopt/once-only/never-ask-again branches, clear the field unconditionally:
 
 ```bash
-python3 -m bin._scratchpad clear-pending-adoption \
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin._scratchpad clear-pending-adoption \
     --scratchpad state/scratchpad.json \
     --track "<active track from invocation, default 'default'>"
 ```
@@ -260,7 +264,7 @@ The TIER GATE halted you on this action class. Adopt as personal-rule-skip going
 If `adopt`: run
 
 ```bash
-python3 -m bin.personal_rules adopt \
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.personal_rules adopt \
     --label "<label>" \
     --fingerprint "<fp>" \
     --reason "<one-line user reason>" \
@@ -283,7 +287,7 @@ If `never-ask-again`: in v0.4.1, treat as `once-only` (the placeholder schema la
 If `current_resources` is non-empty, acquire each Resource via the supervisor before executing. Run:
 
 ```bash
-python3 -m bin.track acquire \
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.track acquire \
     --track "<current track>" \
     --resources "<comma-joined current_resources, e.g. port:8080,db:postgres>"
 ```
@@ -333,7 +337,7 @@ VERIFYING Step <N>: <verification>
 After verification passes but before the step advances, run the State Auditor for structural sanity. The auditor is **informational on first pass — it does NOT block step advance**. Its job is to surface structural drift across many steps; the spec's own verification is the gate.
 
 ```bash
-python3 -m bin.auditor audit-and-clear \
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.auditor audit-and-clear \
     --action "<current_action>" \
     --scratchpad state/scratchpad.json \
     --track "<current_track>"
@@ -360,7 +364,7 @@ If audits fail repeatedly across multiple steps in the same spec, halt and tell 
 **Append CDLC ledger transition (v0.4.2+).** Record an `implement` transition for this successful step:
 
 ```bash
-python3 -m bin.cdlc_ledger append --kind implement \
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.cdlc_ledger append --kind implement \
     --payload-kv "step=<step number that just succeeded — the pre-increment value, i.e. current_step from §1>" \
     --payload-kv "spec_slug=<active spec slug from .active>" \
     --payload-kv "action=<current_action>"
@@ -428,7 +432,7 @@ After advancing `step`, check if a drift audit is due:
 If `current_resources` is non-empty AND verification passed (Path A) OR the step halted permanently (no further retries possible), release every Resource the step acquired:
 
 ```bash
-python3 -m bin.track release \
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.track release \
     --track "<current track>" \
     --resources "<comma-joined current_resources>"
 ```
@@ -478,7 +482,7 @@ If `gh` is unavailable or the command fails, write the draft to `decisions/<NNNN
 On `project`:
 
 ```bash
-python3 -m bin.adr write \
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.adr write \
     --dir decisions \
     --title "<title>" \
     --body "<body with finding>"
