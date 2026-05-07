@@ -72,9 +72,17 @@ Stdout: `WALK: N rounds, M pending, stop=<reason|none>`. The `--intent` value is
 
 Repeat until the walker reports stop:
 
-1. **Read next concern.** `walker.next_concern(state)`. If `None`, walker is exhausted; jump to Step 5.
+1. **Read next concern.** Fetch the next pending concern body via the CLI:
 
-2. **Render the structured concern as a natural-language question.** The concern's `summary` field is canonical structured text. The skill phrases it so the user understands. The structured concern is the data; the question text is presentation. If the user says "this question makes no sense," the debug surface is `state/.walk.json`, not the rendered prose.
+   ```bash
+   python3 -m bin.walker peek-pending \
+       --state-path state/.walk.json \
+       --json
+   ```
+
+   Stdout: a JSON object with `id`, `kind`, `receiver`, `summary`, and `round` fields, or `null` when the walk is exhausted. If `null`, jump to Step 5.
+
+2. **Render the structured concern as a natural-language question.** The concern's `summary` field is canonical structured text. The skill phrases it so the user understands. The structured concern is the data; the question text is presentation. If the user says "this question makes no sense," the debug surface is `state/.walk.json` (inspect via `get-state` below), not the rendered prose.
 
    Render format:
    ```
@@ -83,13 +91,41 @@ Repeat until the walker reports stop:
    (answer, or `revise <concern_id>` to amend an earlier answer, or `stop` to lock the walk)
    ```
 
-   On `revise` without an id, list every concern in `state.asked` as `<id> | <one-line summary> | <answer-truncated>` so the user can pick which to amend.
+   On `revise` without an id, fetch full state to list asked concerns:
+
+   ```bash
+   python3 -m bin.walker get-state \
+       --state-path state/.walk.json \
+       --json
+   ```
+
+   Parse `answered` from the JSON and display each as `<id> | <one-line summary> | <answer-truncated>` so the user can pick which to amend.
 
 3. **Capture user input.** Three branches:
 
-   - **`stop`** — set `state.stop_reason = "author-arbitrated"`, persist, jump to Step 5.
-   - **`revise <concern_id> <new_answer>`** — call `walker.revise_answer(state, concern_id=..., new_answer=...)`. Display the returned `invalidated` list to the user. Ask: "These concerns are now stale: <list>. Re-walk them or accept-stale?" On `re-walk`, leave the stale ids in place (walker will skip stale concerns in `next_concern`); the walker's emit logic for new concerns is the v0.4.1 surface — for v0.4.0 the human types fresh answers as new concerns are surfaced naturally.
-   - **Anything else** — treat as the answer to the current concern. Call `walker.record_answer(state, concern_id=concern.id, answer=<text>)`.
+   - **`stop`** — record stop via:
+     ```bash
+     python3 -m bin.walker stop \
+         --reason author-arbitrated \
+         --state-path state/.walk.json
+     ```
+     Stdout: `STOPPED: reason=author-arbitrated`. Jump to Step 5.
+   - **`revise <concern_id> <new_answer>`** — record the revised answer and ask the user about stale concerns:
+     ```bash
+     python3 -m bin.walker answer-concern \
+         --id <concern_id> \
+         --answer "<new_answer>" \
+         --state-path state/.walk.json
+     ```
+     Stdout: `ANSWERED: <concern_id>`. Re-run `get-state` to surface any now-stale sibling concerns. Ask: "These concerns are now stale: <list>. Re-walk them or accept-stale?" On `re-walk`, the walker's `peek-pending` will surface them in the next round naturally.
+   - **Anything else** — treat as the answer to the current concern:
+     ```bash
+     python3 -m bin.walker answer-concern \
+         --id <concern_id> \
+         --answer "<user text>" \
+         --state-path state/.walk.json
+     ```
+     Stdout: `ANSWERED: <concern_id>`.
 
 4. **Run the Tier 3 yield-delta check** (only if `~/.spectre/reviewer.toml` has `[tier3] enabled = true` AND we have an in-progress draft):
 
@@ -101,7 +137,15 @@ Repeat until the walker reports stop:
 
    Stdout: `YIELD: N new T3 findings this round; history=[...]` on a real evaluation, or `YIELD: skipped (<reason>)` when preconditions fail (no walk state, draft missing, `round_count=0`). The CLI uses `~/.spectre/reviewer.toml` and `state/` as the bundle dir by default; override with `--config` and `--bundle-dir` when needed.
 
-5. **Check stop conditions.** `stop, reason = walker.should_stop(state)`. If `True`, set `state.stop_reason = reason` (the function is pure — does not mutate), persist, and proceed to Step 5. If `False`, loop back to Step 4.1.
+5. **Check stop conditions.** Re-run `peek-pending` (Step 4.1) — if it returns `null`, the walk is exhausted; proceed to Step 5. Alternatively, check the `stop` field in the full state dump:
+
+   ```bash
+   python3 -m bin.walker get-state \
+       --state-path state/.walk.json \
+       --json
+   ```
+
+   If `stop` is non-null in the returned JSON, proceed to Step 5. Otherwise, loop back to Step 4.1.
 
 ### Step 5 — Materialize draft + confirm
 
@@ -115,7 +159,7 @@ The walk has stopped. Render the draft from accumulated `state.answered` plus `s
    ```
 4. **Wait for the user.**
    - `yes` → continue to Step 6.3a (existing v0.3.2 setup wizard) → Step 6.4 evaluator (existing).
-   - `refine "<change>"` — if the change implies revising a prior concern, invoke `walker.revise_answer` first, then re-render the draft. Otherwise, edit the draft directly and re-run §6.4 (existing v0.3.2 behavior).
+   - `refine "<change>"` — if the change implies revising a prior concern, call `answer-concern` with the updated answer first (same CLI as Step 4.3), then re-render the draft. Otherwise, edit the draft directly and re-run §6.4 (existing v0.3.2 behavior).
    - `cancel` → delete the draft AND `state/.walk.json` AND `state/.eval-bundle.json`. Halt.
 
 The walker's invalidation set + dependency graph are never re-rendered for the user post-confirmation; they exist only to drive interrogation cycles. After the user says `yes` and §6.4 passes, `state/.walk.json` may be retained as audit trail or cleared (skill author's choice; v0.4.0 keeps it).
@@ -272,34 +316,17 @@ Now that the user confirmed and ADRs are written:
    printf 'specs/<slug>.spec.md\n' > "$PROJECT/specs/.active.tmp" && mv "$PROJECT/specs/.active.tmp" "$PROJECT/specs/.active"
    ```
 
-3. Reset `$PROJECT/state/scratchpad.json` to:
+3. Reset `$PROJECT/state/scratchpad.json` for the active spec. Use the CLI to ensure v2 schema and reset the track atomically:
 
-   ```json
-   {
-     "version": 2,
-     "active_mission": "specs/<slug>.spec.md",
-     "tracks": {
-       "<track or 'default'>": {
-         "active_spec": "specs/<slug>.spec.md",
-         "step": 1,
-         "last_command": null,
-         "exit_code": null,
-         "delta": null,
-         "timestamp": null,
-         "failed_hypotheses": [],
-         "paths_touched": [],
-         "last_drift_check_step": 0,
-         "last_audit_kinds": [],
-         "last_audit_passed": null,
-         "last_audit_failures": []
-       }
-     },
-     "decisions_index": "decisions/",
-     "graph_snapshot": "specs/.graph.md"
-   }
+   ```bash
+   python3 -m bin._scratchpad ensure-v2 \
+       --scratchpad state/scratchpad.json
+   python3 -m bin._scratchpad reset \
+       --active-spec specs/<slug>.spec.md \
+       --scratchpad state/scratchpad.json
    ```
 
-   If the user invoked `/vision <track>`, use that track name; otherwise use `"default"`. Preserve any other tracks already in the scratchpad (read-modify-write via `bin/_scratchpad.save_track`).
+   `ensure-v2` promotes a v1 scratchpad to v2 (no-op if already v2). `reset` atomically writes the track's initial state (`step=1`, all counters zeroed) under the `default` track (or the named track if the user invoked `/vision <track>`), preserving any other tracks already present. Both commands emit a confirmation line on stdout.
 
 4. **Write the `<slug>.spec.md.eval.json` sidecar** (v0.3+, post-§6.4 evaluator). The sidecar filename is always the spec filename with `.eval.json` appended (append-suffix, not replace-suffix — `eval_metadata.sidecar_path_for(spec)` returns the canonical path). The evaluator's `result.sidecar_payload` carries the policy hash, tiers run, dismissals, findings summary, and DeepSeek model version. Persist next to the locked spec:
 

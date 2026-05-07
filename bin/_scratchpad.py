@@ -215,6 +215,41 @@ def _clear_pending_adoption_prompt(scratchpad_path: Path, *, track: str) -> bool
     return True
 
 
+def _reset_scratchpad(scratchpad_path: Path, *, active_spec: str) -> None:
+    """Atomic write of a fresh v2 scratchpad with active_spec set.
+
+    All track fields are set to their null/empty defaults.  Used by the
+    /vision lock step so the agent never hand-rolls a v2 dict.
+    """
+    fresh_track = track_default()
+    fresh_track["active_spec"] = active_spec
+    new_data = dict(DEFAULT_V2)
+    new_data["active_mission"] = active_spec
+    new_data["tracks"] = {"default": fresh_track}
+    atomic_write(scratchpad_path, new_data)
+
+
+def _ensure_v2(scratchpad_path: Path) -> str:
+    """Idempotent v1 → v2 migration.
+
+    Returns 'migrated' | 'noop' | 'created'.
+    Raises ValueError on malformed JSON (caller should exit 1).
+    """
+    path = Path(scratchpad_path)
+    if not path.exists():
+        atomic_write(path, dict(DEFAULT_V2))
+        return "created"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"malformed JSON in {path}: {exc}") from exc
+    if data.get("version") == 2:
+        return "noop"
+    new_data = expand_v1_to_v2(data)
+    atomic_write(path, new_data)
+    return "migrated"
+
+
 if __name__ == "__main__":
     import argparse
     import sys
@@ -222,7 +257,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         prog="_scratchpad",
         description=(
-            "Scratchpad CLI — set/get/clear pending_adoption_prompt for a track."
+            "Scratchpad CLI — reset/ensure-v2 and set/get/clear pending_adoption_prompt."
         ),
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -231,6 +266,29 @@ if __name__ == "__main__":
         default="state/scratchpad.json",
         help="Path to scratchpad.json (default: state/scratchpad.json).",
     )
+
+    p_reset = sub.add_parser(
+        "reset",
+        help=(
+            "Atomic write of a fresh v2 scratchpad with active_spec set. "
+            "All track fields are null/empty defaults. Safe to call against v1 files."
+        ),
+    )
+    p_reset.add_argument("--scratchpad", **common_path)
+    p_reset.add_argument(
+        "--active-spec",
+        required=True,
+        help="Path to the spec file to set as active_mission (e.g. specs/foo.spec.md).",
+    )
+
+    p_ev2 = sub.add_parser(
+        "ensure-v2",
+        help=(
+            "Idempotent v1 → v2 migration. No-op if already v2. "
+            "Creates a fresh v2 default if the file is missing. Exits 1 on malformed JSON."
+        ),
+    )
+    p_ev2.add_argument("--scratchpad", **common_path)
 
     p_set = sub.add_parser(
         "set-pending-adoption",
@@ -271,7 +329,26 @@ if __name__ == "__main__":
 
     sp_path = Path(args.scratchpad)
 
-    if args.cmd == "set-pending-adoption":
+    if args.cmd == "reset":
+        try:
+            _reset_scratchpad(sp_path, active_spec=args.active_spec)
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(f"SCRATCHPAD_RESET: v2 written, active_spec={args.active_spec}")
+
+    elif args.cmd == "ensure-v2":
+        try:
+            result = _ensure_v2(sp_path)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(f"ENSURE_V2: {result}")
+
+    elif args.cmd == "set-pending-adoption":
         try:
             _set_pending_adoption_prompt(
                 sp_path,

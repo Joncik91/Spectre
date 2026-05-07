@@ -102,9 +102,18 @@ def write_config(
     model: str = "deepseek-reasoner",
     base_url: str = "https://api.deepseek.com/v1",
     budget_tokens_per_spec: int = 50_000,
-    timeout_s: int = 180,
+    chunk_timeout_s: int = 60,
+    total_timeout_s: int = 600,
+    timeout_s: int | None = None,
 ) -> None:
-    """Atomically write reviewer.toml at mode 0600."""
+    """Atomically write reviewer.toml at mode 0600.
+
+    Writes both chunk_timeout_s (per-recv socket timeout) and total_timeout_s
+    (hard wall-clock ceiling). The legacy timeout_s parameter is accepted for
+    back-compat only; when provided it overrides chunk_timeout_s.
+    """
+    if timeout_s is not None:
+        chunk_timeout_s = timeout_s
     path.parent.mkdir(parents=True, exist_ok=True)
     enabled_str = "true" if enabled else "false"
     body = (
@@ -117,7 +126,8 @@ def write_config(
         f'model = "{model}"\n'
         f'base_url = "{base_url}"\n'
         f"budget_tokens_per_spec = {budget_tokens_per_spec}\n"
-        f"timeout_s = {timeout_s}\n"
+        f"chunk_timeout_s = {chunk_timeout_s}\n"
+        f"total_timeout_s = {total_timeout_s}\n"
     )
     fd, tmp_path = tempfile.mkstemp(
         prefix=path.name + ".", dir=str(path.parent), suffix=".tmp"

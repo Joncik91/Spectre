@@ -14,10 +14,125 @@ Budget: <2s on a 7-step spec.
 """
 import pathlib
 import re
+import sys
 
 from bin import findings as _findings
 from bin import tier as _tier
 from bin import resources as _resources
+
+# ── Path-line helpers ─────────────────────────────────────────────────────────
+
+_NUMERIC_RANGE_RE = re.compile(r"\{\d+\.\.\d+\}")
+
+
+def _expand_braces(path: str) -> list[str]:
+    """Expand a single brace group in path, recurse for remaining groups.
+
+    Rules:
+    - ``foo.{a,b}``         → ``["foo.a", "foo.b"]``
+    - ``{x,y}.{a,b}``       → ``["x.a", "x.b", "y.a", "y.b"]``
+    - ``foo.{bar}``          → ``["foo.bar"]``  (no comma → literal, strip braces)
+    - ``foo.{1..10}``        → ``["foo.{1..10}"]`` + stderr warning
+    - No braces             → ``[path]`` (passthrough)
+    """
+    # Numeric range: emit warning, keep literal
+    if _NUMERIC_RANGE_RE.search(path):
+        print(
+            f"spec-evaluator warning: numeric brace range in path {path!r} — not expanded; use explicit paths.",
+            file=sys.stderr,
+        )
+        return [path]
+
+    # Find the first '{' ... '}' pair
+    open_idx = path.find("{")
+    if open_idx == -1:
+        return [path]
+
+    close_idx = path.find("}", open_idx)
+    if close_idx == -1:
+        # Unmatched '{' — treat as literal
+        return [path]
+
+    prefix = path[:open_idx]
+    suffix = path[close_idx + 1:]
+    inner = path[open_idx + 1:close_idx]
+
+    choices = inner.split(",")
+    # Single choice (no comma) → strip braces, treat as literal
+    if len(choices) == 1:
+        expanded = [prefix + choices[0] + suffix]
+    else:
+        expanded = [prefix + c + suffix for c in choices]
+
+    # Recurse to handle additional brace groups in each expansion
+    result: list[str] = []
+    for item in expanded:
+        result.extend(_expand_braces(item))
+    return result
+
+
+_MD_MARKER_RE = re.compile(r"^([`*]{1,2})(.*?)([`*]{1,2})$")
+
+
+def _strip_md_markers(path: str) -> str:
+    """Strip leading/trailing markdown bold (**) or inline-code (`) markers.
+
+    ``**path**`` → ``path``
+    `` `path` `` → ``path``
+    ``*path*``   → ``path``
+    """
+    stripped = path.strip()
+    # Iteratively strip matching pairs until stable
+    prev = None
+    while stripped != prev:
+        prev = stripped
+        m = _MD_MARKER_RE.match(stripped)
+        if m and m.group(1) == m.group(3):
+            stripped = m.group(2)
+    return stripped
+
+
+def _split_path_list(raw: str) -> list[str]:
+    """Split a comma-separated path list on commas that are OUTSIDE brace groups.
+
+    e.g. ``"foo.{a,b}, /bar"`` → ``["foo.{a,b}", "/bar"]``
+    Simple commas inside ``{...}`` are not treated as list separators.
+    """
+    tokens: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for ch in raw:
+        if ch == "{":
+            depth += 1
+            current.append(ch)
+        elif ch == "}":
+            depth -= 1
+            current.append(ch)
+        elif ch == "," and depth == 0:
+            token = "".join(current).strip()
+            if token:
+                tokens.append(token)
+            current = []
+        else:
+            current.append(ch)
+    tail = "".join(current).strip()
+    if tail:
+        tokens.append(tail)
+    return tokens
+
+
+def _parse_path_list(raw: str) -> list[str]:
+    """Parse a comma-separated path list, strip markdown, expand braces.
+
+    Called for each mutates:/never-touches: value.
+    Commas inside brace groups are NOT treated as list separators.
+    """
+    result: list[str] = []
+    for token in _split_path_list(raw):
+        token = _strip_md_markers(token)
+        result.extend(_expand_braces(token))
+    return result
+
 
 # ── §8.1 field parsers ────────────────────────────────────────────────────────
 
@@ -35,6 +150,9 @@ def parse_81_block(spec_text: str) -> dict[str, list[str]]:
     silently produced empty sets on the `mutates:` /path/ backticked-key
     style used in some specs — bug fix v0.4.1 task 10 review).
 
+    Accepts h2 (## 8.1) OR h3 (### 8.1) with optional parenthetical suffix.
+    Path values are brace-expanded and have markdown formatters stripped.
+
     Returns a dict with stable keys:
         {
           "mutates": list[str],          # paths after `mutates:`
@@ -44,7 +162,8 @@ def parse_81_block(spec_text: str) -> dict[str, list[str]]:
     Both are empty lists when §8.1 is missing or contains no matching lines.
     Callers that want a flat set of locked paths can `.update()` both lists.
     """
-    m81 = re.search(r"^### 8\.1.*$", spec_text, re.MULTILINE)
+    # Accept ## 8.1 or ### 8.1 with optional trailing content (e.g. parenthetical)
+    m81 = re.search(r"^#{2,3}\s+8\.1\b.*$", spec_text, re.MULTILINE)
     if not m81:
         return {"mutates": [], "never_touches": []}
 
@@ -63,12 +182,12 @@ def parse_81_block(spec_text: str) -> dict[str, list[str]]:
         mm = _MUTATES_RE.match(line)
         if mm:
             raw = mm.group(1).strip().strip("`").strip()
-            mutates = [v.strip() for v in raw.split(",") if v.strip()]
+            mutates = _parse_path_list(raw)
             continue
         nm = _NEVER_TOUCHES_RE.match(line)
         if nm:
             raw = nm.group(1).strip().strip("`").strip()
-            never_touches = [v.strip() for v in raw.split(",") if v.strip()]
+            never_touches = _parse_path_list(raw)
             continue
 
     return {"mutates": mutates, "never_touches": never_touches}

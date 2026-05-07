@@ -4,6 +4,7 @@ import os
 import pathlib
 import random
 import socket
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -116,6 +117,19 @@ _PROMPTS = [
 ]
 
 
+class _TotalTimeoutError(Exception):
+    """Raised when the wall-clock total budget is exhausted.
+
+    The Timer thread that fires this tags ``_total_exc`` and calls ``resp.close()``,
+    but ``urllib.urlopen().read()`` does not unblock immediately when its socket is
+    closed externally on Linux.  The read blocks until the per-recv ``chunk_timeout_s``
+    fires, then checks ``_total_exc`` and re-raises this error.  Worst-case abort
+    latency is ``total_timeout_s + chunk_timeout_s`` (e.g. ~660s with defaults).
+
+    Not retried — propagates immediately past the retry layer.
+    """
+
+
 @dataclass
 class JudgeConfig:
     enabled: bool
@@ -123,7 +137,22 @@ class JudgeConfig:
     model: str
     base_url: str = "https://api.deepseek.com/v1"
     budget_tokens_per_spec: int = 50_000
-    timeout_s: int = 180
+    # chunk_timeout_s: per-recv socket timeout. Detects real connection hangs.
+    # A socket.timeout from this is retryable (per #12 P2 logic).
+    chunk_timeout_s: int = 60
+    # total_timeout_s: hard wall-clock ceiling for the entire request (including
+    # chain-of-thought pauses). Raises _TotalTimeoutError — NOT retryable.
+    total_timeout_s: int = 600
+
+    @property
+    def timeout_s(self) -> int:
+        """Back-compat alias: old code that reads timeout_s gets chunk_timeout_s."""
+        return self.chunk_timeout_s
+
+    @timeout_s.setter
+    def timeout_s(self, value: int) -> None:
+        """Back-compat: setting timeout_s sets chunk_timeout_s."""
+        self.chunk_timeout_s = value
 
 
 class _NoApiKeyError(Exception):
@@ -149,9 +178,17 @@ def _backoff_sleep(attempt: int) -> None:
 def _call_deepseek(prompts: dict, *, config: JudgeConfig) -> str:
     """API call with retry-with-backoff. Returns response content string.
 
+    Two timeout layers:
+      - chunk_timeout_s: per-recv socket timeout passed to urlopen. Fires as
+        socket.timeout when no data arrives for that interval. This is a transient
+        failure and IS retried per #12 P2 logic.
+      - total_timeout_s: hard wall-clock ceiling for the entire call (covering
+        chain-of-thought pauses between chunks). Implemented via threading.Timer.
+        When it fires it raises _TotalTimeoutError. This is NOT retried.
+
     Retries up to _MAX_RETRIES times (4 total attempts) on transient errors:
     socket.timeout, TimeoutError, urllib.error.URLError, HTTP 429, HTTP 5xx.
-    Fail-fast on HTTP 400, 401, 403 (not transient).
+    Fail-fast on HTTP 400, 401, 403 (not transient) and _TotalTimeoutError.
     Raises on final failure.
     """
     key_result = resolve_api_key(config.api_key_env)
@@ -169,35 +206,88 @@ def _call_deepseek(prompts: dict, *, config: JudgeConfig) -> str:
         }
     ).encode("utf-8")
 
+    # Threading plumbing for total wall-clock timeout.
+    # _total_exc is set by the Timer thread; the main thread checks it after
+    # urlopen returns or raises.
+    _total_exc: list[_TotalTimeoutError] = []
+    _active_resp: list[object] = []  # holds the live response object so Timer can close it
+    _timer_lock = threading.Lock()
+
+    def _fire_total_timeout() -> None:
+        exc = _TotalTimeoutError(
+            f"total wall-clock budget exceeded ({config.total_timeout_s}s)"
+        )
+        with _timer_lock:
+            _total_exc.append(exc)
+            # Close any active response to unblock resp.read() on the main thread.
+            if _active_resp:
+                try:
+                    _active_resp[0].close()  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+
     last_exc: Exception | None = None
     for attempt in range(_MAX_RETRIES + 1):
-        req = urllib.request.Request(
-            f"{config.base_url}/chat/completions",
-            data=body,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-            },
-            method="POST",
-        )
+        # Arm a fresh total-timeout timer for each attempt.
+        timer = threading.Timer(config.total_timeout_s, _fire_total_timeout)
+        timer.daemon = True
+        timer.start()
         try:
-            with urllib.request.urlopen(req, timeout=config.timeout_s) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-            return data["choices"][0]["message"]["content"]
-        except urllib.error.HTTPError as exc:
-            if exc.code in _FAIL_FAST_HTTP_CODES:
+            req = urllib.request.Request(
+                f"{config.base_url}/chat/completions",
+                data=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                },
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=config.chunk_timeout_s) as resp:
+                    with _timer_lock:
+                        _active_resp.clear()
+                        _active_resp.append(resp)
+                    try:
+                        raw = resp.read()
+                    except (OSError, socket.timeout, TimeoutError) as read_exc:
+                        # resp.close() from the timer can cause read() to raise OSError.
+                        # Check total-timeout first before treating as a chunk failure.
+                        with _timer_lock:
+                            _active_resp.clear()
+                            if _total_exc:
+                                raise _total_exc[0]
+                        raise
+                    with _timer_lock:
+                        _active_resp.clear()
+                # Check if total timeout fired during read.
+                with _timer_lock:
+                    if _total_exc:
+                        raise _total_exc[0]
+                data = json.loads(raw.decode("utf-8"))
+                return data["choices"][0]["message"]["content"]
+            except _TotalTimeoutError:
+                raise  # propagate immediately — not retryable
+            except urllib.error.HTTPError as exc:
+                if exc.code in _FAIL_FAST_HTTP_CODES:
+                    raise
+                if exc.code == 429 or 500 <= exc.code <= 599:
+                    last_exc = exc
+                    if attempt < _MAX_RETRIES:
+                        _backoff_sleep(attempt)
+                    continue
                 raise
-            if exc.code == 429 or 500 <= exc.code <= 599:
+            except (socket.timeout, TimeoutError, urllib.error.URLError, OSError) as exc:
+                # Check if this was actually a total-timeout firing (closed connection
+                # may surface as socket.timeout or OSError wrapped in URLError).
+                with _timer_lock:
+                    if _total_exc:
+                        raise _total_exc[0]
                 last_exc = exc
                 if attempt < _MAX_RETRIES:
                     _backoff_sleep(attempt)
                 continue
-            raise
-        except (socket.timeout, TimeoutError, urllib.error.URLError) as exc:
-            last_exc = exc
-            if attempt < _MAX_RETRIES:
-                _backoff_sleep(attempt)
-            continue
+        finally:
+            timer.cancel()
 
     assert last_exc is not None
     raise last_exc
@@ -268,6 +358,12 @@ def _run_prompt(prompt_template: dict, spec_text: str, *, config: JudgeConfig) -
     except _NoApiKeyError:
         # Distinct skip reason: neither env var nor secrets file has the key.
         return [_unavailable(f"Tier 3 skipped (no-api-key): {config.api_key_env} not found")]
+    except _TotalTimeoutError:
+        # Hard ceiling exceeded — not retried, distinct message.
+        return [_unavailable(
+            f"Tier 3 unavailable: total-timeout in {prong_name}"
+            f" ({config.total_timeout_s}s wall-clock budget exceeded)"
+        )]
     except urllib.error.HTTPError as exc:
         kind_label = f"http-{exc.code}"
         return [_unavailable(
