@@ -6,7 +6,7 @@
 
 > Spectre — a deterministic spec-driven Claude Code plugin. Vision → Spec → Evaluate → Lock → Implement → Verify, with three-tier pre-lock review and per-project resource locking.
 
-[![tests](https://img.shields.io/badge/tests-988%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![tests](https://img.shields.io/badge/tests-1268%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## Table of Contents
 
@@ -24,13 +24,21 @@
 
 Default Claude Code auto-memory drifts during long sessions: spec-level intent gets buried under terminal scroll-back, "what did I just change on disk" answers require re-reading logs that have already aged out of context, and the agent will happily power through a half-broken plan when nobody re-grounds it.
 
-Spectre overrides this with a deterministic state machine that drives an unbroken **vision → spec → evaluate → lock → implement → verify** chain. Two hooks own the context plane, two skills own the agent plane, and stdlib-only Python modules own the state plane (interrogation walker, observations log, personal-rules overrides, CDLC ledger, templates registry, template-patcher). See `CHANGELOG.md` for what each release added.
+Spectre overrides this with a deterministic state machine that drives an unbroken **vision → spec → evaluate → lock → implement → verify** chain. Two hooks own the context plane, two skills own the agent plane, and stdlib-only Python modules own the state plane (interrogation walker, observations log, personal-rules overrides, CDLC ledger, templates registry, template-patcher). See `CHANGELOG.md` for the full release log.
+
+**Recent releases:**
+
+- **v0.5.0** — heredoc-python elimination initiative complete: all 20 `python3 - <<'PY'` blocks in skill prose replaced with tested `python3 -m bin.<module> <subcommand>` CLIs. Drift-prevention CI guard added. 928 tests.
+- **v0.5.1** — patch from v0.5.0 live test: walker CLI subcommands (`get-state`, `peek-pending`, `answer-concern`, `stop`), scratchpad `ensure-v2`/`reset` CLIs, Tier 1 h3-header + brace-pattern fixes, Tier 3 split chunk/total timeouts. 988 tests.
+- **v0.5.2** — closes five deterministic gap classes (A–E) surfaced by yt-readable retest: executor-owned venv (`bin/managed_venv.py`), explicit step contracts (`produces:`/`requires:`, 8 types, `contract_resolution` in sidecar), Tier 1 syntax/artifact/import heuristics, Tier 3 contradiction-tuple protocol (single JSON API call, 10 kinds). `DEEPSEEK_MODEL` default changed from `deepseek-reasoner` → `deepseek-v4-flash`. Per Copilot/GPT-5.4 peer review (#32). 1109 tests.
+- **v0.6.0** — handoff envelope (`bin/handoff_envelope.py` + `bin/handoff_validator.py`): bytewise integrity (spec + sidecar SHA-256) enforced at implement start (Step 0.7 Tier 0 check). Walker yield countdown + negative-path concerns. Tier 1 `negative-paths:` enforcement. Tier 3 CoT faithfulness cite-and-verify pass after primary contradiction tuples. 1265 tests.
+- **v0.6.1** — PYTHONPATH consistency fix: all `python3 -m bin.X` in skill prose now carry `PYTHONPATH="${CLAUDE_PLUGIN_ROOT}"` prefix; CI sentinel added. 1268 tests.
 
 **The four invariants:**
 
 - **Spec is law.** `specs/.active` is an explicit instruction-pointer file. The hydrator re-injects exactly one spec on every session start — no mtime guessing, no scrollback archaeology.
 - **Steps are atomic transactions.** Every step has `why:` (first-principles justification, printed before execution), `action:` (the command), and `verification:` (a separate command that must exit 0 to prove the side effect). Soft verifications (`true`, `echo done`) are forbidden by the evaluator.
-- **Pre-lock review is mandatory.** Three tiers of validation run before a draft becomes the active spec: deterministic AST classifier (Tier 1, always), structural coverage gate (Tier 2, always), DeepSeek `deepseek-reasoner` adversarial reviewer (Tier 3, opt-in). Block-severity findings prevent lock. Tier 3 status is always surfaced — when it skips, the skip is visible (see "First-run setup" below).
+- **Pre-lock review is mandatory.** Three tiers of validation run before a draft becomes the active spec: deterministic AST classifier (Tier 1, always), structural coverage gate (Tier 2, always), DeepSeek `deepseek-v4-flash` adversarial reviewer (Tier 3, opt-in). Block-severity findings prevent lock. Tier 3 status is always surfaced — when it skips, the skip is visible (see "First-run setup" below).
 - **Spec authorship is interrogation, not transcription.** The interrogation walker treats authorship as a graph walk: the human supplies intent, the LLM walks the possibility-graph one concern at a time. The walker (`bin/walker.py`) refuses to prune branches biology lets humans skip and stops only when the author says so OR when adversarial review (Tier 3) stops finding new things. Output: a complete-enough spec authored in ~10 min instead of ~60 min.
 - **Risky steps halt by default.** A persistence-tier classifier gates every action: `silent` and `repo` execute freely; `host` and `network` halt and ask. The Never Autonomous list (sudo, rm -rf, systemctl mask, …) is a hard halt regardless of tier.
 
@@ -67,7 +75,7 @@ STATE: step=1 exit_code=0 last_command=None
 
 ### First-run setup — Tier 3 adversarial review (optional, ~$0.01/spec)
 
-Tier 3 runs DeepSeek's `deepseek-reasoner` model as an adversarial spec reviewer before lock. It catches missing context, factual errors, and attacker-view concerns the deterministic Tiers 1+2 can't see. **It is opt-in.** Tiers 1+2 always run for free.
+Tier 3 runs DeepSeek's `deepseek-v4-flash` model as an adversarial spec reviewer before lock. It catches missing context, factual errors, and attacker-view concerns the deterministic Tiers 1+2 can't see. **It is opt-in.** Tiers 1+2 always run for free.
 
 The first time you run `/vision`, the setup wizard fires automatically. It probes for a DeepSeek API key in this order:
 
@@ -87,7 +95,7 @@ echo 'DEEPSEEK_API_KEY=sk-...' > ~/.spectre/secrets.env
 chmod 600 ~/.spectre/secrets.env
 ```
 
-The key value is never copied into `reviewer.toml` — only the env-var name is stored. Each `/vision` draft with Tier 3 enabled makes ~3 API calls (~10–30s, ~$0.01–0.05). To re-enable after declining, edit `~/.spectre/reviewer.toml` and set `[tier3] enabled = true`.
+The key value is never copied into `reviewer.toml` — only the env-var name is stored. Each `/vision` draft with Tier 3 enabled makes 1 API call (contradiction-tuple protocol — single JSON-only prompt, ~10–30s, ~$0.01–0.05). To re-enable after declining, edit `~/.spectre/reviewer.toml` and set `[tier3] enabled = true`.
 
 ### Personal rules — adoptive halt overrides
 
@@ -198,6 +206,14 @@ Each step is an atomic transaction:
   verification: "curl -sf http://127.0.0.1:8080 > /dev/null"
   resources:                # OPTIONAL — auto-inferred from action when port:N pattern matches
     - res-port-8080
+  produces:                 # OPTIONAL — explicit step contracts (v0.5.2)
+    - file:/opt/myapp/server.py
+    - package:myapp
+  requires:                 # OPTIONAL — Tier 1 cross-validates against prior produces:
+    - package:myapp
+  negative-paths:           # OPTIONAL — Tier 1 warn/block on missing hazard handlers (v0.6.0)
+    - trigger: "port already bound"
+      handler: "kill existing occupant or fail fast"
   properties:               # OPTIONAL — State Auditor PBT-lite checks
     - kind: type
       target: "/path/to/output.json"
@@ -209,7 +225,7 @@ Each step is an atomic transaction:
       max: 10
 ```
 
-Soft verifications (`echo done`, `true`, `: ; …`) are rejected by the Tier 1 AST classifier. Resource IDs must match a node in `specs/.graph.md`. Properties run after `verification:` passes — auditor verdicts are informational, never blocking.
+Soft verifications (`echo done`, `true`, `: ; …`) are rejected by the Tier 1 AST classifier. Resource IDs must match a node in `specs/.graph.md`. Properties run after `verification:` passes — auditor verdicts are informational, never blocking. `produces:`/`requires:` support 8 contract types: `file:`, `package:`, `console-script:`, `route:`, `module:`, `binary:`, `db-table:`, `db-column:`. Mismatch → block-severity `unowned-requirement`.
 
 ### §8 Receiver Calibration (machine-enforced)
 
@@ -264,12 +280,17 @@ Written next to every locked spec for reproducibility:
   "findings": [...],
   "dismissals": [...],
   "config_hash": "<sha256 of resolved config>",
-  "deepseek_model_version": "deepseek-reasoner",
-  "policy_hash": "<sha256 of severity policy>"
+  "deepseek_model_version": "deepseek-v4-flash",
+  "policy_hash": "<sha256 of severity policy>",
+  "spec_sha256": "<sha256 of locked spec body>",
+  "sidecar_sha256": "<sha256 of this sidecar>",
+  "contract_resolution": {
+    "step-2-requires-package-foo": "step-1-produces-package-foo"
+  }
 }
 ```
 
-`policy_hash` covers the resolved severity table — if a project tightens severities mid-flight, the next spec's sidecar diverges from the prior one, and the gap is auditable.
+`policy_hash` covers the resolved severity table — if a project tightens severities mid-flight, the next spec's sidecar diverges from the prior one, and the gap is auditable. `spec_sha256` and `sidecar_sha256` are the bytewise integrity anchors written by the v0.6.0 handoff envelope. `contract_resolution` records how each `requires:` entry resolved to a prior step's `produces:` declaration.
 
 ### Layout
 
@@ -287,7 +308,7 @@ bin/
   spec_evaluator.py             /vision §6.4 review-bundle orchestrator
   spec_ast.py                   Tier 1 deterministic AST classifier
   coverage_gate.py              Tier 2 structural coverage gate
-  llm_judge.py                  Tier 3 DeepSeek deepseek-reasoner adversarial reviewer (split chunk/total timeouts)
+  llm_judge.py                  Tier 3 DeepSeek deepseek-v4-flash adversarial reviewer — contradiction-tuple protocol (single API call, 10 kinds + unrecognized fallback) + CoT faithfulness cite-and-verify pass (v0.6.0)
   findings.py                   Finding dataclass + stable fingerprint
   eval_metadata.py              .eval.json sidecar + policy hash
   adr.py                        ADR writer + graph supersedes-edge update
@@ -297,6 +318,14 @@ bin/
   auditor.py                    /implement §5.5 PBT-lite State Auditor
   supervisor.py                 per-project UDS daemon for resource locks
   track.py                      supervisor client (acquire/release/heartbeat)
+  managed_venv.py               executor-owned Python venv (v0.5.2 Gap E; normalize_action rewriter)
+  observations.py               TIER GATE halt recorder + recurrence finder (v0.4.1)
+  personal_rules.py             per-user halt-override TOML store + sandbox-paradox brake (v0.4.1)
+  cdlc_ledger.py                per-project CDLC transition log (v0.4.2)
+  templates.py                  template store import/export + list CLI (v0.4.2)
+  walker.py                     interrogation-walk state machine + yield countdown + negative-path concerns (v0.4.0/v0.5.1/v0.6.0)
+  handoff_envelope.py           JSON-Schema-validated vision→implement handoff with bytewise integrity (v0.6.0)
+  handoff_validator.py          Tier 0 envelope check on implement start (v0.6.0)
 skills/
   vision/SKILL.md               /vision protocol (Steps 0–7, ~350 lines)
   implement/SKILL.md            /implement protocol (Steps 0.5–7, ~320 lines)
@@ -311,7 +340,7 @@ decisions/                      ADR landing zone (NNNN-<slug>.md)
 docs/
   ARCHITECTURE.md               internal architecture overview
   superpowers/                  design specs + implementation plans (archival)
-tests/                          988 pytest tests, ~65s, stdlib + pytest only
+tests/                          1268 pytest tests, stdlib + pytest only
 ```
 
 ## Architecture
@@ -321,7 +350,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full breakdown: hook 
 ## Tests
 
 ```bash
-pytest tests/                  # 988 tests, ~65s, all stdlib + pytest
+pytest tests/                  # 1268 tests, all stdlib + pytest
 pytest tests/ -v               # verbose
 pytest tests/test_spec_evaluator.py -v   # single module
 ```
