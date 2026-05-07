@@ -30,6 +30,34 @@ KNOWN_KINDS = {
     "verification-syntax-error",
     "action-invokes-uncreated-artifact",
     "unowned-requirement-heuristic",
+    # v0.5.2 — Tier 3 contradiction tuple kinds (P4)
+    "missing-producer",
+    "shallow-ownership",
+    "ambiguous-contract",
+    "negative-path-omission",
+    "idempotency-risk",
+    "migration-on-existing-state",
+    "partial-failure-window",
+    "concurrency-race",
+    "verification-false-positive",
+    "tier3-contradiction-unrecognized",
+    "tier3-malformed-response",
+}
+
+# Severity mapping for Tier 3 contradiction tuple kinds (v0.5.2).
+# "block" = spec is provably broken; "warn" = needs attention; "info" = advisory.
+TIER3_CONTRADICTION_SEVERITY: dict[str, str] = {
+    "missing-producer": "block",
+    "shallow-ownership": "block",
+    "ambiguous-contract": "warn",
+    "negative-path-omission": "info",
+    "idempotency-risk": "info",
+    "migration-on-existing-state": "info",
+    "partial-failure-window": "warn",
+    "concurrency-race": "info",
+    "verification-false-positive": "warn",
+    "tier3-contradiction-unrecognized": "info",
+    "tier3-malformed-response": "warn",
 }
 
 SEVERITIES = {"block", "warn", "info"}
