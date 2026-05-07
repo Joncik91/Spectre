@@ -28,6 +28,8 @@
 > before execution. Only list invariants that your spec's actions must preserve
 > — not environment setup that Spectre owns.
 
+> **Spectre handoff envelope (v0.6+):** The lock step writes `specs/<slug>.envelope.json` carrying a SHA-256 integrity hash over the spec + sidecar + contracts. `/implement` verifies this hash on startup; mismatch halts execution. Specs must not modify `<slug>.envelope.json` directly — re-running `/vision` is the only legitimate way to update it.
+
 ## 6. Steps
 
 > **Python environment (v0.5.2+):** Spectre creates `state/.venv/` automatically.
@@ -41,6 +43,7 @@ Each step is an atomic transaction with three required keys plus optional contra
 - `verification:` the exact shell command that must exit 0 to prove the action succeeded.
 - `produces:` (optional) — list of contract entries this step creates. Each entry is `<type>:<value>`. The evaluator uses these to resolve later steps' `requires:` entries. Omitting produces/requires is allowed but emits a `missing-contract` warning (non-blocking).
 - `requires:` (optional) — list of contract entries this step needs. Every entry must appear in some prior step's `produces:`, or the evaluator emits an `unowned-requirement` block finding.
+- `negative-paths:` (optional, recommended for steps with `produces:`) — list of `{trigger, handler}` pairs declaring the expected failure branches for this step. `trigger` is a condition string (e.g. `"pip install fails (network or PEP 668)"`). `handler` is one of `"reject"` (fail the step immediately), `"escalate"` (halt and surface to the user for manual intervention), or a free-text recovery action. Missing `negative-paths:` on a step with `produces:` emits a `warn`-severity `missing-negative-path` finding. When §8.1 declares `reboot-survival: required`, missing `negative-paths:` on any step with `produces:` is **block-severity** — failure semantics are load-bearing when data-loss risk exists.
 - `properties:` (optional) — list of PBT-lite assertions the State Auditor will check after `verification` passes. Each property has `kind:` (one of `type` / `schema` / `length` / `range`), `target:` (path to a JSON file), and kind-specific fields. See `bin/auditor.py` for supported shapes. Auditor verdicts are informational, not blocking — they land in scratchpad and the next compact's additionalContext.
 - `resources:` (optional) — list of Resource node IDs this step needs to acquire before executing. Each entry is a string matching a Resource node in `specs/.graph.md`. The supervisor grants access; if at capacity, the track queues. Released automatically after the step's verification passes (or on terminal halt).
 
@@ -72,6 +75,11 @@ Each step is an atomic transaction with three required keys plus optional contra
     - "console-script:mypackage-cli"
   produces:
     - "file:/opt/mypackage/config.json"
+  negative-paths:                 # OPTIONAL — recommended when produces: is set; REQUIRED (block) when §8.1 reboot-survival: required
+    - trigger: "pip install fails (network or PEP 668)"
+      handler: "escalate"
+    - trigger: "package installs but import fails"
+      handler: "reject"
   properties:                     # OPTIONAL — auditor runs PBT-lite checks if present
     - kind: type                  # type | schema | length | range
       target: "/opt/mypackage/config.json"

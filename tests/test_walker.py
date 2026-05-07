@@ -14,12 +14,13 @@ def test_known_receivers_includes_four_canonical_names():
     assert set(walker.KNOWN_RECEIVERS) == {"implement", "tier3", "human", "deterministic"}
 
 
-def test_known_concern_kinds_is_closed_set_of_four():
+def test_known_concern_kinds_is_closed_set_of_five():
     assert set(walker.KNOWN_CONCERN_KINDS) == {
         "edge-case",
         "receiver-clarification",
         "assumption-surface",
         "branch-resolution",
+        "negative-path",
     }
 
 

@@ -32,6 +32,11 @@ Install completes in under 5 seconds on a warmed package cache.
   verification: "test -x /opt/hello/hello"
   produces:
     - "file:/opt/hello/hello"
+  negative-paths:
+    - trigger: "install fails (source binary missing)"
+      handler: "reject"
+    - trigger: "target directory /opt/hello/ not writable"
+      handler: "reject"
 
 - step: 2
   why: "systemd requires daemon-reload to see new unit files before enable/start."
@@ -39,6 +44,9 @@ Install completes in under 5 seconds on a warmed package cache.
   verification: "test -f /etc/systemd/system/hello.service"
   produces:
     - "file:/etc/systemd/system/hello.service"
+  negative-paths:
+    - trigger: "cp fails (source not found or target not writable)"
+      handler: "reject"
 
 - step: 3
   why: "Service must be enabled for reboot-survival and started for immediate effect."

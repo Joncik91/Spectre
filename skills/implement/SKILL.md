@@ -60,6 +60,22 @@ ERROR: track <name> has no active spec. Run /vision <track> first.
 
 For backward compat: a v1 scratchpad is auto-migrated to v2 by the SessionStart hydrator. Plain `/implement` on the migrated `default` track works without further changes.
 
+### Step 0.7 — Tier 0 handoff integrity check (v0.6+)
+
+Before reading the spec or executing any step, validate the handoff envelope:
+
+```bash
+python3 -m bin.handoff_validator check --project-path .
+```
+
+Stdout: one finding per line (e.g. `envelope-missing: pre-v0.6 spec, continuing`) or `ENVELOPE OK` when the envelope is present and valid. Exit code: `0` on OK or warn-only findings, `1` on block-severity violations.
+
+Behavior:
+- **`envelope-missing:`** (warn, exit 0) — pre-v0.6 locked spec; print the warning and continue. Re-run `/vision` to upgrade.
+- **`envelope-tampered:`** (block, exit 1) — spec/sidecar/contracts modified after lock. HALT. Tell the user to re-run `/vision`.
+- **`no active spec`** (block, exit 1) — HALT. Tell the user to run `/vision` first.
+- **schema violation** (block, exit 1) — HALT. The envelope file itself is malformed.
+
 ### Step 1 — Read context
 
 ```bash

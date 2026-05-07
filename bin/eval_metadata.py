@@ -51,6 +51,16 @@ DEFAULT_SEVERITIES: dict[str, str] = {
     "verification-syntax-error": "block",
     "action-invokes-uncreated-artifact": "block",
     "unowned-requirement-heuristic": "block",
+    # v0.6 — handoff envelope integrity kinds (P1)
+    "envelope-missing": "warn",
+    "envelope-tampered": "block",
+    "envelope-malformed": "block",
+    # v0.6 — walker/contract checks (P2)
+    "missing-negative-path": "warn",
+    "malformed-negative-path": "warn",
+    # v0.6 — Tier 3 CoT faithfulness check (P3)
+    "tier3-unfaithful-contradiction": "warn",
+    "tier3-faithfulness-malformed": "warn",
 }
 
 # Imported lazily at call sites to avoid circular imports in thin stdlib modules.
@@ -245,6 +255,30 @@ def write_sidecar(
     return sidecar_path
 
 
+# ---------------------------------------------------------------------------
+# write_envelope_alongside_sidecar  (v0.6)
+# ---------------------------------------------------------------------------
+
+def write_envelope_alongside_sidecar(
+    spec_path: pathlib.Path,
+    sidecar_path: pathlib.Path,
+    walk_path: pathlib.Path | None,
+    decisions_dir: pathlib.Path | None,
+) -> pathlib.Path:
+    """Build and write the v0.6 handoff envelope. Returns envelope path.
+
+    Called from the /vision skill's lock step after the sidecar has been written.
+    Imports handoff_envelope lazily to avoid circular-import risk in thin callers.
+    """
+    import importlib
+    he = importlib.import_module("handoff_envelope")
+
+    envelope = he.build(spec_path, sidecar_path, walk_path, decisions_dir)
+    envelope_path = he.envelope_path_for(pathlib.Path(spec_path))
+    he.write(envelope, envelope_path)
+    return envelope_path
+
+
 # ── CLI entrypoint ────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -289,6 +323,20 @@ if __name__ == "__main__":
         "--payload",
         default=None,
         help="Path to JSON payload file, or '-' / omitted to read from stdin.",
+    )
+
+    # ── write-envelope ────────────────────────────────────────────────────────
+    p_we = sub.add_parser(
+        "write-envelope",
+        help="Build and write the v0.6 handoff envelope for a spec file.",
+    )
+    p_we.add_argument("--spec", required=True, help="Path to the spec file (.spec.md, already locked).")
+    p_we.add_argument("--walk", default=None, help="Path to walker output JSON (.walk.json), optional.")
+    p_we.add_argument("--decisions-dir", default=None, help="Path to decisions/ directory, optional.")
+    p_we.add_argument(
+        "--sidecar",
+        default=None,
+        help="Path to sidecar .eval.json; defaults to <spec>.eval.json.",
     )
 
     # ── sha256 ────────────────────────────────────────────────────────────────
@@ -368,6 +416,24 @@ if __name__ == "__main__":
             print(f"ERROR: write failed: {exc}", file=sys.stderr)
             sys.exit(1)
         print(str(sidecar))
+
+    elif args.cmd == "write-envelope":
+        spec_path = pathlib.Path(args.spec)
+        if not spec_path.exists():
+            print(f"ERROR: spec file not found: {spec_path}", file=sys.stderr)
+            sys.exit(1)
+        sidecar_path = pathlib.Path(args.sidecar) if args.sidecar else sidecar_path_for(spec_path)
+        if not sidecar_path.exists():
+            print(f"ERROR: sidecar not found: {sidecar_path}", file=sys.stderr)
+            sys.exit(1)
+        walk_path = pathlib.Path(args.walk) if args.walk else None
+        decisions_dir = pathlib.Path(args.decisions_dir) if args.decisions_dir else None
+        try:
+            envelope_path = write_envelope_alongside_sidecar(spec_path, sidecar_path, walk_path, decisions_dir)
+        except (OSError, KeyError, ValueError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(str(envelope_path))
 
     elif args.cmd == "sha256":
         if args.stdin:
