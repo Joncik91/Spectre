@@ -4,9 +4,9 @@
 
 # spectre
 
-> SDL Vision Engine — a deterministic spec-driven Claude Code plugin. Vision → Spec → Evaluate → Lock → Implement → Verify, with three-tier pre-lock review and per-project resource locking.
+> Spectre — a deterministic spec-driven Claude Code plugin. Vision → Spec → Evaluate → Lock → Implement → Verify, with three-tier pre-lock review and per-project resource locking.
 
-[![tests](https://img.shields.io/badge/tests-664%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![tests](https://img.shields.io/badge/tests-988%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## Table of Contents
 
@@ -24,17 +24,15 @@
 
 Default Claude Code auto-memory drifts during long sessions: spec-level intent gets buried under terminal scroll-back, "what did I just change on disk" answers require re-reading logs that have already aged out of context, and the agent will happily power through a half-broken plan when nobody re-grounds it.
 
-Spectre overrides this with a deterministic state machine that drives an unbroken **vision → spec → evaluate → lock → implement → verify** chain. Two hooks own the context plane, two skills own the agent plane, and ~26 stdlib-only Python modules own the state plane (v0.4 added the interrogation walker, observations log, personal-rules overrides, CDLC ledger, templates registry, and template-patcher).
+Spectre overrides this with a deterministic state machine that drives an unbroken **vision → spec → evaluate → lock → implement → verify** chain. Two hooks own the context plane, two skills own the agent plane, and stdlib-only Python modules own the state plane (interrogation walker, observations log, personal-rules overrides, CDLC ledger, templates registry, template-patcher). See `CHANGELOG.md` for what each release added.
 
 **The four invariants:**
 
 - **Spec is law.** `specs/.active` is an explicit instruction-pointer file. The hydrator re-injects exactly one spec on every session start — no mtime guessing, no scrollback archaeology.
 - **Steps are atomic transactions.** Every step has `why:` (first-principles justification, printed before execution), `action:` (the command), and `verification:` (a separate command that must exit 0 to prove the side effect). Soft verifications (`true`, `echo done`) are forbidden by the evaluator.
 - **Pre-lock review is mandatory.** Three tiers of validation run before a draft becomes the active spec: deterministic AST classifier (Tier 1, always), structural coverage gate (Tier 2, always), DeepSeek `deepseek-reasoner` adversarial reviewer (Tier 3, opt-in). Block-severity findings prevent lock. Tier 3 status is always surfaced — when it skips, the skip is visible (see "First-run setup" below).
-- **Spec authorship is interrogation, not transcription.** v0.4 introduces an interrogation walker: the human supplies intent, the LLM walks the possibility-graph one concern at a time. The walker (`bin/walker.py`) refuses to prune branches biology lets humans skip and stops only when the author says so OR when adversarial review (Tier 3) stops finding new things. Output: a complete-enough spec authored in ~10 min instead of ~60 min.
+- **Spec authorship is interrogation, not transcription.** The interrogation walker treats authorship as a graph walk: the human supplies intent, the LLM walks the possibility-graph one concern at a time. The walker (`bin/walker.py`) refuses to prune branches biology lets humans skip and stops only when the author says so OR when adversarial review (Tier 3) stops finding new things. Output: a complete-enough spec authored in ~10 min instead of ~60 min.
 - **Risky steps halt by default.** A persistence-tier classifier gates every action: `silent` and `repo` execute freely; `host` and `network` halt and ask. The Never Autonomous list (sudo, rm -rf, systemctl mask, …) is a hard halt regardless of tier.
-
-Five named v1 failure modes — broad matcher, hydrator bloat, recursive failure, torn writes, log inflation — each have a code-level mitigation and a test. The v0.2.x and v0.3.0 releases added five more first-class concerns: drift detection, resource contention, ADR provenance, host-state coverage, and adversarial review.
 
 ## Install
 
@@ -79,7 +77,7 @@ The first time you run `/vision`, the setup wizard fires automatically. It probe
 
 **If a key is found**, the wizard prompts once: enable Tier 3 now? `yes` → writes `~/.spectre/reviewer.toml` with `enabled=true`. `no` → writes the same file with `enabled=false` so subsequent runs don't re-prompt.
 
-**If no key is found**, the wizard prints the setup instructions and asks `(retry / skip)`. Drop the key, type `retry`, and the wizard re-probes — no second `/vision` invocation needed.
+**If no key is found**, the wizard silently writes `enabled=false` and prints a one-line stderr breadcrumb pointing at `~/.spectre/secrets.env`. Tier 3 stays off until you drop the key and re-run `/vision`. No interactive prompts in the wizard — this keeps `/vision` safe in non-interactive contexts (subagents, scripts, paste-stdin).
 
 To get a key: <https://platform.deepseek.com/api_keys>. Then:
 
@@ -91,7 +89,7 @@ chmod 600 ~/.spectre/secrets.env
 
 The key value is never copied into `reviewer.toml` — only the env-var name is stored. Each `/vision` draft with Tier 3 enabled makes ~3 API calls (~10–30s, ~$0.01–0.05). To re-enable after declining, edit `~/.spectre/reviewer.toml` and set `[tier3] enabled = true`.
 
-### Personal rules — adoptive halt overrides (v0.4.1+)
+### Personal rules — adoptive halt overrides
 
 `~/.spectre/personal-rules.toml` accumulates user-adopted rule overrides. Every TIER GATE halt in `/implement` records a fingerprint to `~/.spectre/observations.jsonl`. After a halt where you reply `yes` and the action verifies, the skill prompts: **"Adopt this halt-class as personal-rule-skip? (adopt / once-only / never-ask-again)"**.
 
@@ -102,7 +100,7 @@ The key value is never copied into `reviewer.toml` — only the env-var name is 
 
 The setup wizard provisions an empty `personal-rules.toml` at first run.
 
-### Templates (v0.4.2+) — Distribute leg
+### Templates — Distribute leg
 
 `~/.spectre/templates/` holds reusable spec drafts and skills you can import into new projects.
 
@@ -116,9 +114,9 @@ python3 -c "from bin import templates; templates.import_template(source_name='my
 
 Imported specs land at `./specs/<target>.spec.md.draft` so the existing /vision interrogation walk still gates the lock. Imported skills land at `./skills/<target>.md`.
 
-The setup wizard provisions `~/.spectre/templates/{specs,skills}/` + `~/.spectre/template-patches/{proposed,accepted,rejected}/` at first run. Local-only — no remote sync in v0.4.2.
+The setup wizard provisions `~/.spectre/templates/{specs,skills}/` + `~/.spectre/template-patches/{proposed,accepted,rejected}/` at first run. Local-only — no remote sync.
 
-### Template-patches (v0.4.2+) — Adapt's auto-proposals
+### Template-patches — Adapt's auto-proposals
 
 When a TIER GATE halt fingerprint recurs ≥3 times across your projects without being adopted as a personal-rule, Spectre auto-proposes a markdown patch to your project's `specs/template.spec.md`. Patches land at `~/.spectre/template-patches/proposed/<slug>.md`. SessionStart surfaces the count.
 
@@ -261,12 +259,12 @@ Written next to every locked spec for reproducibility:
 
 ```json
 {
-  "evaluator_version": "0.3.0",
+  "evaluator_version": "0.5.1",
   "tiers_run": [1, 2, 3],
   "findings": [...],
   "dismissals": [...],
   "config_hash": "<sha256 of resolved config>",
-  "deepseek_model_version": "deepseek-v4-pro",
+  "deepseek_model_version": "deepseek-reasoner",
   "policy_hash": "<sha256 of severity policy>"
 }
 ```
@@ -276,7 +274,7 @@ Written next to every locked spec for reproducibility:
 ### Layout
 
 ```text
-.claude-plugin/plugin.json     plugin manifest (sdl-vision-engine v1.1.0)
+.claude-plugin/plugin.json     plugin manifest
 .claude-plugin/marketplace.json self-hosted marketplace manifest
 .spectre/reviewer.toml.example  Tier 3 + severity-overrides config sample
 hooks/hooks.json                hook bindings (uses ${CLAUDE_PLUGIN_ROOT})
@@ -289,7 +287,7 @@ bin/
   spec_evaluator.py             /vision §6.4 review-bundle orchestrator
   spec_ast.py                   Tier 1 deterministic AST classifier
   coverage_gate.py              Tier 2 structural coverage gate
-  llm_judge.py                  Tier 3 DeepSeek v4 Pro adversarial reviewer
+  llm_judge.py                  Tier 3 DeepSeek deepseek-reasoner adversarial reviewer (split chunk/total timeouts)
   findings.py                   Finding dataclass + stable fingerprint
   eval_metadata.py              .eval.json sidecar + policy hash
   adr.py                        ADR writer + graph supersedes-edge update
@@ -313,7 +311,7 @@ decisions/                      ADR landing zone (NNNN-<slug>.md)
 docs/
   ARCHITECTURE.md               internal architecture overview
   superpowers/                  design specs + implementation plans (archival)
-tests/                          439 pytest tests, ~5s, stdlib + pytest only
+tests/                          988 pytest tests, ~65s, stdlib + pytest only
 ```
 
 ## Architecture
@@ -323,7 +321,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full breakdown: hook 
 ## Tests
 
 ```bash
-pytest tests/                  # 439 tests, ~5s, all stdlib + pytest
+pytest tests/                  # 988 tests, ~65s, all stdlib + pytest
 pytest tests/ -v               # verbose
 pytest tests/test_spec_evaluator.py -v   # single module
 ```

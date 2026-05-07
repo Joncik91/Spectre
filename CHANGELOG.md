@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the SDL Vision Engine plugin (Spectre).
+All notable changes to the Spectre plugin.
 
 ## v0.5.1 — 2026-05-07
 

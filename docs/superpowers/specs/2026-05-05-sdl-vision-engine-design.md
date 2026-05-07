@@ -1,4 +1,4 @@
-# SDL Vision Engine — Design
+# Spectre — Design
 
 **Date:** 2026-05-05
 **Status:** Draft (awaiting user review)
