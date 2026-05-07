@@ -20,7 +20,20 @@
 ## 5. Physics Guardrails
 <Bullet list. System invariants that must remain true (filesystem state, root-level constraints, network reachability).>
 
+> **Spectre executor invariants (not spec-author obligations):** The executor
+> creates and manages `state/.venv/` automatically (v0.5.2+). Specs must not
+> declare a PEP 668 strategy (system Python, venv path,
+> `--break-system-packages`, pipx, etc.). All `python`/`python3`/`pip`/`pip3`
+> action tokens are rewritten to the venv interpreter by `normalize_action`
+> before execution. Only list invariants that your spec's actions must preserve
+> — not environment setup that Spectre owns.
+
 ## 6. Steps
+
+> **Python environment (v0.5.2+):** Spectre creates `state/.venv/` automatically.
+> Write bare `python3 script.py` or `pip install -e .` — the executor rewrites
+> them to use the venv interpreter. Do **not** hard-code `.venv/bin/python` or
+> declare `--break-system-packages` in actions.
 
 Each step is an atomic transaction with three required keys plus one optional:
 - `why:` one-line first-principles justification — *not* analogy. This is the "Reasoning in Public" line that gets printed before the action runs.

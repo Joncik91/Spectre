@@ -8,6 +8,14 @@ disable-model-invocation: false
 
 Triggered when the user types `/implement` (run next step), `/implement check` (verify current state without executing), or `/implement auto` (walk consecutive low-tier steps without re-prompting until a halt-worthy step). This is the **physical-build engine** of Spectre — it owns the action→verification→retry→advance cycle.
 
+## §6.0 Environment policy (v0.5.2+)
+
+Spectre owns the Python virtual environment. **Specs must not declare PEP 668 strategy** (system Python, venv path, `--break-system-packages`, `pipx`, etc.) — that is the executor's responsibility, not the spec author's.
+
+At the start of every `/implement` session the runner calls `ensure_venv` (see `bin/managed_venv.py`) which creates `state/.venv/` under the user's project root (mode 0700) on first use and is idempotent on subsequent calls. The resulting interpreter path is persisted to `state/scratchpad.json` as a top-level `venv_python` field so future sessions reuse it without re-running the venv check.
+
+Every step's `action:` and `verification:` strings are passed through `normalize_action` before execution. This rewrites bare `python`, `python3`, `pip`, and `pip3` tokens to use the venv interpreter — top-level shell tokens only (shlex-parsed), so absolute paths, heredoc blocks, and nested quoted strings are left untouched. If `ensure_venv` fails for any reason (missing `python3-venv`, out of disk, etc.), the skill **HALTs** with a clear error — it never falls back to system Python.
+
 ## Hard rules (read every invocation)
 
 - **All paths are user-project-cwd-relative.** Read `specs/.active` and `state/scratchpad.json` from the user's `pwd`, never from the plugin install dir (`${CLAUDE_PLUGIN_ROOT}` or `~/.claude/plugins/...`). If `pwd` looks like a plugin cache, HALT and tell the user to restart from their project directory.
@@ -75,6 +83,32 @@ SPEC COMPLETE: specs/<slug>.spec.md (all <N> steps verified).
 To start a new mission, run /vision.
 ```
 Do not execute anything further; do not modify the scratchpad.
+
+### Step 1.5 — Environment setup (v0.5.2+)
+
+After reading the active spec (Step 1) and before classifying the action (Step 3.5), ensure the executor-owned venv exists and normalize the step's invocations.
+
+**Once per `/implement` session** (skip if `venv_python` is already set in the scratchpad for this session):
+
+```bash
+python3 -m bin.managed_venv ensure \
+    --project-path . \
+    --scratchpad state/scratchpad.json
+```
+
+Stdout: `VENV_PYTHON: <absolute-path>`. The CLI creates `state/.venv/` (mode 0700) on first call, is idempotent on subsequent calls, and writes the interpreter path to `state/scratchpad.json["venv_python"]` via atomic write.
+
+If this command exits non-zero → **HALT immediately** with its stderr. Do not fall back to system Python.
+
+**On every step**, rewrite the step's `action:` and `verification:` strings through `normalize_action` before executing them. Use the `normalize` subcommand:
+
+```bash
+python3 -m bin.managed_venv normalize \
+    --action "<step action verbatim>" \
+    --venv-python "<venv_python from scratchpad>"
+```
+
+The rewritten string (stdout) is what gets executed and verified. Original spec text is unchanged.
 
 ### Step 2 — Pre-flight: re-verify previous step
 
