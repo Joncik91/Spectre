@@ -22,6 +22,10 @@ KNOWN_KINDS = {
     # v0.3.1 — Tier 1.5 spec_lint kinds
     "runuser-no-cd",
     "unsafe-heredoc",
+    # v0.5.2 — explicit step contracts
+    "unowned-requirement",
+    "missing-contract",
+    "malformed-contract",
 }
 
 SEVERITIES = {"block", "warn", "info"}
