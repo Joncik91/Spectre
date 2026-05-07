@@ -8,6 +8,7 @@ Public API:
 """
 import pathlib
 import re
+import shlex
 
 from bin import findings as _findings
 
@@ -383,6 +384,386 @@ def _check_receiver_calibration(body: str) -> list[_findings.Finding]:
     return results
 
 
+def _extract_python_c_bodies(text: str) -> list[str]:
+    """Return all bodies from `python3 -c <body>` invocations in *text*.
+
+    Uses shlex to tokenize the command so that quoted bodies with escaped
+    characters are handled correctly. Returns raw body strings (not yet
+    unescaped from the outer YAML quoting — that stripping happens in
+    _parse_steps_section before we receive the action string).
+    """
+    bodies: list[str] = []
+    try:
+        tokens = shlex.split(text)
+    except ValueError:
+        # Unmatched quotes — can't parse reliably; skip.
+        return bodies
+
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in ("python3", "python") and i + 1 < len(tokens):
+            j = i + 1
+            # Scan for -c token
+            while j < len(tokens):
+                t = tokens[j]
+                if t == "-c":
+                    # next token is the body
+                    if j + 1 < len(tokens):
+                        bodies.append(tokens[j + 1])
+                    break
+                elif t.startswith("-") and "c" in t and not t.startswith("--"):
+                    # combined flag like -mc; body is next token
+                    if j + 1 < len(tokens):
+                        bodies.append(tokens[j + 1])
+                    break
+                elif not t.startswith("-"):
+                    # Hit a non-flag positional — this python invocation ended
+                    break
+                j += 1
+        i += 1
+    return bodies
+
+
+def _check_python_c_syntax(
+    field_value: str, step_n: int, ref: str
+) -> list[_findings.Finding]:
+    """Check all `python3 -c <body>` bodies in *field_value* for SyntaxError.
+
+    Returns block-severity findings for each invalid body.
+    """
+    results: list[_findings.Finding] = []
+    bodies = _extract_python_c_bodies(field_value)
+    for body in bodies:
+        try:
+            compile(body, "<verification>", "exec")
+        except SyntaxError as exc:
+            loc_info = f"line {exc.lineno}, col {exc.offset}"
+            fragment = (exc.text or "").strip()
+            if len(fragment) > 40:
+                fragment = fragment[:37] + "..."
+            msg = (
+                f"Step {step_n} {ref} python3 -c body SyntaxError at "
+                f"{loc_info}: {fragment!r}"
+            )
+            if len(msg) > 140:
+                msg = msg[:137] + "..."
+            results.append(_findings.Finding(
+                tier=1,
+                kind="verification-syntax-error",
+                severity="block",
+                location=_findings.FindingLocation(
+                    scope="step", step=step_n, ref=ref
+                ),
+                message=msg,
+                suggested_fix="Each statement in python3 -c must be on its own line (use \\n).",
+            ))
+    return results
+
+
+# ── §8.1 mutates: field parser ─────────────────────────────────────────────────
+
+def _parse_mutates_paths(body: str) -> list[str]:
+    """Extract paths listed under §8.1 `mutates:` field.
+
+    Returns list of path strings (may be empty).
+    """
+    m81 = re.search(r"^#{2,3}\s+8\.1\b.*$", body, re.MULTILINE)
+    if not m81:
+        return []
+    block_start = m81.end()
+    next_h = re.search(r"^#{2,3} ", body[block_start:], re.MULTILINE)
+    block_81 = body[block_start : block_start + next_h.start()] if next_h else body[block_start:]
+
+    m = re.search(r"^\s*[`-]?\s*`?mutates:`?\s*(.*)", block_81, re.MULTILINE)
+    if not m:
+        return []
+    raw = m.group(1).strip()
+    # Handle list syntax like [/tmp/, /opt/] or bare /tmp/ /opt/
+    raw = raw.strip("[]")
+    # Split on commas or whitespace
+    parts = re.split(r"[,\s]+", raw)
+    paths = [p.strip().rstrip("/") for p in parts if p.strip() and p.strip() != "none"]
+    return paths
+
+
+def _action_authored_path(action: str) -> list[str]:
+    """Heuristic: return file paths that the action plausibly *creates/writes*.
+
+    Looks for:
+    - heredoc targets: `cat > /path <<EOF` or `tee /path <<EOF`
+    - explicit cp/install destination: last path arg
+    - Any > /path or >> /path redirects (file writes)
+
+    Note: mkdir is intentionally excluded — it creates directories, NOT files
+    within them. Keeping mkdir paths out prevents false "authored" matches
+    when a subsequent step invokes a file inside the created directory.
+
+    Returns a list of created/written file paths.
+    """
+    created: list[str] = []
+    # Redirect writes: > /path or >> /path
+    for m in re.finditer(r"(?:>>?)\s*(/[a-zA-Z0-9_/.-]+)", action):
+        created.append(m.group(1))
+    # cat > /path <<EOF  (heredoc)
+    for m in re.finditer(r"\bcat\s+>\s*(/[a-zA-Z0-9_/.-]+)", action):
+        created.append(m.group(1))
+    # tee /path
+    for m in re.finditer(r"\btee\s+(/[a-zA-Z0-9_/.-]+)", action):
+        created.append(m.group(1))
+    # cp src /dest  — destination is the last abs path
+    for m in re.finditer(r"\bcp\s+\S+\s+(/[a-zA-Z0-9_/.-]+)", action):
+        created.append(m.group(1))
+    # install ... /dest
+    for m in re.finditer(r"\binstall\b[^&|;]*\s(/[a-zA-Z0-9_/.-]+)(?:\s|$)", action):
+        created.append(m.group(1))
+    return created
+
+
+def _module_path_candidates(module: str) -> list[str]:
+    """Convert dotted module `foo.bar.baz` to candidate path suffixes.
+
+    Returns patterns that a prior step's authored path could match.
+    """
+    parts = module.replace("-", "_").split(".")
+    slash_path = "/".join(parts)
+    return [
+        f"{slash_path}.py",
+        f"{slash_path}/__init__.py",
+    ]
+
+
+def _check_action_invokes_uncreated_artifact(
+    steps: list[dict],
+    mutates_paths: list[str],
+) -> list[_findings.Finding]:
+    """Gap A: block if an action invokes an absolute path under mutates: that no
+    prior step authored.
+
+    Also checks `python3 -m foo.bar.baz` — converts to path candidates and
+    checks prior-step authorship.
+    """
+    results: list[_findings.Finding] = []
+    # Track paths authored by each step (cumulative)
+    authored: list[str] = []  # all paths authored by steps seen so far
+
+    for step in steps:
+        step_n: int = step["step"]  # type: ignore[assignment]
+        action: str = step.get("action", "")  # type: ignore[assignment]
+        if not action:
+            authored.append("")  # placeholder so index stays in sync
+            continue
+
+        # --- Check invocations BEFORE updating authored (prior steps only) ---
+
+        # 1. Absolute path invocations: `python3 /abs/path`, `bash /abs/path`
+        for m in re.finditer(
+            r"\b(?:python3?|bash|sh|node|ruby|perl)\s+(/[a-zA-Z0-9_/.-]+\.(?:py|sh|rb|js|pl))",
+            action,
+        ):
+            invoked_path = m.group(1)
+            # Only flag if the path is under a mutates: directory
+            if not any(invoked_path.startswith(mp) for mp in mutates_paths):
+                continue
+            # Check if any prior step authored this exact file path
+            if invoked_path in authored:
+                continue
+            msg = (
+                f"Step {step_n} invokes {invoked_path!r} but no prior step authored it."
+            )
+            if len(msg) > 140:
+                msg = msg[:137] + "..."
+            results.append(_findings.Finding(
+                tier=1,
+                kind="action-invokes-uncreated-artifact",
+                severity="block",
+                location=_findings.FindingLocation(
+                    scope="step", step=step_n, ref="action"
+                ),
+                message=msg,
+                suggested_fix="Add a prior step that creates the invoked path via heredoc/cp.",
+            ))
+
+        # 2. Module invocations: `python3 -m foo.bar.baz`
+        for m in re.finditer(r"\bpython3?\s+-m\s+([\w.]+)", action):
+            module = m.group(1)
+            candidates = _module_path_candidates(module)
+            # Only flag if at least one candidate is under a mutates: dir
+            under_mutates = any(
+                any(cand.startswith(mp.lstrip("/")) or mp in cand
+                    for mp in mutates_paths)
+                for cand in candidates
+            )
+            if not under_mutates:
+                continue
+            # Check if any prior step mentions a matching path
+            prior_text = " ".join(authored)
+            if any(cand in prior_text for cand in candidates):
+                continue
+            msg = (
+                f"Step {step_n} invokes module {module!r} but no prior step authored "
+                f"its source."
+            )
+            if len(msg) > 140:
+                msg = msg[:137] + "..."
+            results.append(_findings.Finding(
+                tier=1,
+                kind="action-invokes-uncreated-artifact",
+                severity="block",
+                location=_findings.FindingLocation(
+                    scope="step", step=step_n, ref="action"
+                ),
+                message=msg,
+                suggested_fix="Add a prior step that creates the module source file.",
+            ))
+
+        # --- Now record what this step authors ---
+        authored.extend(_action_authored_path(action))
+
+    return results
+
+
+# ── Gap C: unowned-requirement (e2e assertion without authoring prior step) ────
+
+# Patterns that imply a runtime capability being asserted
+_CURL_ROUTE_RE = re.compile(
+    r"\bcurl\b[^|&;]*(?:localhost|127\.0\.0\.1)[^|&;]*/([a-zA-Z0-9_/.-]+)"
+)
+_CURL_GREP_RE = re.compile(r"\bcurl\b[^|]*\|\s*grep\s+['\"]?([^'\"|\s]+)")
+_SQL_SELECT_RE = re.compile(
+    r"\bSELECT\b[^;]*\bFROM\b\s+(\w+)\b[^;]*\bWHERE\b[^;]*\b(\w+)\b\s*=",
+    re.IGNORECASE,
+)
+_PYTHON_IMPORT_RE = re.compile(
+    r"python3?\s+-c\s+['\"]from\s+([\w.]+)\s+import"
+)
+_PYTHON_IMPORT_ALT_RE = re.compile(
+    r"python3?\s+-c\s+['\"]import\s+([\w.]+)"
+)
+
+
+def _check_unowned_requirement(steps: list[dict]) -> list[_findings.Finding]:
+    """Gap C: block if a verification asserts runtime behavior (route, HTML, DB,
+    import) that no prior step's action authored.
+
+    Conservative: emit block only for clear mismatches; warn when uncertain.
+    """
+    results: list[_findings.Finding] = []
+    # Accumulate all prior-step action text as a corpus
+    prior_actions: list[str] = []
+
+    for step in steps:
+        step_n: int = step["step"]  # type: ignore[assignment]
+        verification: str = step.get("verification", "")  # type: ignore[assignment]
+        action: str = step.get("action", "")  # type: ignore[assignment]
+
+        prior_corpus = " ".join(prior_actions)
+
+        if verification:
+            # ── 1. curl route assertion ──────────────────────────────────────
+            for m in _CURL_ROUTE_RE.finditer(verification):
+                route = "/" + m.group(1)
+                # Check if any prior action mentions this route
+                if route not in prior_corpus:
+                    msg = (
+                        f"Step {step_n} verifies route {route!r} but no prior "
+                        f"step authored it."
+                    )
+                    if len(msg) > 140:
+                        msg = msg[:137] + "..."
+                    results.append(_findings.Finding(
+                        tier=1,
+                        kind="unowned-requirement",
+                        severity="block",
+                        location=_findings.FindingLocation(
+                            scope="step", step=step_n, ref="verification"
+                        ),
+                        message=msg,
+                        suggested_fix="Add a prior step that authors the route handler.",
+                    ))
+
+            # ── 2. curl | grep HTML token ────────────────────────────────────
+            for m in _CURL_GREP_RE.finditer(verification):
+                token = m.group(1).strip("'\"")
+                # Only flag tokens that look like HTML tags (contain < or end with >)
+                # e.g. '<sidebar>', '<div>', 'div>' — not plain words like 'ok', 'true'
+                if "<" not in token and not token.endswith(">"):
+                    continue
+                if token not in prior_corpus:
+                    msg = (
+                        f"Step {step_n} greps HTML token {token!r} but no prior "
+                        f"step authored it."
+                    )
+                    if len(msg) > 140:
+                        msg = msg[:137] + "..."
+                    results.append(_findings.Finding(
+                        tier=1,
+                        kind="unowned-requirement",
+                        severity="block",
+                        location=_findings.FindingLocation(
+                            scope="step", step=step_n, ref="verification"
+                        ),
+                        message=msg,
+                        suggested_fix="Add a prior step that authors the HTML element.",
+                    ))
+
+            # ── 3. SQL SELECT asserting on table+column ──────────────────────
+            for m in _SQL_SELECT_RE.finditer(verification):
+                table = m.group(1)
+                column = m.group(2)
+                # Check if any prior action mentions the table+column
+                if table not in prior_corpus or column not in prior_corpus:
+                    missing = table if table not in prior_corpus else column
+                    msg = (
+                        f"Step {step_n} queries {missing!r} but no prior step "
+                        f"authored it."
+                    )
+                    if len(msg) > 140:
+                        msg = msg[:137] + "..."
+                    results.append(_findings.Finding(
+                        tier=1,
+                        kind="unowned-requirement",
+                        severity="block",
+                        location=_findings.FindingLocation(
+                            scope="step", step=step_n, ref="verification"
+                        ),
+                        message=msg,
+                        suggested_fix="Add a prior step that creates the table/column.",
+                    ))
+
+            # ── 4. python3 -c "from module import ..." ──────────────────────
+            for m in _PYTHON_IMPORT_RE.finditer(verification):
+                module = m.group(1)
+                # Convert to path candidates for prior-step check
+                candidates = _module_path_candidates(module)
+                if not any(cand in prior_corpus for cand in candidates):
+                    # Also check plain module name mention in prior actions
+                    mod_top = module.split(".")[0]
+                    if mod_top not in prior_corpus:
+                        msg = (
+                            f"Step {step_n} imports {module!r} but no prior step "
+                            f"authored its source."
+                        )
+                        if len(msg) > 140:
+                            msg = msg[:137] + "..."
+                        results.append(_findings.Finding(
+                            tier=1,
+                            kind="unowned-requirement",
+                            severity="block",
+                            location=_findings.FindingLocation(
+                                scope="step", step=step_n, ref="verification"
+                            ),
+                            message=msg,
+                            suggested_fix="Add a prior step that creates the module.",
+                        ))
+
+        # Record this step's action in the prior corpus for subsequent steps
+        if action:
+            prior_actions.append(action)
+
+    return results
+
+
 def classify(spec_path: pathlib.Path) -> list[_findings.Finding]:
     """Tier 1 deterministic classifier. Returns Finding list (possibly empty).
 
@@ -449,10 +830,24 @@ def classify(spec_path: pathlib.Path) -> list[_findings.Finding]:
                         suggested_fix="Add a check on the path written by the action.",
                     ))
 
+        # Check 5 (Gap D): python3 -c syntax check in action and verification
+        if action:
+            results.extend(_check_python_c_syntax(action, step_n, "action"))
+        if verification:
+            results.extend(_check_python_c_syntax(verification, step_n, "verification"))
+
     # ── Check 4: missing-receiver-calibration ────────────────────────────────
     results.extend(_check_receiver_calibration(body))
 
     # ── Check 5: step contracts (produces/requires) ───────────────────────────
     results.extend(_check_step_contracts(steps))
+
+    # ── Check 6 (Gap A): action invokes uncreated artifact ───────────────────
+    mutates_paths = _parse_mutates_paths(body)
+    if mutates_paths:
+        results.extend(_check_action_invokes_uncreated_artifact(steps, mutates_paths))
+
+    # ── Check 7 (Gap C): unowned-requirement (e2e assertions) ────────────────
+    results.extend(_check_unowned_requirement(steps))
 
     return results

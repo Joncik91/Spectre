@@ -43,10 +43,14 @@ DEFAULT_SEVERITIES: dict[str, str] = {
     "tier3-attacker-view": "warn",
     "tier3-spec-asserts-wrong": "warn",
     "tier3-unavailable": "info",
-    # v0.5.2 — explicit step contracts
+    # v0.5.2 — explicit step contracts (P3)
     "unowned-requirement": "block",
     "missing-contract": "warn",
     "malformed-contract": "warn",
+    # v0.5.2 — Tier 1 deterministic gap-closers (P1)
+    "verification-syntax-error": "block",
+    "action-invokes-uncreated-artifact": "block",
+    "unowned-requirement-heuristic": "block",
 }
 
 # Imported lazily at call sites to avoid circular imports in thin stdlib modules.
