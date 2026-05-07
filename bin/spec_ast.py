@@ -719,10 +719,37 @@ def _check_unowned_requirement(steps: list[dict]) -> list[_findings.Finding]:
     import) that no prior step's action authored.
 
     Conservative: emit block only for clear mismatches; warn when uncertain.
+    Skips findings that are already covered by an explicit P3 produces: contract
+    on any step — the machine-readable channel shadows the heuristic.
     """
     results: list[_findings.Finding] = []
     # Accumulate all prior-step action text as a corpus
     prior_actions: list[str] = []
+
+    # P1↔P3 integration: collect every produces: entry across all steps so
+    # explicit contracts shadow the heuristic.  Build sets of declared
+    # package/module names, route paths, and file paths.
+    declared_packages: set[str] = set()
+    declared_modules: set[str] = set()
+    declared_routes: set[str] = set()
+    declared_files: set[str] = set()
+    for s in steps:
+        for entry in s.get("produces", []) or []:
+            if not isinstance(entry, str) or ":" not in entry:
+                continue
+            kind, _, value = entry.partition(":")
+            value = value.strip()
+            if kind == "package":
+                declared_packages.add(value)
+            elif kind == "module":
+                declared_modules.add(value)
+            elif kind == "route":
+                _, _, route_path = value.partition(" ")
+                if route_path:
+                    declared_routes.add(route_path.strip())
+                declared_routes.add(value.strip())
+            elif kind == "file":
+                declared_files.add(value)
 
     for step in steps:
         step_n: int = step["step"]  # type: ignore[assignment]
@@ -739,6 +766,9 @@ def _check_unowned_requirement(steps: list[dict]) -> list[_findings.Finding]:
                 route = m.group(1)
                 # Skip universal health/probe routes — no authorship required.
                 if route in _CURL_ROUTE_ALLOWLIST:
+                    continue
+                # P3 contract shadows: skip if any step's produces declares this route
+                if route in declared_routes:
                     continue
                 # Check if any prior action mentions this route
                 if route not in prior_corpus:
@@ -837,9 +867,12 @@ def _check_unowned_requirement(steps: list[dict]) -> list[_findings.Finding]:
                 # since project packages dominate this form)
                 for im in _PYTHON_IMPORT_RE.finditer(body_text):
                     module = im.group(1)
+                    mod_top = module.split(".")[0]
+                    # P3 contract shadows: skip if any step declares this package/module
+                    if mod_top in declared_packages or module in declared_modules:
+                        continue
                     candidates = _module_path_candidates(module)
                     if not any(cand in prior_corpus for cand in candidates):
-                        mod_top = module.split(".")[0]
                         if mod_top not in prior_corpus:
                             msg = (
                                 f"Step {step_n} imports {module!r} but no prior "
@@ -863,6 +896,9 @@ def _check_unowned_requirement(steps: list[dict]) -> list[_findings.Finding]:
                     mod_top = module.split(".")[0]
                     # Skip stdlib modules — only flag project packages
                     if mod_top in _STDLIB_TOPS:
+                        continue
+                    # P3 contract shadows: skip if any step declares this package/module
+                    if mod_top in declared_packages or module in declared_modules:
                         continue
                     candidates = _module_path_candidates(module)
                     if not any(cand in prior_corpus for cand in candidates):
