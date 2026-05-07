@@ -443,7 +443,7 @@ if __name__ == "__main__":
         "stop",
         help="Set stop_reason on the walk state.",
     )
-    p_st.add_argument("--reason", required=True, help="Stop reason string.")
+    p_st.add_argument("--reason", required=True, help=f"Stop reason. Canonical: {', '.join(STOP_REASONS)} (other strings accepted).")
     p_st.add_argument(
         "--state-path",
         default="state/.walk.json",
