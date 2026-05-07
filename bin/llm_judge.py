@@ -118,11 +118,15 @@ _PROMPTS = [
 
 
 class _TotalTimeoutError(Exception):
-    """Raised when the total wall-clock budget for a _call_deepseek call is exceeded.
+    """Raised when the wall-clock total budget is exhausted.
 
-    This is NOT retryable — it is a hard ceiling, not a transient network stall.
-    The error fires via a threading.Timer that closes the active HTTP connection
-    and then raises here to unblock the reading thread.
+    The Timer thread that fires this tags ``_total_exc`` and calls ``resp.close()``,
+    but ``urllib.urlopen().read()`` does not unblock immediately when its socket is
+    closed externally on Linux.  The read blocks until the per-recv ``chunk_timeout_s``
+    fires, then checks ``_total_exc`` and re-raises this error.  Worst-case abort
+    latency is ``total_timeout_s + chunk_timeout_s`` (e.g. ~660s with defaults).
+
+    Not retried — propagates immediately past the retry layer.
     """
 
 
