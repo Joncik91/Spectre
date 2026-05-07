@@ -2,6 +2,51 @@
 
 All notable changes to the SDL Vision Engine plugin (Spectre).
 
+## v0.5.1 — 2026-05-07
+
+**Patch release from a v0.5.0 end-to-end live test — 5 issues filed, all closed. Net effect: every code path the live test exercised now succeeds without runtime heredoc fallback or schema guessing.**
+
+### Summary
+
+Discovered during a v0.5.0 end-to-end live test that surfaced walker mid-walk mutations still happening via in-process Python calls in skill prose, scratchpad reset still hand-rolling JSON in the /vision lock step, the Tier 1 parser rejecting h3-headed §8.1 blocks and unexpanded brace patterns, and Tier 3 using a single timeout for both per-chunk recv and total wall-clock budget. All five issues closed in this patch.
+
+### Added
+
+- **`bin/walker.py`** — 4 new subcommands (closes #22, #23):
+  - `get-state --state-path p [--json]` — full state dump; use in place of schema-discovery dance (#23).
+  - `peek-pending --state-path p [--json]` — return next concern body without consuming it (#23).
+  - `answer-concern --id <id> --answer <str> --state-path p` — record an answer atomically; replaces `walker.record_answer` in-process call (#22).
+  - `append-concern --id <id> --kind <k> --receiver <r> --summary <s> --state-path p` — append a final-pass concern; replaces runtime heredoc mutation of `state/.walk.json` (#22).
+  - `stop --reason <author-arbitrated|tier3-yield-converged|max-rounds|per-receiver-exhausted> --state-path p` — set stop reason atomically (#22).
+  - `--json` flag on `init-or-resume` (existing subcommand) — structured JSON stdout instead of prose line (#23).
+- **`bin/_scratchpad.py`** — 2 new subcommands (closes #26):
+  - `ensure-v2 --scratchpad p` — promote v1 scratchpad to v2 schema; no-op if already v2.
+  - `reset --active-spec <path> --scratchpad p` — atomic track reset (`step=1`, all counters zeroed) for the active spec; replaces hand-rolled v2 dict Write in `/vision` lock step.
+
+### Fixed
+
+- **Tier 1 parser fragility** (closes #24): `spec_evaluator.parse_81_block` now accepts h2 (`## 8.1`) or h3 (`### 8.1`) for the §8.1 header, expands brace patterns (`{a,b}` → two paths), and strips markdown bold/code markers from path lines before matching. Previously, specs that used h3 or inline backticks in path lists produced false-positive `missing-81-block` findings.
+- **Tier 3 timeout split** (closes #25): `bin/llm_judge.py` (`_TierThreeReviewer`) now uses two distinct timeouts — `chunk_timeout_s = 60` (per-recv socket timeout) and `total_timeout_s = 600` (total wall-clock abort). The old `timeout_s` key reads as `chunk_timeout_s` alias for backward compatibility. Wizard (`bin/setup_wizard.py`) writes both keys on new installs.
+
+### Changed
+
+- `skills/vision/SKILL.md` — Step 4 walk loop replaced in-process `walker.next_concern`, `walker.record_answer`, `walker.revise_answer`, `walker.should_stop`, and `state.stop_reason =` mutations with explicit `peek-pending`, `answer-concern`, `get-state`, and `stop` CLI invocations. Step 6.7 scratchpad reset replaced hand-rolled v2 JSON Write with `ensure-v2` + `reset` CLI calls.
+- `skills/implement/SKILL.md` — no prose changes this patch (implement prose was already CLI-driven from v0.5.0).
+
+### Tests
+
+988 total (was 928 at v0.5.0; +60 across 5 issues' test suites).
+
+### References
+
+Closes #22, #23, #24, #25, #26.
+
+### Migration
+
+Existing users with `timeout_s = 180` in `~/.spectre/reviewer.toml` keep that value as `chunk_timeout_s` via back-compat alias — no action required. To pick up the new `total_timeout_s = 600` wall-clock budget, either edit `~/.spectre/reviewer.toml` manually to add `total_timeout_s = 600` under `[tier3]`, or `rm ~/.spectre/reviewer.toml` and re-run `/vision` to let the wizard rewrite both keys.
+
+---
+
 ## v0.5.0 — 2026-05-07
 
 **Final v0.5.0 release. Phase 2D of issue #13 closes the heredoc-python replacement initiative — every `python3 - <<'PY' ... PY` block in `skills/**/SKILL.md` is now a tested `python3 -m bin.<module> <subcommand>` invocation against a CLI surface, or a native harness tool call. An entire bug class (path drift, hash drift, escape-layer fragility, scratchpad-schema-blind reads) is gone from the prose surface.**

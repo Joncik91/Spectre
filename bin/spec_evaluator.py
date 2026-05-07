@@ -40,7 +40,7 @@ from bin import eval_metadata as _eval_metadata
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-EVALUATOR_VERSION = "0.5.0"
+EVALUATOR_VERSION = "0.5.1"
 TIER1_TIMEOUT_MS = 100
 TIER2_TIMEOUT_S = 2
 TIER3_TIMEOUT_S = 180  # legacy default — now used as chunk_timeout_s fallback
