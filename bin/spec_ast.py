@@ -141,7 +141,8 @@ def _check_receiver_calibration(body: str) -> list[_findings.Finding]:
 
     # Check for §8 section presence
     has_section = bool(re.search(r"^## 8\. Receiver Calibration", body, re.MULTILINE))
-    has_81 = bool(re.search(r"^### 8\.1", body, re.MULTILINE))
+    # Accept h2 (## 8.1) OR h3 (### 8.1) with optional trailing parenthetical
+    has_81 = bool(re.search(r"^#{2,3}\s+8\.1\b", body, re.MULTILINE))
 
     if not has_section or not has_81:
         results.append(_findings.Finding(
@@ -154,8 +155,8 @@ def _check_receiver_calibration(body: str) -> list[_findings.Finding]:
         ))
         return results  # No point checking fields if section absent
 
-    # Find §8.1 block (from ### 8.1 until next ### or ## heading or EOF)
-    m81 = re.search(r"^### 8\.1.*$", body, re.MULTILINE)
+    # Find §8.1 block (from ## 8.1 or ### 8.1 until next ### or ## heading or EOF)
+    m81 = re.search(r"^#{2,3}\s+8\.1\b.*$", body, re.MULTILINE)
     if not m81:
         results.append(_findings.Finding(
             tier=1,
