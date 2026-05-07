@@ -845,3 +845,101 @@ def test_setup_wizard_writes_both_timeouts(tmp_path):
         if ln.strip().startswith("timeout_s")
     ]
     assert lines_with_bare_timeout == [], f"Unexpected bare timeout_s line: {lines_with_bare_timeout}"
+
+
+# ---------------------------------------------------------------------------
+# 39. Integration: total_timeout aborts within total_timeout_s + chunk_timeout_s
+#     Uses a real HTTPServer that hangs mid-stream to exercise real socket semantics.
+# ---------------------------------------------------------------------------
+
+
+def test_total_timeout_aborts_within_total_plus_chunk_window(monkeypatch):
+    """Wall-clock abort lands between total_timeout_s and total_timeout_s + chunk_timeout_s.
+
+    This test exercises real socket close semantics — not a mock — to validate
+    the _TotalTimeoutError abort-latency documented in its docstring.
+    """
+    import http.server
+    import socketserver
+
+    # chunk_timeout_s must be LARGER than total_timeout_s so the total-timeout
+    # Timer fires during resp.read() before the per-recv socket timeout does.
+    # On Linux, resp.close() from the Timer does not immediately unblock read();
+    # read() continues blocking until chunk_timeout_s fires (~5s), then detects
+    # _total_exc and raises _TotalTimeoutError.  Worst-case elapsed: total + chunk.
+    chunk_timeout_s = 5
+    total_timeout_s = 3
+
+    # Event lets the handler block without using time.sleep (which monkeypatch
+    # may affect).  The server teardown sets this event to unblock any handlers
+    # still waiting when the test ends.
+    _handler_unblock = threading.Event()
+
+    class _HangingHandler(http.server.BaseHTTPRequestHandler):
+        """Returns HTTP 200 + a tiny chunk, then hangs in the response body."""
+
+        def do_POST(self):  # noqa: N802
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            # Claim a large body so urllib blocks reading it; we only send a tiny
+            # chunk and then hang — forcing resp.read() to block until the
+            # total_timeout_s fires and closes the connection.
+            self.send_header("Content-Length", "100000")
+            self.end_headers()
+            self.wfile.write(b"X")  # tiny chunk to confirm the connection is live
+            self.wfile.flush()
+            # Hang until explicitly unblocked by test teardown (or 60s guard).
+            _handler_unblock.wait(timeout=60)
+
+        def log_message(self, fmt, *args):  # silence request logs in test output
+            pass
+
+    # Bind to an OS-assigned free port.
+    # ThreadingTCPServer so each incoming connection gets its own handler thread;
+    # without this the single-threaded server blocks during the hang and rejects
+    # retry connections (causing chunk_timeout_s to fire on connect, not on read).
+    server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _HangingHandler)
+    server.allow_reuse_address = True
+    port = server.server_address[1]
+
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    try:
+        monkeypatch.setenv("TEST_DEEPSEEK_KEY", "fake-key-for-tests")
+        # Patch only llm_judge's backoff sleep — NOT the global time.sleep used
+        # by the server handler above.
+        monkeypatch.setattr("bin.llm_judge.time.sleep", lambda _d: None)
+
+        cfg = llm_judge.JudgeConfig(
+            enabled=True,
+            api_key_env="TEST_DEEPSEEK_KEY",
+            model="deepseek-reasoner",
+            base_url=f"http://127.0.0.1:{port}",
+            chunk_timeout_s=chunk_timeout_s,
+            total_timeout_s=total_timeout_s,
+        )
+        prompts = {"system": "s", "user": "u"}
+
+        t0 = time.monotonic()
+        with pytest.raises(llm_judge._TotalTimeoutError):
+            llm_judge._call_deepseek(prompts, config=cfg)
+        elapsed = time.monotonic() - t0
+
+        # Lower bound: total_timeout_s must have elapsed before the error fires.
+        assert elapsed >= total_timeout_s, (
+            f"Abort too early: {elapsed:.2f}s < total_timeout_s={total_timeout_s}s"
+        )
+        # Upper bound: must finish within total + chunk + 2.0s scheduling epsilon.
+        # On Linux, resp.close() from the Timer does not immediately unblock urllib's
+        # read(); the read blocks until chunk_timeout_s fires, then detects _total_exc.
+        # The extra 2.0s covers OS scheduling jitter.  With total=3, chunk=5 the
+        # expected elapsed is ~3s (timer fires) + up to ~5s (chunk fires) = ~8s max.
+        upper = total_timeout_s + chunk_timeout_s + 2.0
+        assert elapsed <= upper, (
+            f"Abort too slow: {elapsed:.2f}s > {upper}s "
+            f"(total={total_timeout_s}s + chunk={chunk_timeout_s}s + 2.0s epsilon)"
+        )
+    finally:
+        _handler_unblock.set()  # unblock any handler still waiting
+        server.shutdown()
+        server_thread.join(timeout=5)
