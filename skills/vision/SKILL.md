@@ -347,6 +347,17 @@ Now that the user confirmed and ADRs are written:
    python3 -m bin.spec_evaluator clear-bundle --bundle state/.eval-bundle.json
    ```
 
+6. **Write the handoff envelope** (v0.6+). The envelope is the Vision→Implement handoff artifact: it carries a SHA-256 integrity hash over the locked spec, sidecar, contract resolution, and indexed ADR paths. `/implement` verifies this hash at Tier 0 on startup — a mismatch halts execution before any spec content is read. Re-running `/vision` is the only legitimate way to regenerate the envelope. The envelope file is additive (does not replace the sidecar) and sits alongside it at `specs/<slug>.envelope.json`. Per v0.6 design — see CHANGELOG.
+
+   ```bash
+   python3 -m bin.eval_metadata write-envelope \
+       --spec "$SPEC_PATH" \
+       --walk state/.walk.json \
+       --decisions-dir decisions
+   ```
+
+   Stdout: `ENVELOPE: specs/<slug>.envelope.json` on success. If the envelope is invalid (schema violation, integrity hash mismatch), the CLI exits non-zero and prints `ENVELOPE INVALID: <violations>` — treat as a lock failure and halt. Do not lock the spec if the envelope write fails.
+
 **Append CDLC ledger transition (v0.4.2+).** Record a `generate` transition (lock event):
 
 ```bash
