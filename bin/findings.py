@@ -49,6 +49,9 @@ KNOWN_KINDS = {
     # v0.6 — walker/contract checks (P2)
     "missing-negative-path",
     "malformed-negative-path",
+    # v0.6 — Tier 3 CoT faithfulness check (P3)
+    "tier3-unfaithful-contradiction",
+    "tier3-faithfulness-malformed",
 }
 
 # Severity mapping for Tier 3 contradiction tuple kinds (v0.5.2).
@@ -65,6 +68,9 @@ TIER3_CONTRADICTION_SEVERITY: dict[str, str] = {
     "verification-false-positive": "warn",
     "tier3-contradiction-unrecognized": "info",
     "tier3-malformed-response": "warn",
+    # v0.6 — Tier 3 CoT faithfulness check (P3)
+    "tier3-unfaithful-contradiction": "warn",
+    "tier3-faithfulness-malformed": "warn",
 }
 
 SEVERITIES = {"block", "warn", "info"}

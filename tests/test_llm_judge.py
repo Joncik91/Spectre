@@ -160,17 +160,24 @@ def test_evaluate_contradiction_findings_are_dismissable(mock_urlopen, monkeypat
 @mock.patch("urllib.request.urlopen")
 def test_evaluate_missing_producer_tuple_produces_block_finding(mock_urlopen, monkeypatch):
     _env(monkeypatch)
+    # Use step 1 (exists in _SPEC_WITH_STEPS with "run pip install foo" action).
     tuples = [
-        {"kind": "missing-producer", "consumer_step": 5, "missing": "package:foo",
-         "rationale": "step 5 verification imports foo, no earlier step produces it"},
+        {"kind": "missing-producer", "consumer_step": 1, "missing": "package:foo",
+         "rationale": "step 1 verification imports foo, no earlier step produces it"},
     ]
-    mock_urlopen.return_value = _make_contradiction_resp(tuples)
-    result = llm_judge.evaluate(_SPEC, config=_CFG)
-    assert len(result) == 1
-    f = result[0]
+    # Primary call returns the block tuple; cite call returns a matching citation.
+    cite_resp = json.dumps([{"index": 0, "step": 1, "citation": "run pip install foo"}])
+    mock_urlopen.side_effect = [
+        _make_contradiction_resp(tuples),
+        _make_raw_resp(cite_resp),
+    ]
+    result = llm_judge.evaluate(_SPEC_WITH_STEPS, config=_CFG)
+    block_findings = [f for f in result if f.kind == "missing-producer"]
+    assert len(block_findings) == 1
+    f = block_findings[0]
     assert f.kind == "missing-producer"
     assert f.severity == "block"
-    assert f.location.step == 5
+    assert f.location.step == 1
 
 
 # ---------------------------------------------------------------------------
@@ -204,16 +211,23 @@ def test_evaluate_unrecognized_tuple_produces_info_finding(mock_urlopen, monkeyp
 @mock.patch("urllib.request.urlopen")
 def test_evaluate_shallow_ownership_tuple_produces_block_finding(mock_urlopen, monkeypatch):
     _env(monkeypatch)
+    # Use step 2 (exists in _SPEC_WITH_STEPS with "systemctl start myapp" action).
     tuples = [
-        {"kind": "shallow-ownership", "step": 3,
+        {"kind": "shallow-ownership", "step": 2,
          "claimed": "file:server.py",
          "actual": "scaffold only",
-         "rationale": "step 7 verification expects /api/convert which step 3 never writes"},
+         "rationale": "step 2 verification expects systemctl is-active which step 2 never writes"},
     ]
-    mock_urlopen.return_value = _make_contradiction_resp(tuples)
-    result = llm_judge.evaluate(_SPEC, config=_CFG)
-    assert len(result) == 1
-    assert result[0].severity == "block"
+    # Primary call returns block tuple; cite call returns a matching citation.
+    cite_resp = json.dumps([{"index": 0, "step": 2, "citation": "systemctl start myapp"}])
+    mock_urlopen.side_effect = [
+        _make_contradiction_resp(tuples),
+        _make_raw_resp(cite_resp),
+    ]
+    result = llm_judge.evaluate(_SPEC_WITH_STEPS, config=_CFG)
+    block_findings = [f for f in result if f.kind == "shallow-ownership"]
+    assert len(block_findings) == 1
+    assert block_findings[0].severity == "block"
 
 
 # ---------------------------------------------------------------------------

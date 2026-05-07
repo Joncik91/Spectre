@@ -625,6 +625,207 @@ def _unavailable(message: str) -> Finding:
     )
 
 
+# ── CoT faithfulness check ────────────────────────────────────────────────────
+
+# Kinds that get the cite-and-verify second pass (block-severity contradiction kinds).
+_BLOCK_CONTRADICTION_KINDS = frozenset({"missing-producer", "shallow-ownership"})
+
+# System prompt for the cite-and-verify pass.
+_FAITHFULNESS_SYSTEM_PROMPT = """\
+You previously emitted these contradiction tuples on a spec. For each one, cite \
+the step number AND a short verbatim excerpt (≤80 chars) from that step's action \
+or verification text that backs your claim. If you cannot cite supporting text \
+from the spec, say so explicitly with citation: null.
+
+Output JSON only — array of objects matching the order of the input tuples:
+[
+  {"index": 0, "step": 5, "citation": "import yt_readable.server"},
+  {"index": 1, "step": null, "citation": null},
+  ...
+]"""
+
+# User prompt template for the cite-and-verify pass.
+_FAITHFULNESS_USER_TEMPLATE = """\
+Contradiction tuples to verify:
+{tuples_json}
+
+Spec step table:
+{step_table_json}
+"""
+
+
+def _faithfulness_demote_finding(original: Finding) -> Finding:
+    """Return a demoted copy of a block-severity contradiction finding (warn, tier3-unfaithful-contradiction)."""
+    msg = f"citation not found in spec; demoted from block: {original.message}"[:findings.MAX_MESSAGE_LEN]
+    return Finding(
+        tier=3,
+        kind="tier3-unfaithful-contradiction",
+        severity="warn",
+        location=original.location,
+        message=msg,
+        dismissable=True,
+    )
+
+
+def _faithfulness_malformed_finding() -> Finding:
+    """Return a tier3-faithfulness-malformed finding when cite response is unparseable."""
+    return Finding(
+        tier=3,
+        kind="tier3-faithfulness-malformed",
+        severity="warn",
+        location=_SPEC_WIDE,
+        message="Tier 3 cite-and-verify response was not valid JSON; block tuples kept as-is",
+        dismissable=False,
+    )
+
+
+def _verify_block_tuples_with_citations(
+    tuple_findings: list[Finding],
+    step_table: dict,
+    *,
+    config: JudgeConfig,
+) -> list[Finding]:
+    """Run a second batched API call to verify block-severity contradiction tuples.
+
+    For each finding whose kind is in _BLOCK_CONTRADICTION_KINDS, asks DeepSeek to
+    cite the step number and verbatim text that backs its claim.  If the citation
+    cannot be found (substring match, case-insensitive) in the step's
+    action_summary + verification_summary, the tuple is demoted from block → warn
+    with kind ``tier3-unfaithful-contradiction``.
+
+    Non-block findings pass through unchanged.
+    Zero block findings → returns input list unchanged without any API call.
+    Parse failure on cite response → appends ``tier3-faithfulness-malformed`` warn;
+    all block tuples remain block (conservative: couldn't verify, so don't demote).
+
+    Args:
+        tuple_findings: Output from _parse_contradiction_findings / _run_contradiction_prompt.
+        step_table: The same step table sent to the primary prompt (has ``steps`` list).
+        config: JudgeConfig for API calls.
+
+    Returns a new finding list with the same non-block findings plus either
+    verified-or-demoted block findings.
+    """
+    # Separate block (verifiable) from non-block (pass through).
+    block_indices: list[int] = []
+    for idx, f in enumerate(tuple_findings):
+        if f.kind in _BLOCK_CONTRADICTION_KINDS and f.severity == "block":
+            block_indices.append(idx)
+
+    # Short-circuit: nothing to verify.
+    if not block_indices:
+        return list(tuple_findings)
+
+    # Build a minimal representation of block findings to send to DeepSeek.
+    block_summaries = []
+    for i, orig_idx in enumerate(block_indices):
+        f = tuple_findings[orig_idx]
+        block_summaries.append({
+            "index": i,
+            "kind": f.kind,
+            "step": f.location.step,
+            "message": f.message,
+        })
+
+    # Build step lookup: step_number -> {action_summary, verification_summary}.
+    step_lookup: dict[int, dict] = {}
+    for entry in step_table.get("steps", []):
+        sn = entry.get("step")
+        if sn is not None:
+            step_lookup[int(sn)] = entry
+
+    tuples_json = json.dumps(block_summaries, indent=2)
+    step_table_json = json.dumps(step_table, indent=2)
+    prompts = {
+        "system": _FAITHFULNESS_SYSTEM_PROMPT,
+        "user": _FAITHFULNESS_USER_TEMPLATE.format(
+            tuples_json=tuples_json,
+            step_table_json=step_table_json,
+        ),
+    }
+
+    try:
+        content = _call_deepseek(prompts, config=config)
+    except Exception:
+        # Any network/auth failure: return originals unchanged + malformed warning.
+        result = list(tuple_findings)
+        result.append(_faithfulness_malformed_finding())
+        return result
+
+    # Parse cite-and-verify JSON response.
+    try:
+        parsed = json.loads(content)
+        if isinstance(parsed, dict):
+            # Unwrap common wrapper keys.
+            for key in ("citations", "results", "items"):
+                if key in parsed and isinstance(parsed[key], list):
+                    parsed = parsed[key]
+                    break
+            else:
+                for v in parsed.values():
+                    if isinstance(v, list):
+                        parsed = v
+                        break
+                else:
+                    raise ValueError("no top-level list found in cite response dict")
+        if not isinstance(parsed, list):
+            raise ValueError(f"expected list, got {type(parsed).__name__}")
+    except (json.JSONDecodeError, ValueError):
+        # Parse failure: keep block tuples as-is, add malformed warning.
+        result = list(tuple_findings)
+        result.append(_faithfulness_malformed_finding())
+        return result
+
+    # Build cite lookup by index (as returned by DeepSeek).
+    cite_lookup: dict[int, dict] = {}
+    for item in parsed:
+        if isinstance(item, dict):
+            idx = item.get("index")
+            if idx is not None:
+                try:
+                    cite_lookup[int(idx)] = item
+                except (TypeError, ValueError):
+                    pass
+
+    # Build result: substitute demoted findings where citation fails.
+    result = list(tuple_findings)
+    for i, orig_idx in enumerate(block_indices):
+        original_finding = tuple_findings[orig_idx]
+        cite_entry = cite_lookup.get(i)
+
+        should_demote = False
+        if cite_entry is None:
+            # No citation returned for this tuple → demote.
+            should_demote = True
+        else:
+            cited_step = cite_entry.get("step")
+            cited_text = cite_entry.get("citation")
+            if cited_step is None or cited_text is None:
+                should_demote = True
+            else:
+                # Verify citation substring exists in the step's action+verification.
+                try:
+                    step_entry = step_lookup.get(int(cited_step))
+                except (TypeError, ValueError):
+                    step_entry = None
+
+                if step_entry is None:
+                    should_demote = True
+                else:
+                    haystack = (
+                        step_entry.get("action_summary", "") + " "
+                        + step_entry.get("verification_summary", "")
+                    ).lower()
+                    needle = str(cited_text).lower()
+                    if needle not in haystack:
+                        should_demote = True
+
+        if should_demote:
+            result[orig_idx] = _faithfulness_demote_finding(original_finding)
+
+    return result
+
+
 # ── Single contradiction-oriented prompt runner ───────────────────────────────
 
 def _run_contradiction_prompt(
@@ -716,4 +917,7 @@ def evaluate(
         return [_unavailable("Tier 3 skipped: spec exceeds budget")]
 
     step_table = build_step_table(spec_text, step_objects=step_objects)
-    return _run_contradiction_prompt(step_table, config=config)
+    primary_findings = _run_contradiction_prompt(step_table, config=config)
+    # Second pass: cite-and-verify for block-severity tuples (v0.6 faithfulness check).
+    # Zero extra cost when no block tuples; one batched call otherwise.
+    return _verify_block_tuples_with_citations(primary_findings, step_table, config=config)

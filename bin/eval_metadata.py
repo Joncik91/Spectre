@@ -58,6 +58,9 @@ DEFAULT_SEVERITIES: dict[str, str] = {
     # v0.6 — walker/contract checks (P2)
     "missing-negative-path": "warn",
     "malformed-negative-path": "warn",
+    # v0.6 — Tier 3 CoT faithfulness check (P3)
+    "tier3-unfaithful-contradiction": "warn",
+    "tier3-faithfulness-malformed": "warn",
 }
 
 # Imported lazily at call sites to avoid circular imports in thin stdlib modules.
