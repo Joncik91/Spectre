@@ -1,6 +1,8 @@
 """Tests for bin/handoff_validator.py — Tier 0 /implement startup integrity check."""
+import hashlib
 import json
 import pathlib
+import subprocess
 import sys
 
 import pytest
@@ -181,7 +183,100 @@ class TestEnvelopeTampered:
 
 
 # ---------------------------------------------------------------------------
-# Malformed schema
+# B1: spec.md content modification detected after lock
+# ---------------------------------------------------------------------------
+
+class TestSpecContentTampering:
+    """B1 — byte-level spec hash catches out-of-band edits to spec.md."""
+
+    def test_modified_spec_bytes_returns_tampered(self, tmp_path):
+        project = _make_project(tmp_path)
+        spec, _sidecar, _env_path = _lock_spec(project)
+        # Mutate one byte in spec.md after envelope was locked
+        spec.write_bytes(spec.read_bytes() + b"\n# injected")
+        result = handoff_validator.validate_on_implement_start(project)
+        assert len(result) == 1
+        assert result[0].startswith("envelope-tampered:")
+        assert "spec content modified" in result[0]
+
+    def test_modified_spec_bytes_mentions_vision(self, tmp_path):
+        project = _make_project(tmp_path)
+        spec, _sidecar, _env_path = _lock_spec(project)
+        spec.write_bytes(b"# completely different content\n")
+        result = handoff_validator.validate_on_implement_start(project)
+        assert "/vision" in result[0]
+
+    def test_unmodified_spec_passes(self, tmp_path):
+        project = _make_project(tmp_path)
+        _lock_spec(project)
+        result = handoff_validator.validate_on_implement_start(project)
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# B2: sidecar tampering with preserved policy_hash is detected
+# ---------------------------------------------------------------------------
+
+class TestSidecarContentTampering:
+    """B2 — byte-level sidecar hash catches forge-with-same-policy_hash attacks."""
+
+    def test_sidecar_modified_same_policy_hash_returns_tampered(self, tmp_path):
+        project = _make_project(tmp_path)
+        _spec, sidecar_path, _env_path = _lock_spec(project)
+        # Forge sidecar: preserve policy_hash but add a new dismissals entry
+        data = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        assert data["policy_hash"] == "a" * 64  # unchanged
+        data["dismissals"] = [{"forged": True}]
+        sidecar_path.write_text(json.dumps(data), encoding="utf-8")
+        result = handoff_validator.validate_on_implement_start(project)
+        assert len(result) == 1
+        assert result[0].startswith("envelope-tampered:")
+        assert "sidecar modified" in result[0]
+
+    def test_sidecar_policy_hash_drift_still_detected(self, tmp_path):
+        """Existing policy_hash drift check is subsumed by bytewise — still fails."""
+        project = _make_project(tmp_path)
+        _spec, sidecar_path, _env_path = _lock_spec(project)
+        new_data = {
+            "evaluator_version": "0.6.0",
+            "tiers_run": [1],
+            "policy_hash": "c" * 64,  # drifted policy_hash
+            "findings_summary": {"block_count": 0, "warn_count": 0, "info_count": 0, "dismissed_t3_count": 0},
+            "dismissals": [],
+            "deepseek_model_version": None,
+            "locked_at": "2026-05-07T01:00:00Z",
+        }
+        sidecar_path.write_text(json.dumps(new_data), encoding="utf-8")
+        result = handoff_validator.validate_on_implement_start(project)
+        assert result[0].startswith("envelope-tampered:")
+
+
+# ---------------------------------------------------------------------------
+# B3: sidecar deletion detected (no silent pass)
+# ---------------------------------------------------------------------------
+
+class TestSidecarDeletion:
+    """B3 — deleting sidecar post-lock must return envelope-tampered, not []."""
+
+    def test_deleted_sidecar_returns_tampered(self, tmp_path):
+        project = _make_project(tmp_path)
+        _spec, sidecar_path, _env_path = _lock_spec(project)
+        sidecar_path.unlink()
+        result = handoff_validator.validate_on_implement_start(project)
+        assert len(result) == 1
+        assert result[0].startswith("envelope-tampered:")
+        assert "sidecar" in result[0]
+
+    def test_deleted_sidecar_message_mentions_vision(self, tmp_path):
+        project = _make_project(tmp_path)
+        _spec, sidecar_path, _env_path = _lock_spec(project)
+        sidecar_path.unlink()
+        result = handoff_validator.validate_on_implement_start(project)
+        assert "/vision" in result[0]
+
+
+# ---------------------------------------------------------------------------
+# Malformed schema — violations now prefixed with "envelope-malformed:" (W2)
 # ---------------------------------------------------------------------------
 
 class TestMalformedSchema:
@@ -194,7 +289,18 @@ class TestMalformedSchema:
         stored["integrity_hash"] = handoff_envelope.compute_integrity_hash(stored)
         handoff_envelope.write(stored, env_path)
         result = handoff_validator.validate_on_implement_start(project)
-        assert "missing field: receiver" in result
+        # W2: prefixed with "envelope-malformed:"
+        assert any("envelope-malformed: missing field: receiver" == v for v in result)
+
+    def test_schema_violations_prefixed_with_envelope_malformed(self, tmp_path):
+        project = _make_project(tmp_path)
+        _spec, _sidecar, env_path = _lock_spec(project)
+        stored = handoff_envelope.read(env_path)
+        stored["protocol_version"] = "0.5"
+        stored["integrity_hash"] = handoff_envelope.compute_integrity_hash(stored)
+        handoff_envelope.write(stored, env_path)
+        result = handoff_validator.validate_on_implement_start(project)
+        assert all(v.startswith("envelope-malformed:") for v in result)
 
     def test_envelope_wrong_protocol_version_returns_violation(self, tmp_path):
         project = _make_project(tmp_path)
@@ -205,3 +311,114 @@ class TestMalformedSchema:
         handoff_envelope.write(stored, env_path)
         result = handoff_validator.validate_on_implement_start(project)
         assert any("protocol_version" in v for v in result)
+
+
+# ---------------------------------------------------------------------------
+# W1: CLI smoke tests
+# ---------------------------------------------------------------------------
+
+_BIN_DIR = pathlib.Path(__file__).parent.parent / "bin"
+
+
+class TestValidatorCLI:
+    """CLI smoke tests for `python3 -m bin.handoff_validator check --project-path`."""
+
+    def test_cli_check_clean_exits_zero(self, tmp_path):
+        project = _make_project(tmp_path)
+        _lock_spec(project)
+        result = subprocess.run(
+            [sys.executable, str(_BIN_DIR / "handoff_validator.py"), "check", "--project-path", str(project)],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""
+
+    def test_cli_check_tampered_exits_one(self, tmp_path):
+        project = _make_project(tmp_path)
+        spec, _sidecar, _env_path = _lock_spec(project)
+        spec.write_bytes(b"# tampered\n")
+        result = subprocess.run(
+            [sys.executable, str(_BIN_DIR / "handoff_validator.py"), "check", "--project-path", str(project)],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 1
+        assert "envelope-tampered:" in result.stdout
+
+    def test_cli_check_envelope_missing_exits_zero(self, tmp_path):
+        """envelope-missing is warn-level — CLI exits 0."""
+        project = _make_project(tmp_path)
+        specs_dir = project / "specs"
+        _make_spec(specs_dir)
+        _make_sidecar(specs_dir, "foo.spec.md")
+        _write_active(project, "specs/foo.spec.md")
+        result = subprocess.run(
+            [sys.executable, str(_BIN_DIR / "handoff_validator.py"), "check", "--project-path", str(project)],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0
+        assert "envelope-missing:" in result.stdout
+
+
+class TestEvalMetadataCLIWriteEnvelope:
+    """CLI smoke tests for `python3 -m bin.eval_metadata write-envelope`."""
+
+    def test_write_envelope_creates_envelope_file(self, tmp_path):
+        specs_dir = tmp_path / "specs"
+        specs_dir.mkdir()
+        spec = specs_dir / "foo.spec.md"
+        spec.write_text("# spec\n", encoding="utf-8")
+        sidecar = specs_dir / "foo.spec.md.eval.json"
+        sidecar.write_text(json.dumps({
+            "evaluator_version": "0.6.0",
+            "tiers_run": [1],
+            "policy_hash": "a" * 64,
+            "findings_summary": {"block_count": 0, "warn_count": 0, "info_count": 0, "dismissed_t3_count": 0},
+            "dismissals": [],
+            "deepseek_model_version": None,
+            "locked_at": "2026-05-07T00:00:00Z",
+        }), encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(_BIN_DIR / "eval_metadata.py"), "write-envelope",
+             "--spec", str(spec)],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        envelope_path = pathlib.Path(result.stdout.strip())
+        assert envelope_path.exists()
+        envelope = json.loads(envelope_path.read_text())
+        assert "spec_sha256" in envelope
+        assert "sidecar_sha256" in envelope
+        assert "integrity_hash" in envelope
+
+    def test_write_envelope_with_explicit_sidecar(self, tmp_path):
+        specs_dir = tmp_path / "specs"
+        specs_dir.mkdir()
+        spec = specs_dir / "bar.spec.md"
+        spec.write_text("# bar spec\n", encoding="utf-8")
+        sidecar = tmp_path / "custom.eval.json"
+        sidecar.write_text(json.dumps({
+            "evaluator_version": "0.6.0",
+            "tiers_run": [1],
+            "policy_hash": "b" * 64,
+            "findings_summary": {"block_count": 0, "warn_count": 0, "info_count": 0, "dismissed_t3_count": 0},
+            "dismissals": [],
+            "deepseek_model_version": None,
+            "locked_at": "2026-05-07T00:00:00Z",
+        }), encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(_BIN_DIR / "eval_metadata.py"), "write-envelope",
+             "--spec", str(spec), "--sidecar", str(sidecar)],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        envelope_path = pathlib.Path(result.stdout.strip())
+        assert envelope_path.exists()
+
+    def test_write_envelope_missing_spec_exits_one(self, tmp_path):
+        result = subprocess.run(
+            [sys.executable, str(_BIN_DIR / "eval_metadata.py"), "write-envelope",
+             "--spec", str(tmp_path / "nonexistent.spec.md")],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 1
+        assert "ERROR" in result.stderr

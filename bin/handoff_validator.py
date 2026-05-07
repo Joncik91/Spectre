@@ -7,10 +7,17 @@ Returns list of violations. Empty list = pass.
 Distinguish between warn-level (envelope-missing) and block-level (envelope-tampered).
 Callers inspect the message prefix to determine severity.
 
+Violation prefixes:
+  "no active spec"          — no .active pointer
+  "envelope-missing:"       — warn, pre-v0.6 spec
+  "envelope-tampered:"      — block, spec/sidecar modified after lock
+  "envelope-malformed:"     — block, schema violation in envelope
+
 Stdlib only. Python 3.11+.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import pathlib
 import sys
@@ -62,15 +69,14 @@ def validate_on_implement_start(project_path: pathlib.Path) -> list[str]:
     except (json.JSONDecodeError, OSError) as exc:
         return [f"envelope-tampered: cannot read envelope: {exc}"]
 
-    # Step 5: Schema validation first
+    # Step 5: Schema validation first — prefix violations with "envelope-malformed:"
     schema_violations = handoff_envelope.validate(stored_envelope)
     if schema_violations:
-        return schema_violations
+        return [f"envelope-malformed: {v}" for v in schema_violations]
 
-    # Step 6: Recompute integrity hash from stored envelope fields
-    # (The stored envelope contains spec_path, sidecar_path, walker fields, etc.
-    # We recompute from the stored envelope content itself — the hash covers all
-    # fields except integrity_hash, so any mutation of those fields will be caught.)
+    # Step 6: Recompute integrity hash from stored envelope fields.
+    # The hash covers all fields except integrity_hash itself, including the new
+    # spec_sha256 / sidecar_sha256 fields — any envelope-field mutation is caught here.
     claimed_hash = stored_envelope.get("integrity_hash", "")
     recomputed_hash = handoff_envelope.compute_integrity_hash(stored_envelope)
 
@@ -79,23 +85,94 @@ def validate_on_implement_start(project_path: pathlib.Path) -> list[str]:
             "envelope-tampered: spec/sidecar/contracts modified after lock — re-run /vision"
         ]
 
-    # Also verify spec and sidecar still exist and match what was locked
+    # Step 7: Bytewise spec verification (fixes B1).
+    # Compare spec bytes on disk against the hash captured at lock time.
+    # This catches out-of-band edits to spec.md after the envelope was written.
+    locked_spec_sha256 = stored_envelope.get("spec_sha256")
+    if locked_spec_sha256 is not None:
+        try:
+            current_spec_sha256 = hashlib.sha256(spec_path.read_bytes()).hexdigest()
+        except OSError:
+            return [
+                "envelope-tampered: spec file missing or unreadable after lock — re-run /vision"
+            ]
+        if current_spec_sha256 != locked_spec_sha256:
+            return [
+                "envelope-tampered: spec content modified after lock — re-run /vision"
+            ]
+
+    # Step 8: Bytewise sidecar verification (fixes B2 and B3).
+    # None means the envelope was written before sidecar-hashing was added (pre-v0.6.1);
+    # in that case fall back to the legacy policy_hash-only check below.
+    locked_sidecar_sha256 = stored_envelope.get("sidecar_sha256")
     sidecar_path_str = stored_envelope.get("sidecar_path", "")
     sidecar_path = pathlib.Path(sidecar_path_str) if sidecar_path_str else None
 
-    # Re-read current sidecar to detect post-lock drift
-    if sidecar_path is not None and sidecar_path.exists():
+    if locked_sidecar_sha256 is not None:
+        # sidecar_sha256 was recorded at lock time — must still exist and match (fixes B3).
+        if sidecar_path is None or not sidecar_path.exists():
+            return [
+                "envelope-tampered: sidecar deleted after lock — re-run /vision"
+            ]
         try:
-            current_sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
-            current_policy_hash = current_sidecar.get("policy_hash", "")
-        except (json.JSONDecodeError, OSError):
+            current_sidecar_sha256 = hashlib.sha256(sidecar_path.read_bytes()).hexdigest()
+        except OSError:
             return [
-                "envelope-tampered: spec/sidecar/contracts modified after lock — re-run /vision"
+                "envelope-tampered: sidecar unreadable after lock — re-run /vision"
             ]
-
-        if current_policy_hash != stored_envelope.get("policy_hash", ""):
+        if current_sidecar_sha256 != locked_sidecar_sha256:
             return [
-                "envelope-tampered: spec/sidecar/contracts modified after lock — re-run /vision"
+                "envelope-tampered: sidecar modified after lock — re-run /vision"
             ]
+    else:
+        # Legacy fallback: envelope predates sidecar byte-hashing.
+        # Check policy_hash only (weaker, but avoids false positives on pre-v0.6.1 envelopes).
+        if sidecar_path is not None and sidecar_path.exists():
+            try:
+                current_sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+                current_policy_hash = current_sidecar.get("policy_hash", "")
+            except (json.JSONDecodeError, OSError):
+                return [
+                    "envelope-tampered: spec/sidecar/contracts modified after lock — re-run /vision"
+                ]
+            if current_policy_hash != stored_envelope.get("policy_hash", ""):
+                return [
+                    "envelope-tampered: spec/sidecar/contracts modified after lock — re-run /vision"
+                ]
 
     return []
+
+
+# ---------------------------------------------------------------------------
+# CLI entrypoint (W1)
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="handoff_validator",
+        description="Tier 0 handoff envelope integrity checker.",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_check = sub.add_parser(
+        "check",
+        help="Validate the handoff envelope for the active spec in a project.",
+    )
+    p_check.add_argument(
+        "--project-path",
+        required=True,
+        help="Path to the project root (contains specs/.active).",
+    )
+
+    args = parser.parse_args()
+
+    if args.cmd == "check":
+        violations = validate_on_implement_start(pathlib.Path(args.project_path))
+        for v in violations:
+            print(v)
+        # Exit 0 if no violations OR only warn-level (envelope-missing).
+        # Exit 1 for any block-level violation.
+        block = [v for v in violations if not v.startswith("envelope-missing:")]
+        sys.exit(1 if block else 0)

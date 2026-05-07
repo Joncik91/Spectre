@@ -36,6 +36,9 @@ _REQUIRED_FIELDS: dict[str, Any] = {
     "walker_yield_history": list,
     "walker_stop_reason": (str, type(None)),
     "decisions_indexed": list,
+    # v0.6 artifact byte-hashes — included in integrity_hash payload
+    "spec_sha256": str,
+    "sidecar_sha256": (str, type(None)),  # None when sidecar absent (pre-v0.6)
     "integrity_hash": str,
     "created_at": str,
 }
@@ -156,6 +159,13 @@ def build(
                 p.name for p in decisions_dir.glob("*.md")
             )
 
+    # Compute byte-level hashes of spec and sidecar at lock time.
+    # These are included as regular envelope fields so compute_integrity_hash()
+    # covers them automatically — mutating either file post-lock is detected on
+    # next validate_on_implement_start() call (fixes Gap E / B1-B3).
+    spec_sha256 = hashlib.sha256(spec_path.read_bytes()).hexdigest()
+    sidecar_sha256 = hashlib.sha256(sidecar_path.read_bytes()).hexdigest()
+
     created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     envelope: dict = {
@@ -168,6 +178,8 @@ def build(
         "walker_yield_history": walker_yield_history,
         "walker_stop_reason": walker_stop_reason,
         "decisions_indexed": decisions_indexed,
+        "spec_sha256": spec_sha256,
+        "sidecar_sha256": sidecar_sha256,
         "created_at": created_at,
     }
 

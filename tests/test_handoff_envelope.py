@@ -202,6 +202,73 @@ class TestBuild:
         assert ca.endswith("Z")
         assert "T" in ca
 
+    def test_build_has_spec_sha256(self, tmp_path):
+        env = _build_envelope(tmp_path)
+        assert "spec_sha256" in env
+
+    def test_build_spec_sha256_is_64_char_hex(self, tmp_path):
+        env = _build_envelope(tmp_path)
+        h = env["spec_sha256"]
+        assert len(h) == 64
+        assert all(c in "0123456789abcdef" for c in h)
+
+    def test_build_spec_sha256_matches_spec_bytes(self, tmp_path):
+        import hashlib as _hl
+        spec = _make_spec(tmp_path)
+        sidecar = _make_sidecar(tmp_path)
+        env = handoff_envelope.build(spec, sidecar, None, None)
+        expected = _hl.sha256(spec.read_bytes()).hexdigest()
+        assert env["spec_sha256"] == expected
+
+    def test_build_has_sidecar_sha256(self, tmp_path):
+        env = _build_envelope(tmp_path)
+        assert "sidecar_sha256" in env
+
+    def test_build_sidecar_sha256_is_64_char_hex(self, tmp_path):
+        env = _build_envelope(tmp_path)
+        h = env["sidecar_sha256"]
+        assert h is not None
+        assert len(h) == 64
+        assert all(c in "0123456789abcdef" for c in h)
+
+    def test_build_sidecar_sha256_matches_sidecar_bytes(self, tmp_path):
+        import hashlib as _hl
+        spec = _make_spec(tmp_path)
+        sidecar = _make_sidecar(tmp_path)
+        env = handoff_envelope.build(spec, sidecar, None, None)
+        expected = _hl.sha256(sidecar.read_bytes()).hexdigest()
+        assert env["sidecar_sha256"] == expected
+
+
+class TestArtifactHashCoverage:
+    """spec_sha256/sidecar_sha256 are inside the integrity_hash payload."""
+
+    def test_mutating_spec_bytes_changes_spec_sha256(self, tmp_path):
+        import hashlib as _hl
+        spec = _make_spec(tmp_path)
+        sidecar = _make_sidecar(tmp_path)
+        env = handoff_envelope.build(spec, sidecar, None, None)
+        original_spec_sha256 = env["spec_sha256"]
+        # Simulate spec mutation
+        mutated_sha256 = _hl.sha256(b"# MUTATED\n").hexdigest()
+        assert original_spec_sha256 != mutated_sha256
+
+    def test_spec_sha256_is_covered_by_integrity_hash(self, tmp_path):
+        """Changing spec_sha256 in the envelope changes compute_integrity_hash()."""
+        env = _build_envelope(tmp_path)
+        h1 = handoff_envelope.compute_integrity_hash(env)
+        env["spec_sha256"] = "0" * 64
+        h2 = handoff_envelope.compute_integrity_hash(env)
+        assert h1 != h2
+
+    def test_sidecar_sha256_is_covered_by_integrity_hash(self, tmp_path):
+        """Changing sidecar_sha256 in the envelope changes compute_integrity_hash()."""
+        env = _build_envelope(tmp_path)
+        h1 = handoff_envelope.compute_integrity_hash(env)
+        env["sidecar_sha256"] = "0" * 64
+        h2 = handoff_envelope.compute_integrity_hash(env)
+        assert h1 != h2
+
 
 # ---------------------------------------------------------------------------
 # validate()

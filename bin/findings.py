@@ -45,6 +45,7 @@ KNOWN_KINDS = {
     # v0.6 — handoff envelope integrity kinds
     "envelope-missing",
     "envelope-tampered",
+    "envelope-malformed",
 }
 
 # Severity mapping for Tier 3 contradiction tuple kinds (v0.5.2).

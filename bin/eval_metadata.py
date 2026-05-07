@@ -54,6 +54,7 @@ DEFAULT_SEVERITIES: dict[str, str] = {
     # v0.6 — handoff envelope integrity kinds
     "envelope-missing": "warn",
     "envelope-tampered": "block",
+    "envelope-malformed": "block",
 }
 
 # Imported lazily at call sites to avoid circular imports in thin stdlib modules.
@@ -318,6 +319,20 @@ if __name__ == "__main__":
         help="Path to JSON payload file, or '-' / omitted to read from stdin.",
     )
 
+    # ── write-envelope ────────────────────────────────────────────────────────
+    p_we = sub.add_parser(
+        "write-envelope",
+        help="Build and write the v0.6 handoff envelope for a spec file.",
+    )
+    p_we.add_argument("--spec", required=True, help="Path to the spec file (.spec.md, already locked).")
+    p_we.add_argument("--walk", default=None, help="Path to walker output JSON (.walk.json), optional.")
+    p_we.add_argument("--decisions-dir", default=None, help="Path to decisions/ directory, optional.")
+    p_we.add_argument(
+        "--sidecar",
+        default=None,
+        help="Path to sidecar .eval.json; defaults to <spec>.eval.json.",
+    )
+
     # ── sha256 ────────────────────────────────────────────────────────────────
     p_sha = sub.add_parser(
         "sha256",
@@ -395,6 +410,24 @@ if __name__ == "__main__":
             print(f"ERROR: write failed: {exc}", file=sys.stderr)
             sys.exit(1)
         print(str(sidecar))
+
+    elif args.cmd == "write-envelope":
+        spec_path = pathlib.Path(args.spec)
+        if not spec_path.exists():
+            print(f"ERROR: spec file not found: {spec_path}", file=sys.stderr)
+            sys.exit(1)
+        sidecar_path = pathlib.Path(args.sidecar) if args.sidecar else sidecar_path_for(spec_path)
+        if not sidecar_path.exists():
+            print(f"ERROR: sidecar not found: {sidecar_path}", file=sys.stderr)
+            sys.exit(1)
+        walk_path = pathlib.Path(args.walk) if args.walk else None
+        decisions_dir = pathlib.Path(args.decisions_dir) if args.decisions_dir else None
+        try:
+            envelope_path = write_envelope_alongside_sidecar(spec_path, sidecar_path, walk_path, decisions_dir)
+        except (OSError, KeyError, ValueError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(str(envelope_path))
 
     elif args.cmd == "sha256":
         if args.stdin:
