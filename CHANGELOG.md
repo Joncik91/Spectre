@@ -2,6 +2,14 @@
 
 All notable changes to the Spectre plugin.
 
+## v0.6.1 — 2026-05-07
+
+**Fixed: skill prose PYTHONPATH ergonomics (issue #30).**
+
+- Fixed: skill prose now consistently prefixes every `python3 -m bin.X` invocation with `PYTHONPATH="${CLAUDE_PLUGIN_ROOT}"` so plugin-internal modules resolve correctly from the user's project cwd. Closes #30.
+- Added: PYTHONPATH note section at the top of both `skills/vision/SKILL.md` and `skills/implement/SKILL.md` explaining the prefix requirement.
+- Added: `tests/test_skill_pythonpath_consistency.py` — CI sentinel that scans all `skills/**/SKILL.md` bash code blocks and asserts every `python3 -m bin.X` line carries the `PYTHONPATH="${CLAUDE_PLUGIN_ROOT}"` prefix. Catches future regressions.
+
 ## v0.6.0 — 2026-05-07
 
 **Vault-informed improvements: handoff envelope (Context Sled with bytewise integrity), walker yield countdown, negative-path enforcement, Tier 3 CoT faithfulness, executor-owned step heading.**

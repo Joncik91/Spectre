@@ -8,6 +8,10 @@ disable-model-invocation: false
 
 Triggered when the user types `/vision` followed by free-form text describing what they want built. Follow this protocol **exactly** — it is the only legitimate path from human intent to locked spec.
 
+## PYTHONPATH note
+
+Spectre's `bin/` modules live under the plugin install at `${CLAUDE_PLUGIN_ROOT}/bin/`, not on the user's project sys.path. Every `python3 -m bin.X` invocation in this skill prefixes with `PYTHONPATH="${CLAUDE_PLUGIN_ROOT}"`. Do not strip or alter this prefix when adapting commands.
+
 ## Hard rules (read every invocation)
 
 - **All paths are user-project-cwd-relative.** Spec, scratchpad, and `.active` live under the user's current working directory at session start (e.g. `/home/foo/myproject/specs/...`), NEVER under the plugin's install path (`~/.claude/plugins/...` or `${CLAUDE_PLUGIN_ROOT}`). If you find yourself about to write into a plugin cache directory, STOP — that is a bug. Resolve cwd via `pwd` once at the start of Step 6 and use absolute paths from there.
@@ -38,7 +42,7 @@ When the walker surfaces concerns in Step 4, scan the symbol map for any functio
 **Template-import surfacing (v0.4.2+).** Also list any reusable spec/skill templates the user has previously exported:
 
 ```bash
-python3 -m bin.templates list --limit 10
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.templates list --limit 10
 ```
 
 Stdout: `TEMPLATES_AVAILABLE: N` followed by up to 10 ` <kind>: <name>` lines (e.g. `  spec: btc-poller`). Pass `--json` for the full descriptor list when you need the absolute path.
@@ -58,9 +62,9 @@ Same as v0.3.x — refuse physically impossible requests; if multi-subsystem, as
 Resume an existing walk if one is live for this spec, otherwise initialize a new one. Derive the canonical draft path from the slug via the Phase 2A CLI (never substitute `<slug>` into a `Path("specs/...")` literal inline):
 
 ```bash
-SPEC_PATH="$(python3 -m bin.spec_evaluator slug-to-path --slug "<slug>")"
+SPEC_PATH="$(PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.spec_evaluator slug-to-path --slug "<slug>")"
 DRAFT_PATH="${SPEC_PATH}.draft"
-python3 -m bin.walker init-or-resume \
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.walker init-or-resume \
     --intent "<verbatim user intent>" \
     --draft "$DRAFT_PATH" \
     --state-path state/.walk.json
@@ -75,7 +79,7 @@ Repeat until the walker reports stop:
 1. **Read next concern.** Fetch the next pending concern body via the CLI:
 
    ```bash
-   python3 -m bin.walker peek-pending \
+   PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.walker peek-pending \
        --state-path state/.walk.json \
        --json
    ```
@@ -94,7 +98,7 @@ Repeat until the walker reports stop:
    On `revise` without an id, fetch full state to list asked concerns:
 
    ```bash
-   python3 -m bin.walker get-state \
+   PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.walker get-state \
        --state-path state/.walk.json \
        --json
    ```
@@ -105,14 +109,14 @@ Repeat until the walker reports stop:
 
    - **`stop`** — record stop via:
      ```bash
-     python3 -m bin.walker stop \
+     PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.walker stop \
          --reason author-arbitrated \
          --state-path state/.walk.json
      ```
      Stdout: `STOPPED: reason=author-arbitrated`. Jump to Step 5.
    - **`revise <concern_id> <new_answer>`** — record the revised answer and ask the user about stale concerns:
      ```bash
-     python3 -m bin.walker answer-concern \
+     PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.walker answer-concern \
          --id <concern_id> \
          --answer "<new_answer>" \
          --state-path state/.walk.json
@@ -120,7 +124,7 @@ Repeat until the walker reports stop:
      Stdout: `ANSWERED: <concern_id>`. Re-run `get-state` to surface any now-stale sibling concerns. Ask: "These concerns are now stale: <list>. Re-walk them or accept-stale?" On `re-walk`, the walker's `peek-pending` will surface them in the next round naturally.
    - **Anything else** — treat as the answer to the current concern:
      ```bash
-     python3 -m bin.walker answer-concern \
+     PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.walker answer-concern \
          --id <concern_id> \
          --answer "<user text>" \
          --state-path state/.walk.json
@@ -130,7 +134,7 @@ Repeat until the walker reports stop:
 4. **Run the Tier 3 yield-delta check** (only if `~/.spectre/reviewer.toml` has `[tier3] enabled = true` AND we have an in-progress draft):
 
    ```bash
-   python3 -m bin.walker yield-check \
+   PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.walker yield-check \
        --draft "$DRAFT_PATH" \
        --state-path state/.walk.json
    ```
@@ -140,7 +144,7 @@ Repeat until the walker reports stop:
 5. **Check stop conditions.** Re-run `peek-pending` (Step 4.1) — if it returns `null`, the walk is exhausted; proceed to Step 5. Alternatively, check the `stop` field in the full state dump:
 
    ```bash
-   python3 -m bin.walker get-state \
+   PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.walker get-state \
        --state-path state/.walk.json \
        --json
    ```
@@ -191,7 +195,7 @@ The draft-to-disk pattern eliminates the double-token-output friction (printing 
 Before running the evaluator, ensure `~/.spectre/reviewer.toml` exists. If it doesn't, the wizard auto-creates it — detecting any DeepSeek API key in the live environment, then optionally in a `.env`-style secrets file pointed to by the `SPECTRE_SECRETS_FILE` env var, and prompting once for opt-in. The TOML is always written (with `enabled=false` if the user declines or no key is found) so subsequent runs don't re-prompt.
 
 ```bash
-python3 -m bin.setup_wizard provision
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.setup_wizard provision
 ```
 
 Stdout: `WIZARD: <result> (<target>)`. Outcomes: `exists` (no-op), `enabled` (DeepSeek API key found in env or `~/.spectre/secrets.env`, Tier 3 enabled), `setup-skipped` (no key found anywhere — placeholder `enabled=false` written so subsequent runs do not re-prompt). After the wizard runs, `~/.spectre/reviewer.toml` is guaranteed to exist; §6.4 always passes that path to the evaluator.
@@ -203,14 +207,14 @@ After the user replies `yes` (or `refine`), run the spec evaluator over a *revie
 First derive the canonical draft path from the slug — never substitute the slug into a `Path("specs/<slug>...")` literal inline. Use the Phase 2A CLI, which validates the slug and emits the spec-file path (the draft path is the same string with `.draft` appended):
 
 ```bash
-SPEC_PATH="$(python3 -m bin.spec_evaluator slug-to-path --slug "<slug>")"
+SPEC_PATH="$(PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.spec_evaluator slug-to-path --slug "<slug>")"
 DRAFT_PATH="${SPEC_PATH}.draft"
 ```
 
 Then run the evaluator and capture the full result (findings + `sidecar_payload`) to `state/.eval-result.json` so §6.7 can re-use the same `policy_hash`/`tiers_run` without re-running the evaluator:
 
 ```bash
-python3 -m bin.spec_evaluator evaluate \
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.spec_evaluator evaluate \
   --spec "$DRAFT_PATH" \
   --config "$HOME/.spectre/reviewer.toml" \
   --bundle-dir state \
@@ -271,7 +275,7 @@ For each decision found:
 1. Run:
 
 ```bash
-python3 -m bin.adr write \
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.adr write \
     --dir decisions \
     --title "<extracted decision title>" \
     --body "<one paragraph: the decision + the why from the spec>"
@@ -284,7 +288,7 @@ Stdout: `ADR: <path>`. Pass `--supersedes "NNNN"` only when this decision contra
 3. **Graph wiring.** If `specs/.graph.md` exists AND both new and old ADRs are represented as nodes, run:
 
 ```bash
-python3 -m bin.adr update-graph \
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.adr update-graph \
     --graph specs/.graph.md \
     --new adr-NNNN \
     --old adr-MMMM
@@ -319,9 +323,9 @@ Now that the user confirmed and ADRs are written:
 3. Reset `$PROJECT/state/scratchpad.json` for the active spec. Use the CLI to ensure v2 schema and reset the track atomically:
 
    ```bash
-   python3 -m bin._scratchpad ensure-v2 \
+   PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin._scratchpad ensure-v2 \
        --scratchpad state/scratchpad.json
-   python3 -m bin._scratchpad reset \
+   PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin._scratchpad reset \
        --active-spec specs/<slug>.spec.md \
        --scratchpad state/scratchpad.json
    ```
@@ -333,10 +337,10 @@ Now that the user confirmed and ADRs are written:
    Use the Phase 2A CLI. Derive the locked-spec path from the slug (the same `slug-to-path` helper §6.4 used) and feed the `sidecar_payload` block §6.4 already saved to `state/.eval-result.json` straight into `write-sidecar`. Augmenting the payload with `config_path` keeps the sidecar's `config_path` field populated:
 
    ```bash
-   SPEC_PATH="$(python3 -m bin.spec_evaluator slug-to-path --slug "<slug>")"
+   SPEC_PATH="$(PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.spec_evaluator slug-to-path --slug "<slug>")"
    python3 -c 'import json,sys; d=json.load(open("state/.eval-result.json"))["sidecar_payload"]; d["config_path"]=sys.argv[1]; json.dump(d,sys.stdout)' \
      "$HOME/.spectre/reviewer.toml" \
-     | python3 -m bin.eval_metadata write-sidecar --spec "$SPEC_PATH"
+     | PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.eval_metadata write-sidecar --spec "$SPEC_PATH"
    ```
 
    The CLI prints the written sidecar path on stdout. `policy_hash`, `tiers_run`, `dismissals`, `findings_summary`, `evaluator_version`, `config_hash`, and `deepseek_model_version` are all carried verbatim from §6.4's `sidecar_payload` — there is no re-computation, no inline `Path("specs/<slug>...")` substitution, and no policy-hash drift between §6.4 and §6.7.
@@ -344,13 +348,13 @@ Now that the user confirmed and ADRs are written:
 5. **Clear the persisted bundle** — lock is complete, the bundle is no longer needed:
 
    ```bash
-   python3 -m bin.spec_evaluator clear-bundle --bundle state/.eval-bundle.json
+   PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.spec_evaluator clear-bundle --bundle state/.eval-bundle.json
    ```
 
 6. **Write the handoff envelope** (v0.6+). The envelope is the Vision→Implement handoff artifact: it carries a SHA-256 integrity hash over the locked spec, sidecar, contract resolution, and indexed ADR paths. `/implement` verifies this hash at Tier 0 on startup — a mismatch halts execution before any spec content is read. Re-running `/vision` is the only legitimate way to regenerate the envelope. The envelope file is additive (does not replace the sidecar) and sits alongside it at `specs/<slug>.envelope.json`. Per v0.6 design — see CHANGELOG.
 
    ```bash
-   python3 -m bin.eval_metadata write-envelope \
+   PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.eval_metadata write-envelope \
        --spec "$SPEC_PATH" \
        --walk state/.walk.json \
        --decisions-dir decisions
@@ -361,7 +365,7 @@ Now that the user confirmed and ADRs are written:
 **Append CDLC ledger transition (v0.4.2+).** Record a `generate` transition (lock event):
 
 ```bash
-python3 -m bin.cdlc_ledger append --kind generate \
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.cdlc_ledger append --kind generate \
     --payload-kv "spec_slug=<slug>" \
     --payload-kv "round_count=<walker round_count from state/.walk.json>" \
     --payload-kv "tiers_run=<tiers_run from <slug>.spec.md.eval.json sidecar>"
