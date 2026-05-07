@@ -400,3 +400,49 @@ def test_parse_reboot_survival_returns_empty_string_when_absent():
 - `mutates:` /tmp
 """
     assert spec_ast._parse_reboot_survival(body) == ""
+
+
+# ── malformed-only entries with reboot-survival: required → both findings ─────
+
+def test_malformed_only_required_emits_malformed_warn():
+    """All negative-paths malformed + reboot-survival=required → malformed-negative-path warn."""
+    path = _write_spec(_STEP_WITH_MALFORMED_NO_HANDLER, reboot_survival="required")
+    try:
+        findings = spec_ast.classify(path)
+        assert any(f.kind == "malformed-negative-path" and f.severity == "warn" for f in findings)
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def test_malformed_only_required_also_emits_missing_block():
+    """All negative-paths malformed + reboot-survival=required → missing-negative-path block."""
+    path = _write_spec(_STEP_WITH_MALFORMED_NO_HANDLER, reboot_survival="required")
+    try:
+        findings = spec_ast.classify(path)
+        assert any(f.kind == "missing-negative-path" and f.severity == "block" for f in findings)
+    finally:
+        path.unlink(missing_ok=True)
+
+
+# ── reboot-survival uppercase normalisation ───────────────────────────────────
+
+def test_parse_reboot_survival_uppercased_normalises_to_lowercase():
+    body = """
+### 8.1 Hard contract
+- `mutates:` /tmp
+- `never-touches:` /home
+- `decision-budget:` none
+- `reboot-survival:` REQUIRED
+"""
+    assert spec_ast._parse_reboot_survival(body) == "required"
+
+
+def test_produces_no_negative_paths_uppercase_required_severity_is_block():
+    """reboot-survival: REQUIRED (uppercase) must still trigger block severity."""
+    path = _write_spec(_STEP_WITH_PRODUCES_NO_NEG_PATHS, reboot_survival="REQUIRED")
+    try:
+        findings = spec_ast.classify(path)
+        f = next(x for x in findings if x.kind == "missing-negative-path")
+        assert f.severity == "block"
+    finally:
+        path.unlink(missing_ok=True)

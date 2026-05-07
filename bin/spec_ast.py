@@ -257,7 +257,7 @@ def _parse_reboot_survival(body: str) -> str:
     m = re.search(r"^\s*[`-]?\s*`?reboot-survival:`?\s*(.*)", block_81, re.MULTILINE)
     if not m:
         return ""
-    return m.group(1).strip().strip("`").strip("'\"")
+    return m.group(1).strip().strip("`").strip("'\"").lower()
 
 
 def _parse_steps_section(body: str) -> list[dict[str, str | int | list[str]]]:
@@ -1090,7 +1090,8 @@ def _check_negative_paths(
                     ),
                 ))
             else:
-                # Validate each entry
+                # Validate each entry; track how many are well-formed (both trigger + handler present)
+                well_formed_count = 0
                 for entry in negative_paths:
                     if not isinstance(entry, dict):
                         msg = f"Step {step_n} negative-paths entry is not a dict: {entry!r}."
@@ -1127,6 +1128,28 @@ def _check_negative_paths(
                                 "Each negative-paths entry must have both trigger: and handler: keys."
                             )[:140],
                         ))
+                    else:
+                        well_formed_count += 1
+                # All entries malformed → no valid failure branch; apply same gate as missing
+                if well_formed_count == 0 and reboot_survival == "required":
+                    msg = (
+                        f"Step {step_n} declares produces but has no well-formed negative-paths entries; "
+                        f"reboot-survival=required mandates a valid failure-branch declaration."
+                    )
+                    if len(msg) > 140:
+                        msg = msg[:137] + "..."
+                    results.append(_findings.Finding(
+                        tier=1,
+                        kind="missing-negative-path",
+                        severity="block",
+                        location=_findings.FindingLocation(
+                            scope="step", step=step_n, ref="negative-paths"
+                        ),
+                        message=msg,
+                        suggested_fix=(
+                            "Add at least one negative-paths entry with both trigger: and handler: keys."
+                        ),
+                    ))
 
     return results
 
