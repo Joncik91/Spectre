@@ -46,14 +46,14 @@ pytest tests/ -x                       # stop at first failure
 If your change adds a new `bin/` module, a new skill, or a new hook:
 
 1. **Open a discussion first.** A short issue describing the failure mode you're addressing and the proposed shape. Three-paragraph plan beats three-day rewrite.
-2. **Write a brief in `docs/superpowers/specs/`.** Same format as existing v0.2.x / v0.3 briefs: hard problem, first principles, design, risks, deferred work.
+2. **Write a brief in `docs/superpowers/specs/`.** Same format as existing v0.2.x / v0.3 / v0.5.2 / v0.6.0 briefs: hard problem, first principles, design, risks, deferred work.
 3. **Write a plan in `docs/superpowers/plans/`.** Step-by-step implementation with TDD discipline. Use the existing plans as templates.
-4. **Get the brief peer-reviewed.** Either by another maintainer or by an explicitly different model (the v0.3.0 evaluator was reviewed by Copilot/GPT-5.4 before merge — the adversarial-reviewer principle applies to the codebase itself, not just specs).
+4. **Get the brief peer-reviewed.** Either by another maintainer or by an explicitly different model. This is established practice: the v0.3.0 evaluator was reviewed by Copilot/GPT-5.4 before merge; the v0.5.2 design (issue #32 + comments) went through the same Copilot/GPT-5.4 peer-review loop. The adversarial-reviewer principle applies to the codebase itself, not just specs.
 5. **Then implement.** Subagent-driven if you have the tooling for it; fresh-context-per-task if you don't.
 
 ## What we won't accept
 
-- **New third-party dependencies in `bin/`.** Stdlib has been enough for v0.1.0 → v0.3.0; it will be enough going forward.
+- **New third-party dependencies in `bin/`.** Stdlib has been enough for v0.1.0 → v0.6.1; it will be enough going forward.
 - **`async`/`await` for the sake of it.** The supervisor uses `select()` because that's the right primitive. Async is fine where it's a clear win; not as a default.
 - **Silent feature additions.** Every new behavior needs documentation in `README.md` (if user-visible) or `docs/ARCHITECTURE.md` (if internal). PRs without doc updates get sent back.
 - **Tests that don't fail when the code is wrong.** If you can comment out the production code and the test still passes, the test is a liability.
