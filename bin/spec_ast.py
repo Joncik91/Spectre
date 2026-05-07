@@ -290,8 +290,11 @@ def _check_step_contracts(
                 ))
 
         # ── missing-contract (opt-in, warn only) ────────────────────────────
-        # A step without any valid contract entries is "undeclared" — warn only.
-        if not valid_produces and not valid_requires:
+        # A step without any contract entries is "undeclared" — warn only.
+        # Gate on raw lists: a step with only malformed entries attempted a
+        # declaration; it already gets malformed-contract and should NOT also
+        # get missing-contract (misleading double-fire).
+        if not raw_produces and not raw_requires:
             msg = f"Step {step_n} declares no produces: or requires: contract entries."
             results.append(_findings.Finding(
                 tier=1,

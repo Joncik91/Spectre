@@ -506,3 +506,61 @@ def test_contract_resolution_unresolved_entry_is_null():
     step2 = steps.get("2", {})
     resolution = step2.get("resolution", {})
     assert resolution.get("package:missing_pkg") is None
+
+
+# ── malformed-only produces suppresses missing-contract double-fire ───────────
+
+def test_only_malformed_produces_does_not_emit_missing_contract():
+    """A step with produces: ["bogus-format"] gets malformed-contract only, NOT missing-contract.
+
+    Regression guard for the double-fire warn: gating missing-contract on
+    raw_produces/raw_requires (not valid_produces/valid_requires) ensures that
+    an attempted-but-malformed declaration suppresses the spurious missing warn.
+    """
+    p = _make_spec(
+        "- step: 1\n"
+        "  why: 'malformed only'\n"
+        "  action: 'echo hello'\n"
+        "  verification: 'echo hello'\n"
+        "  produces:\n"
+        "    - \"bogus-format\"\n"
+    )
+    try:
+        fs = spec_ast.classify(p)
+        assert not any(f.kind == "missing-contract" for f in fs)
+    finally:
+        p.unlink(missing_ok=True)
+
+
+def test_only_malformed_produces_emits_exactly_one_finding():
+    """Exactly one finding (malformed-contract) when produces has a single bogus entry."""
+    p = _make_spec(
+        "- step: 1\n"
+        "  why: 'malformed only'\n"
+        "  action: 'echo hello'\n"
+        "  verification: 'echo hello'\n"
+        "  produces:\n"
+        "    - \"bogus-format\"\n"
+    )
+    try:
+        fs = spec_ast.classify(p)
+        assert len([f for f in fs if f.kind in ("malformed-contract", "missing-contract")]) == 1
+    finally:
+        p.unlink(missing_ok=True)
+
+
+def test_only_malformed_requires_does_not_emit_missing_contract():
+    """A step with requires: ["bogus-format"] gets malformed-contract only, NOT missing-contract."""
+    p = _make_spec(
+        "- step: 1\n"
+        "  why: 'malformed requires only'\n"
+        "  action: 'echo hello'\n"
+        "  verification: 'echo hello'\n"
+        "  requires:\n"
+        "    - \"bogus-format\"\n"
+    )
+    try:
+        fs = spec_ast.classify(p)
+        assert not any(f.kind == "missing-contract" for f in fs)
+    finally:
+        p.unlink(missing_ok=True)

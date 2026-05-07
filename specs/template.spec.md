@@ -44,13 +44,13 @@ Each step is an atomic transaction with three required keys plus optional contra
 - `properties:` (optional) — list of PBT-lite assertions the State Auditor will check after `verification` passes. Each property has `kind:` (one of `type` / `schema` / `length` / `range`), `target:` (path to a JSON file), and kind-specific fields. See `bin/auditor.py` for supported shapes. Auditor verdicts are informational, not blocking — they land in scratchpad and the next compact's additionalContext.
 - `resources:` (optional) — list of Resource node IDs this step needs to acquire before executing. Each entry is a string matching a Resource node in `specs/.graph.md`. The supervisor grants access; if at capacity, the track queues. Released automatically after the step's verification passes (or on terminal halt).
 
-**Contract types** (for `produces:` and `requires:`):
+**Contract types** (for `produces:` and `requires:`). Type prefixes are lowercase (`package:`, not `Package:`):
 - `file:<path>` — absolute path to a file authored by the action
 - `package:<name>` — Python package made importable (e.g. via `pip install -e .`)
 - `console-script:<name>` — shell-PATH-resolvable command registered by an editable install
 - `route:<METHOD> <path>` — HTTP route added (e.g. `route:POST /api/convert`)
 - `module:<dotted.name>` — Python module path
-- `binary:<name>` — system binary required (yt-dlp, curl, pip — for `requires:` only)
+- `binary:<name>` — system binary available on PATH (yt-dlp, curl, pip)
 - `db-table:<name>` — SQLite table created
 - `db-column:<table>.<col>` — column on a table
 
