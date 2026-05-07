@@ -6,7 +6,7 @@ disable-model-invocation: false
 
 # Skill: /implement [check | auto] [<track>]
 
-Triggered when the user types `/implement` (run next step), `/implement check` (verify current state without executing), or `/implement auto` (walk consecutive low-tier steps without re-prompting until a halt-worthy step). This is the **physical-build engine** of the SDL Vision Engine — it owns the action→verification→retry→advance cycle.
+Triggered when the user types `/implement` (run next step), `/implement check` (verify current state without executing), or `/implement auto` (walk consecutive low-tier steps without re-prompting until a halt-worthy step). This is the **physical-build engine** of Spectre — it owns the action→verification→retry→advance cycle.
 
 ## Hard rules (read every invocation)
 
