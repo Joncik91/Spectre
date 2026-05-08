@@ -254,6 +254,7 @@ def _main() -> int:
             sys.stderr.write(f"ERROR: {exc}\n")
             return 1
         sys.stdout.write(block)
+        sys.stdout.flush()
         return 0
     return 2
 
