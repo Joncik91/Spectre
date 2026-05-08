@@ -546,6 +546,7 @@ def evaluate(
             "dismissed_t3_count": actually_dismissed_count,
         },
         "contract_resolution": _build_contract_resolution(bundle.spec_text),
+        "substrate_resolution": _eval_metadata.build_substrate_resolution(bundle.spec_text, filtered),
     }
 
     return EvaluatorResult(

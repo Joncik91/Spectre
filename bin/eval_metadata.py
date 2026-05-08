@@ -473,6 +473,7 @@ if __name__ == "__main__":
                 policy_hash=payload["policy_hash"],
                 findings_summary=payload.get("findings_summary"),
                 contract_resolution=payload.get("contract_resolution"),
+                substrate_resolution=payload.get("substrate_resolution"),
             )
         except KeyError as exc:
             print(f"ERROR: missing required payload field: {exc}", file=sys.stderr)
