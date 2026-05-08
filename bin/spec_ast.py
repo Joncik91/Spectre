@@ -425,7 +425,25 @@ def _check_step_contracts(
 
         # ── unowned-requirement (block) ──────────────────────────────────────
         for entry in valid_requires:
-            if entry not in cumulative_produces:
+            if entry in cumulative_produces:
+                continue
+            # v0.6.2 (#36): parent-package match — `package:foo` covers
+            # `module:foo` and `module:foo.<sub>`; `module:foo.bar` covers
+            # `module:foo.bar.<sub>`.
+            kind, _, value = entry.partition(":")
+            satisfied = False
+            if kind == "module":
+                top = value.split(".")[0] if value else ""
+                if top and f"package:{top}" in cumulative_produces:
+                    satisfied = True
+                if not satisfied:
+                    for prod in cumulative_produces:
+                        if prod.startswith("module:"):
+                            pv = prod.split(":", 1)[1]
+                            if value == pv or value.startswith(pv + "."):
+                                satisfied = True
+                                break
+            if not satisfied:
                 msg = (
                     f"Step {step_n} requires {entry!r} but no prior step's produces: declares it."
                 )
@@ -980,7 +998,11 @@ def _check_unowned_requirement(steps: list[dict]) -> list[_findings.Finding]:
                     module = im.group(1)
                     mod_top = module.split(".")[0]
                     # P3 contract shadows: skip if any step declares this package/module
+                    # v0.6.2: parent-package match — `module:foo.bar` covers imports
+                    # of `foo.bar` and any deeper child (`foo.bar.baz`).
                     if mod_top in declared_packages or module in declared_modules:
+                        continue
+                    if any(module == dm or module.startswith(dm + ".") for dm in declared_modules):
                         continue
                     candidates = _module_path_candidates(module)
                     if not any(cand in prior_corpus for cand in candidates):
@@ -1002,7 +1024,13 @@ def _check_unowned_requirement(steps: list[dict]) -> list[_findings.Finding]:
                                 suggested_fix="Add a prior step that creates the module.",
                             ))
                 # import X — B2 wire-up + B3 stdlib exemption
+                # v0.6.2 FIX (#36): exclude spans already matched by
+                # `from X import Y` so the symbol after `import` (e.g.
+                # `is_blocked`) is not flagged as an unowned module.
+                from_import_spans = [im.span() for im in _PYTHON_IMPORT_RE.finditer(body_text)]
                 for im in _PYTHON_IMPORT_ALT_RE.finditer(body_text):
+                    if any(s <= im.start() < e for s, e in from_import_spans):
+                        continue
                     module = im.group(1)
                     mod_top = module.split(".")[0]
                     # Skip stdlib modules — only flag project packages
@@ -1010,6 +1038,8 @@ def _check_unowned_requirement(steps: list[dict]) -> list[_findings.Finding]:
                         continue
                     # P3 contract shadows: skip if any step declares this package/module
                     if mod_top in declared_packages or module in declared_modules:
+                        continue
+                    if any(module == dm or module.startswith(dm + ".") for dm in declared_modules):
                         continue
                     candidates = _module_path_candidates(module)
                     if not any(cand in prior_corpus for cand in candidates):

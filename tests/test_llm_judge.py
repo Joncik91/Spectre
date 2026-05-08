@@ -1223,3 +1223,61 @@ def test_build_step_table_short_fields_pass_through_verbatim():
     # The parser strips trailing quotes, so the value ends without the closing "
     assert "import foo" in step1["verification_summary"]
     assert "truncated" not in step1["verification_summary"]
+
+
+# ---------------------------------------------------------------------------
+# v0.6.2 #37 — auth vs network errors get distinct messages
+# ---------------------------------------------------------------------------
+
+
+@mock.patch("urllib.request.urlopen")
+def test_evaluate_401_says_auth_failure(mock_urlopen, monkeypatch):
+    """HTTP 401 must surface as 'auth failure', not 'socket-timeout'."""
+    _env(monkeypatch)
+    monkeypatch.setattr(time, "sleep", lambda _d: None)
+    mock_urlopen.side_effect = url_error.HTTPError(
+        url="https://api.deepseek.com", code=401, msg="Unauthorized",
+        hdrs=None, fp=None,
+    )
+    result = llm_judge.evaluate(_SPEC, config=_CFG)
+    assert "auth failure" in result[0].message.lower()
+    assert "socket-timeout" not in result[0].message
+
+
+@mock.patch("urllib.request.urlopen")
+def test_evaluate_403_says_auth_failure(mock_urlopen, monkeypatch):
+    """HTTP 403 (forbidden) must also surface as auth failure."""
+    _env(monkeypatch)
+    monkeypatch.setattr(time, "sleep", lambda _d: None)
+    mock_urlopen.side_effect = url_error.HTTPError(
+        url="https://api.deepseek.com", code=403, msg="Forbidden",
+        hdrs=None, fp=None,
+    )
+    result = llm_judge.evaluate(_SPEC, config=_CFG)
+    assert "auth failure" in result[0].message.lower()
+
+
+@mock.patch("urllib.request.urlopen")
+def test_evaluate_400_mentions_model_unavailable(mock_urlopen, monkeypatch):
+    """HTTP 400 hints that the model may be unavailable on the user's plan."""
+    _env(monkeypatch)
+    monkeypatch.setattr(time, "sleep", lambda _d: None)
+    mock_urlopen.side_effect = url_error.HTTPError(
+        url="https://api.deepseek.com", code=400, msg="Bad Request",
+        hdrs=None, fp=None,
+    )
+    result = llm_judge.evaluate(_SPEC, config=_CFG)
+    assert "bad request" in result[0].message.lower() or "model" in result[0].message.lower()
+
+
+@mock.patch("urllib.request.urlopen")
+def test_evaluate_500_says_provider_error(mock_urlopen, monkeypatch):
+    """HTTP 500-class must read 'provider error', not 'socket-timeout'."""
+    _env(monkeypatch)
+    monkeypatch.setattr(time, "sleep", lambda _d: None)
+    mock_urlopen.side_effect = url_error.HTTPError(
+        url="https://api.deepseek.com", code=502, msg="Bad Gateway",
+        hdrs=None, fp=None,
+    )
+    result = llm_judge.evaluate(_SPEC, config=_CFG)
+    assert "provider error" in result[0].message.lower()

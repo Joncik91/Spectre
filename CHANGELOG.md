@@ -2,6 +2,28 @@
 
 All notable changes to the Spectre plugin.
 
+## v0.6.2 — 2026-05-08
+
+**Fixed: contract-shadow false positive (#36) and Tier 3 silent-fail trio (#37).**
+
+### Fixed — Contract-shadow false positive on `from X import Y` (#36)
+
+- **`bin/spec_ast.py`** — `_PYTHON_IMPORT_ALT_RE` previously matched `import is_blocked` inside `from foo.bar import is_blocked`, capturing the imported SYMBOL as a module name. Since `is_blocked` is not declared anywhere, the heuristic shadow couldn't suppress it. Fix: skip ALT-regex spans that overlap with `from X import` spans already covered by `_PYTHON_IMPORT_RE`.
+- **`bin/spec_ast.py`** — Contract resolution + heuristic shadow now match parent prefixes: `package:foo` satisfies `module:foo.bar`; `module:foo.bar` satisfies `module:foo.bar.baz`. Closes the `package:spectre_daemon` does-not-shadow `module:spectre_daemon.blocklist` case from the v0.6.1 retest.
+- **`tests/test_spec_ast_v052_gaps.py`** — three regression tests covering symbol-misclassification, parent-package, and parent-module shadow.
+
+### Fixed — Tier 3 silent-fail trio (#37)
+
+- **`bin/setup_wizard.py`** — auto-migration of stale `~/.spectre/reviewer.toml`. Detects v0.5.0-era `model = "deepseek-reasoner"` AND pre-#25 single-`timeout_s` configs, backs the original up to `reviewer.toml.bak-<timestamp>`, rewrites with current defaults (deepseek-v4-flash + chunk/total split timeouts). Preserves the user's `enabled` flag and `api_key_env`. New return code: `"migrated"`.
+- **`bin/llm_judge.py`** — distinguishes auth from network errors. HTTP 401/403 now produce `"auth failure (HTTP NNN — check ~/.spectre/secrets.env or DEEPSEEK_API_KEY)"` instead of the generic `"socket-timeout — DeepSeek unreachable"`. HTTP 400 hints model-unavailable; 5xx reads `"provider error"`.
+- **`skills/vision/SKILL.md`** — Tier 3 surfacing prominence. Requires a `⚠ Tier 3 unavailable due to auth` banner ABOVE the tier status block when the message contains "auth failure", so credential issues are not buried in the findings list.
+- **Tests** — `tests/test_setup_wizard.py` (5 new migration tests), `tests/test_llm_judge.py` (4 new auth/error-class distinction tests), `tests/test_setup_wizard_cli.py` (existing test updated to v0.6.2 schema).
+
+### Bumped
+
+- `EVALUATOR_VERSION = "0.6.2"`
+- `marketplace.json` version → 0.6.2
+
 ## v0.6.1 — 2026-05-07
 
 **Fixed: skill prose PYTHONPATH ergonomics (issue #30).**

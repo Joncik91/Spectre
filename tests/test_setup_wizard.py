@@ -115,7 +115,16 @@ def test_config_path_default_returns_home_relative_path():
 
 def test_maybe_provision_skips_when_config_exists(tmp_path):
     target = tmp_path / "reviewer.toml"
-    target.write_text("[tier3]\nenabled = true\n", encoding="utf-8")
+    # v0.6.2: a fresh-schema config (model + split timeouts) skips migration.
+    target.write_text(
+        "[tier3]\n"
+        "enabled = true\n"
+        'api_key_env = "DEEPSEEK_API_KEY"\n'
+        'model = "deepseek-v4-flash"\n'
+        "chunk_timeout_s = 60\n"
+        "total_timeout_s = 600\n",
+        encoding="utf-8",
+    )
     result = setup_wizard.maybe_provision(target)
     assert result == "exists"
 
@@ -323,3 +332,83 @@ def test_maybe_provision_template_patches_dir_creates_accepted_and_rejected(tmp_
     base = tmp_path / ".spectre" / "template-patches"
     actual = {p.name for p in base.iterdir() if p.is_dir()}
     assert actual == {"proposed", "accepted", "rejected"}
+
+
+# ── v0.6.2 (#37) — stale reviewer.toml auto-migration ─────────────────────────
+
+
+def test_stale_deepseek_reasoner_config_is_migrated(tmp_path):
+    """v0.5.0-era config with model = 'deepseek-reasoner' must be migrated."""
+    target = tmp_path / "reviewer.toml"
+    target.write_text(
+        "[tier3]\n"
+        "enabled = true\n"
+        'api_key_env = "DEEPSEEK_API_KEY"\n'
+        'model = "deepseek-reasoner"\n'
+        "timeout_s = 30\n",
+        encoding="utf-8",
+    )
+    result = setup_wizard.maybe_provision(target)
+    assert result == "migrated"
+    body = target.read_text(encoding="utf-8")
+    assert 'model = "deepseek-v4-flash"' in body
+    assert "chunk_timeout_s = 60" in body
+    assert "total_timeout_s = 600" in body
+    assert "enabled = true" in body  # preserved
+
+
+def test_pre_v051_single_timeout_config_is_migrated(tmp_path):
+    """Pre-#25 config without chunk_timeout_s/total_timeout_s must be migrated."""
+    target = tmp_path / "reviewer.toml"
+    target.write_text(
+        "[tier3]\n"
+        "enabled = true\n"
+        'api_key_env = "DEEPSEEK_API_KEY"\n'
+        'model = "deepseek-v4-flash"\n'
+        "timeout_s = 45\n",
+        encoding="utf-8",
+    )
+    result = setup_wizard.maybe_provision(target)
+    assert result == "migrated"
+
+
+def test_migration_creates_backup_file(tmp_path):
+    """Migration backs the original up to reviewer.toml.bak-<timestamp>."""
+    target = tmp_path / "reviewer.toml"
+    target.write_text(
+        "[tier3]\nenabled = false\n"
+        'model = "deepseek-reasoner"\ntimeout_s = 30\n',
+        encoding="utf-8",
+    )
+    setup_wizard.maybe_provision(target)
+    backups = list(tmp_path.glob("reviewer.toml.bak-*"))
+    assert len(backups) == 1
+
+
+def test_fresh_v062_config_is_not_migrated(tmp_path):
+    """A fresh v0.6.2 config (split timeouts + flash model) is left alone."""
+    target = tmp_path / "reviewer.toml"
+    target.write_text(
+        "[tier3]\n"
+        "enabled = true\n"
+        'api_key_env = "DEEPSEEK_API_KEY"\n'
+        'model = "deepseek-v4-flash"\n'
+        "chunk_timeout_s = 60\n"
+        "total_timeout_s = 600\n",
+        encoding="utf-8",
+    )
+    result = setup_wizard.maybe_provision(target)
+    assert result == "exists"
+
+
+def test_migration_preserves_disabled_flag(tmp_path):
+    """If the user had Tier 3 disabled, migration keeps it disabled."""
+    target = tmp_path / "reviewer.toml"
+    target.write_text(
+        "[tier3]\nenabled = false\n"
+        'model = "deepseek-reasoner"\ntimeout_s = 30\n',
+        encoding="utf-8",
+    )
+    setup_wizard.maybe_provision(target)
+    body = target.read_text(encoding="utf-8")
+    assert "enabled = false" in body

@@ -70,7 +70,14 @@ class TestProvisionCli:
 
     def test_provision_existing_file_returns_exists(self, tmp_path):
         target = tmp_path / "reviewer.toml"
-        target.write_text("# existing\n[tier3]\nenabled = true\n")
+        target.write_text(
+            "# existing\n[tier3]\n"
+            "enabled = true\n"
+            'api_key_env = "DEEPSEEK_API_KEY"\n'
+            'model = "deepseek-v4-flash"\n'
+            "chunk_timeout_s = 60\n"
+            "total_timeout_s = 600\n"
+        )
         r = _run(
             "provision",
             "--target", str(target),
