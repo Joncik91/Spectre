@@ -640,7 +640,7 @@ def _unavailable(message: str) -> Finding:
 # ── CoT faithfulness check ────────────────────────────────────────────────────
 
 # Kinds that get the cite-and-verify second pass (block-severity contradiction kinds).
-_BLOCK_CONTRADICTION_KINDS = frozenset({"missing-producer", "shallow-ownership"})
+_BLOCK_CONTRADICTION_KINDS = frozenset({"missing-producer", "shallow-ownership", "adversarial-pathway"})
 
 # System prompt for the cite-and-verify pass.
 _FAITHFULNESS_SYSTEM_PROMPT = """\

@@ -42,16 +42,23 @@ def test_system_prompt_contains_adversarial_pathway_rubric():
 
 @mock.patch("urllib.request.urlopen")
 def test_adversarial_pathway_finding_emitted(mock_urlopen, monkeypatch):
-    """A DeepSeek response with an adversarial-pathway tuple emits a Finding."""
+    """A DeepSeek response with an adversarial-pathway tuple emits a Finding.
+
+    adversarial-pathway is block severity and IS in _BLOCK_CONTRADICTION_KINDS,
+    so a second cite-and-verify call is made.  The cite response affirms the
+    citation (substring of step 1's action text) so the tuple stays block.
+    """
     _env(monkeypatch)
     tuples = [{
         "kind": "adversarial-pathway",
         "step": 1,
-        "rationale": "Step 1 fetches arbitrary URL with no signature check.",
+        "rationale": "Step 1's `curl https://example.com` fetches an unsigned URL.",
     }]
-    # adversarial-pathway is block severity but NOT in _BLOCK_CONTRADICTION_KINDS,
-    # so no second cite-and-verify call is made — single urlopen call only.
-    mock_urlopen.return_value = _api_resp(json.dumps(tuples))
+    cite_resp = json.dumps([{"index": 0, "step": 1, "citation": "curl https://example.com"}])
+    mock_urlopen.side_effect = [
+        _api_resp(json.dumps(tuples)),
+        _api_resp(cite_resp),
+    ]
 
     result = llm_judge.evaluate(_SPEC, config=_CFG)
     kinds = [f.kind for f in result]
@@ -61,3 +68,27 @@ def test_adversarial_pathway_finding_emitted(mock_urlopen, monkeypatch):
 def test_known_kind_for_adversarial_pathway():
     """findings.KNOWN_KINDS already contains adversarial-pathway."""
     assert "adversarial-pathway" in findings.KNOWN_KINDS
+
+
+@mock.patch("urllib.request.urlopen")
+def test_adversarial_pathway_unfaithful_citation_demoted(mock_urlopen, monkeypatch):
+    """If cite-and-verify can't substantiate the adversarial-pathway tuple,
+    it must be demoted from block to warn (tier3-unfaithful-contradiction),
+    same as missing-producer/shallow-ownership."""
+    _env(monkeypatch)
+    contradiction_response = _api_resp(json.dumps([{
+        "kind": "adversarial-pathway",
+        "step": 1,
+        "rationale": "Step 1 has SQL injection.",  # nothing in spec proves this
+    }]))
+    # Cite-and-verify response: null citation → fail the substring match.
+    cite_response = _api_resp(json.dumps([{
+        "index": 0, "step": 1, "citation": None,
+    }]))
+    mock_urlopen.side_effect = [contradiction_response, cite_response]
+
+    result = llm_judge.evaluate(_SPEC, config=_CFG)
+    kinds = [f.kind for f in result]
+    assert "tier3-unfaithful-contradiction" in kinds
+    # The block-severity adversarial-pathway should NOT survive.
+    assert not any(f.kind == "adversarial-pathway" and f.severity == "block" for f in result)
