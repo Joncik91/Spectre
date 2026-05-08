@@ -2,6 +2,59 @@
 
 All notable changes to the Spectre plugin.
 
+## v0.7.0 — 2026-05-08
+
+**Added: cognitive-substrate contract (§8.2) + Tier 1 taint flow + adversarial-pathway rubric.**
+
+Spec evaluator now checks the cognitive-substrate contract (§8.2) on top of the technical contract (§8.1) — receiver fingerprint, trust boundaries, contextual binding, provenance, UX contract, possibility-walk, judgment-cap, ROI. Driven by vault concepts in `concepts/context-as-cognitive-substrate.md` (with adversarial review by Copilot/GPT-5.4).
+
+### Added — Substrate wizard (`bin/substrate_wizard.py`)
+
+- 4 mandatory questions fire at /vision Step 0.5: receiver fingerprint, trust profile, contextual binding, provenance.
+- Cache at `~/.spectre/substrate-cache/<author-spec-hash>.json`; author-spec hash strips the auto-injected §8.2 block so wizard injection doesn't invalidate its own cache.
+- Schema-versioned (`SUBSTRATE_WIZARD_VERSION = "0.7"`); mismatch → re-prompt.
+- CLI: `PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.substrate_wizard run --author-spec-hash <hex64>`.
+
+### Added — Tier 1 §8.2 + taint flow (`bin/substrate_ast.py`)
+
+- Required-field block checks: `receiver-fingerprint`, `trust-profile`, `contextual-binding`, `provenance`, `ux-contract` non-empty.
+- Warn-severity informational checks: `assumptions-killed` empty (block when steps>3), `requires-situated-judgment` claim cap = `max(1, floor(0.3 × n_steps))`, `roi-budget`.
+- **Per-step trust annotations** mandatory when `trust-profile` includes `untrusted-input` or `handles-secrets`. Missing annotation → block `trust-annotation-required`. Malformed value → warn + fail-closed default.
+- **Taint flow** with 4 sink categories: filesystem-write (`mutates:`), shell-eval (`bash -c`, `python -c`, `node -e`, `eval`, `$(...)`), SQL/template (`INSERT|UPDATE|REPLACE|DELETE FROM|jinja2|template_render|format_map`), network-egress (`curl|wget|httpie|http POST|PUT|--data|--data-binary|--data-urlencode|--data-raw|--post-file=|--upload-file|-d|-F|-T` with body from a tainted produces). `sanitizes:` clears taint on the OUTPUT, NOT the source. Source-step actions are sink-checked even when produces is empty.
+
+### Added — Tier 3 adversarial-pathway rubric (`bin/llm_judge.py`)
+
+- System prompt extended (~120 tokens) with adversarial-pathway rubric: for every step touching untrusted source, name the exploit class one move ahead.
+- New contradiction tuple kind `adversarial-pathway` (block-severity by default; CoT faithfulness pass demotes unfaithful citations).
+
+### Added — Envelope substrate binding
+
+- `bin/handoff_envelope.py` schema gains `substrate_sha256` field (SHA-256 over §8.2 bytes; empty string for pre-v0.7 specs). Included in the integrity-hash domain alongside `spec_sha256`/`sidecar_sha256`.
+- `bin/handoff_validator.py` Tier 0 verifies `substrate_sha256` matches live §8.2 bytes; tampering → block `envelope-tampered:substrate-bytes-changed:`. Pre-v0.7 envelope (field absent or empty) → warn `envelope-missing-substrate`, /implement proceeds.
+
+### Added — Sidecar substrate_resolution
+
+- `<slug>.eval.json` gains `substrate_resolution` dict: `receiver_hash`, `trust_profile`, `taint_outcome`, `provenance_chain`, `axis_completeness`. Wired through `spec_evaluator` so real /vision runs populate the field.
+
+### Added — Skill prose + template
+
+- `skills/vision/SKILL.md` Step 0.5 wires the wizard.
+- `specs/template.spec.md` documents §8.2 + per-step trust annotations.
+
+### Bumped
+
+- `EVALUATOR_VERSION = "0.7.0"`.
+- `marketplace.json` 0.6.2 → 0.7.0.
+
+### Tests
+
+- 38+ new test functions across `test_substrate_wizard.py`, `test_substrate_ast.py`, `test_llm_judge_adversarial.py`, `test_handoff_envelope_substrate.py`. Baseline 1280 → 1331+.
+
+### Vault sources
+
+- `/root/claude-obsidian/concepts/context-as-cognitive-substrate.md` (informing essay).
+- `/root/claude-obsidian/concepts/heidegger-predicted-gen-ai-comparison.md` (cross-essay engineering convergence).
+
 ## v0.6.2 — 2026-05-08
 
 **Fixed: contract-shadow false positive (#36) and Tier 3 silent-fail trio (#37).**

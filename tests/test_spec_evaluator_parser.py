@@ -281,6 +281,19 @@ Under 10 seconds.
 - `never-touches:` /home
 - `decision-budget:` none
 - `reboot-survival:` none
+
+### 8.2 Cognitive-substrate contract
+
+- receiver-fingerprint: claude-code+human
+- trust-profile: none
+- contextual-binding: issue #24 repro fixture
+- provenance: { kind: none }
+- assumptions-killed: manual copy per-unit (collapsed to two steps)
+- requires-situated-judgment: []
+- ux-contract:
+    on-success: service and timer installed
+    on-failure: reject; check journalctl
+    log-target: journald
 """
 
 

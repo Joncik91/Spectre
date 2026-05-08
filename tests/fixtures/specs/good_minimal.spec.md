@@ -69,8 +69,15 @@ Install completes in under 5 seconds on a warmed package cache.
 - `decision-budget:` none
 - `reboot-survival:` required
 
-### 8.2 Human-facing notes (informational only — `info` severity, never blocks)
+### 8.2 Cognitive-substrate contract
 
-- `assumes:` knows-systemd, knows-linux-filesystem
-- `runtime-flavor:` A8 (Debian 13, Ryzen 7 8745HS)
-- `expected-author-skill:` senior backend engineer
+- receiver-fingerprint: claude-code+human
+- trust-profile: none
+- contextual-binding: A8 (Debian 13, Ryzen 7 8745HS); senior backend engineer
+- provenance: { kind: none }
+- assumptions-killed: manual three-step install (collapsed to one), pip install (not needed)
+- requires-situated-judgment: []
+- ux-contract:
+    on-success: service active and enabled
+    on-failure: reject; check journalctl -u hello.service
+    log-target: journald

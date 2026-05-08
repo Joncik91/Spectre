@@ -52,6 +52,21 @@ KNOWN_KINDS = {
     # v0.6 — Tier 3 CoT faithfulness check (P3)
     "tier3-unfaithful-contradiction",
     "tier3-faithfulness-malformed",
+    # v0.7 — cognitive-substrate contract (§8.2)
+    "substrate-incomplete",
+    "trust-annotation-required",
+    "untrusted-flow-unguarded",
+    "secret-leak-suspected",
+    "judgment-claim-overused",
+    "assumptions-walk-empty",
+    "provenance-broken",
+    "provenance-weak-binding",
+    "receiver-mismatch",
+    "adversarial-pathway",
+    "cognitive-substrate-stale",
+    "malformed-trust-annotation",
+    "substrate-parse-error",
+    "envelope-missing-substrate",
 }
 
 # Severity mapping for Tier 3 contradiction tuple kinds (v0.5.2).
@@ -71,6 +86,8 @@ TIER3_CONTRADICTION_SEVERITY: dict[str, str] = {
     # v0.6 — Tier 3 CoT faithfulness check (P3)
     "tier3-unfaithful-contradiction": "warn",
     "tier3-faithfulness-malformed": "warn",
+    # v0.7 — adversarial-pathway rubric
+    "adversarial-pathway": "block",
 }
 
 SEVERITIES = {"block", "warn", "info"}

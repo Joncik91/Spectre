@@ -1,0 +1,186 @@
+"""Tests for substrate_sha256 field in handoff envelope (v0.7)."""
+import hashlib
+import json
+import pathlib
+
+import pytest
+
+from bin import handoff_envelope
+
+
+def _write_spec(tmp_path: pathlib.Path, body: str) -> pathlib.Path:
+    p = tmp_path / "test.spec.md"
+    p.write_text(body, encoding="utf-8")
+    return p
+
+
+def _write_sidecar(tmp_path: pathlib.Path) -> pathlib.Path:
+    data = {
+        "evaluator_version": "0.6.0",
+        "tiers_run": [1],
+        "policy_hash": "a" * 64,
+        "findings_summary": {"block_count": 0, "warn_count": 0, "info_count": 0, "dismissed_t3_count": 0},
+        "dismissals": [],
+        "deepseek_model_version": None,
+        "locked_at": "2026-05-07T00:00:00Z",
+    }
+    p = tmp_path / "test.spec.md.eval.json"
+    p.write_text(json.dumps(data), encoding="utf-8")
+    return p
+
+
+def _82_block_text() -> str:
+    return (
+        "\n### 8.2 Cognitive-substrate contract\n\n"
+        "- receiver-fingerprint: claude-code+human\n"
+        "- trust-profile: none\n"
+        "- contextual-binding: test\n"
+        "- provenance: { kind: none }\n"
+        "- ux-contract:\n"
+        "    on-success: ok\n"
+        "    on-failure: fail; check\n"
+        "    log-target: /tmp/log\n"
+    )
+
+
+def test_build_envelope_includes_substrate_sha256(tmp_path):
+    spec = _write_spec(tmp_path, "# spec\n" + _82_block_text())
+    sidecar = _write_sidecar(tmp_path)
+    walk = tmp_path / ".walk.json"
+    walk.write_text(json.dumps({"yield_history": [], "stop_reason": None}))
+    decisions_dir = tmp_path / "decisions"
+    decisions_dir.mkdir()
+    env = handoff_envelope.build(spec, sidecar, walk, decisions_dir)
+    assert "substrate_sha256" in env
+    assert len(env["substrate_sha256"]) == 64
+
+
+def test_substrate_sha256_matches_82_block_bytes(tmp_path):
+    body = "# spec\n" + _82_block_text()
+    spec = _write_spec(tmp_path, body)
+    sidecar = _write_sidecar(tmp_path)
+    walk = tmp_path / ".walk.json"
+    walk.write_text(json.dumps({"yield_history": [], "stop_reason": None}))
+    decisions_dir = tmp_path / "decisions"
+    decisions_dir.mkdir()
+    env = handoff_envelope.build(spec, sidecar, walk, decisions_dir)
+    expected = hashlib.sha256(_82_block_text().encode("utf-8")).hexdigest()
+    assert env["substrate_sha256"] == expected
+
+
+def test_envelope_without_82_block_has_empty_substrate_sha256(tmp_path):
+    """Pre-v0.7 spec (no §8.2) → substrate_sha256 is empty string sentinel."""
+    spec = _write_spec(tmp_path, "# spec\nno 8.2\n")
+    sidecar = _write_sidecar(tmp_path)
+    walk = tmp_path / ".walk.json"
+    walk.write_text(json.dumps({"yield_history": [], "stop_reason": None}))
+    decisions_dir = tmp_path / "decisions"
+    decisions_dir.mkdir()
+    env = handoff_envelope.build(spec, sidecar, walk, decisions_dir)
+    assert env["substrate_sha256"] == ""
+
+
+def test_integrity_hash_includes_substrate_sha256_in_payload(tmp_path):
+    """substrate_sha256 IS in the integrity hash domain — same as spec_sha256
+    and sidecar_sha256 in v0.6. Post-lock §8.2 byte tampering changes
+    integrity_hash and gets caught at Tier 0 verify."""
+    spec = _write_spec(tmp_path, "# spec\n")
+    sidecar = _write_sidecar(tmp_path)
+    walk = tmp_path / ".walk.json"
+    walk.write_text("{}")
+    decisions_dir = tmp_path / "decisions"
+    decisions_dir.mkdir()
+    env = handoff_envelope.build(spec, sidecar, walk, decisions_dir)
+    h1 = handoff_envelope.compute_integrity_hash(env)
+    env["substrate_sha256"] = "a" * 64
+    h2 = handoff_envelope.compute_integrity_hash(env)
+    assert h1 != h2, "substrate_sha256 must be in the integrity-hash domain"
+
+
+def _make_project(tmp_path: pathlib.Path, body: str):
+    """Set up a minimal project layout and return (project_path, spec_path, sidecar_path)."""
+    spec_dir = tmp_path / "specs"
+    spec_dir.mkdir()
+    state = tmp_path / "state"
+    state.mkdir()
+    decisions = tmp_path / "decisions"
+    decisions.mkdir()
+
+    spec = spec_dir / "test.spec.md"
+    spec.write_text(body, encoding="utf-8")
+
+    sidecar_data = {
+        "policy_hash": "a" * 64,
+        "contract_resolution": None,
+    }
+    sidecar = spec_dir / "test.spec.md.eval.json"
+    sidecar.write_text(json.dumps(sidecar_data), encoding="utf-8")
+
+    walk = state / ".walk.json"
+    walk.write_text(json.dumps({"yield_history": [], "stop_reason": None}), encoding="utf-8")
+
+    # .active stores path relative to project root
+    (spec_dir / ".active").write_text("specs/test.spec.md", encoding="utf-8")
+
+    return tmp_path, spec, sidecar, walk, decisions
+
+
+def test_validator_passes_when_substrate_matches(tmp_path):
+    """Locked spec with matching §8.2 hash → no envelope-tampered finding."""
+    from bin import handoff_validator
+
+    body = "# spec\n" + _82_block_text()
+    project_path, spec, sidecar, walk, decisions = _make_project(tmp_path, body)
+
+    env = handoff_envelope.build(spec, sidecar, walk, decisions)
+    env["integrity_hash"] = handoff_envelope.compute_integrity_hash(env)
+    envelope_path = handoff_envelope.envelope_path_for(spec)
+    envelope_path.write_text(json.dumps(env), encoding="utf-8")
+
+    violations = handoff_validator.validate_on_implement_start(project_path)
+    assert not any("substrate" in v for v in violations)
+
+
+def test_validator_blocks_when_substrate_tampered(tmp_path):
+    """Modifying §8.2 bytes after lock → envelope-tampered finding."""
+    from bin import handoff_validator
+
+    body = "# spec\n" + _82_block_text()
+    project_path, spec, sidecar, walk, decisions = _make_project(tmp_path, body)
+
+    env = handoff_envelope.build(spec, sidecar, walk, decisions)
+    env["integrity_hash"] = handoff_envelope.compute_integrity_hash(env)
+    envelope_path = handoff_envelope.envelope_path_for(spec)
+    envelope_path.write_text(json.dumps(env), encoding="utf-8")
+
+    # Tamper §8.2 — write new spec bytes so spec_sha256 still matches (we update envelope)
+    # but substrate_sha256 no longer matches the live §8.2 bytes.
+    tampered_body = body.replace("trust-profile: none", "trust-profile: untrusted-input")
+    spec.write_text(tampered_body, encoding="utf-8")
+    # Update spec_sha256 + sidecar_sha256 so only substrate mismatch fires.
+    import hashlib as _hashlib
+    env["spec_sha256"] = _hashlib.sha256(tampered_body.encode("utf-8")).hexdigest()
+    env["integrity_hash"] = handoff_envelope.compute_integrity_hash(env)
+    envelope_path.write_text(json.dumps(env), encoding="utf-8")
+
+    violations = handoff_validator.validate_on_implement_start(project_path)
+    assert any(v.startswith("envelope-tampered:substrate-bytes-changed:") for v in violations)
+
+
+def test_validator_warn_on_pre_v07_envelope(tmp_path):
+    """Envelope without substrate_sha256 → warn envelope-missing-substrate, no halt."""
+    from bin import handoff_validator
+
+    body = "# spec\n"
+    project_path, spec, sidecar, walk, decisions = _make_project(tmp_path, body)
+
+    env = handoff_envelope.build(spec, sidecar, walk, decisions)
+    # Strip substrate_sha256 to simulate pre-v0.7 envelope.
+    env.pop("substrate_sha256", None)
+    env["integrity_hash"] = handoff_envelope.compute_integrity_hash(env)
+    envelope_path = handoff_envelope.envelope_path_for(spec)
+    envelope_path.write_text(json.dumps(env), encoding="utf-8")
+
+    violations = handoff_validator.validate_on_implement_start(project_path)
+    # Pre-v0.7: no block-class envelope-tampered substrate finding.
+    assert not any("envelope-tampered" in v and "substrate" in v.lower() for v in violations)

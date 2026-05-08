@@ -31,6 +31,7 @@ from typing import Any
 
 from bin import findings as _findings
 from bin import spec_ast as _spec_ast
+from bin import substrate_ast as _substrate_ast
 from bin import spec_lint as _spec_lint
 from bin import coverage_gate as _coverage_gate
 from bin import resources as _resources
@@ -40,7 +41,7 @@ from bin import eval_metadata as _eval_metadata
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-EVALUATOR_VERSION = "0.6.2"
+EVALUATOR_VERSION = "0.7.0"
 TIER1_TIMEOUT_MS = 100
 TIER2_TIMEOUT_S = 2
 TIER3_TIMEOUT_S = 180  # legacy default — now used as chunk_timeout_s fallback
@@ -425,6 +426,7 @@ def evaluate(
 
     # ── Step 3: Tier 1 ──────────────────────────────────────────────────────
     tier1_findings = _spec_ast.classify(draft_path)
+    tier1_findings.extend(_substrate_ast.classify(draft_path))
     # Tier 1.5 spec-author lints (v0.3.1): runuser-no-cd, unsafe-heredoc.
     # Folded into Tier 1 results so callers see a single deterministic group.
     tier1_findings.extend(_spec_lint.lint_spec(draft_path))
@@ -544,6 +546,7 @@ def evaluate(
             "dismissed_t3_count": actually_dismissed_count,
         },
         "contract_resolution": _build_contract_resolution(bundle.spec_text),
+        "substrate_resolution": _eval_metadata.build_substrate_resolution(bundle.spec_text, filtered),
     }
 
     return EvaluatorResult(

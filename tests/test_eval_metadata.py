@@ -354,6 +354,57 @@ def test_write_sidecar_omits_contract_resolution_key_when_none(tmp_path):
     assert "contract_resolution" not in on_disk
 
 
+# ---------------------------------------------------------------------------
+# build_substrate_resolution
+# ---------------------------------------------------------------------------
+
+def test_build_substrate_resolution_complete_block():
+    """Well-formed §8.2 with no taint findings → axis_completeness=5, taint=pass."""
+    spec_text = (
+        "# spec\n\n"
+        "### 8.2 Cognitive-substrate contract\n\n"
+        "- receiver-fingerprint: claude-code+human\n"
+        "- trust-profile: untrusted-input, touches-network\n"
+        "- contextual-binding: test\n"
+        "- provenance: { kind: derived-from, parent-slug: foo, parent-envelope-sha256: " + ("a" * 64) + " }\n"
+        "- ux-contract:\n"
+        "    on-success: ok\n"
+        "    on-failure: bad\n"
+    )
+    res = eval_metadata.build_substrate_resolution(spec_text, [])
+    assert res["axis_completeness"] == 5
+    assert res["taint_outcome"] == "pass"
+    assert res["trust_profile"] == ["touches-network", "untrusted-input"]
+    assert res["provenance_chain"] == ["a" * 64]
+    assert res["receiver_hash"] != ""
+
+
+def test_build_substrate_resolution_blocked_when_taint_fires():
+    """A spec with untrusted-flow-unguarded finding → taint_outcome=blocked."""
+    from types import SimpleNamespace
+    spec_text = (
+        "### 8.2 Cognitive-substrate contract\n"
+        "- receiver-fingerprint: x\n"
+        "- trust-profile: untrusted-input\n"
+        "- contextual-binding: x\n"
+        "- provenance: { kind: none }\n"
+        "- ux-contract:\n"
+    )
+    fake_findings = [SimpleNamespace(kind="untrusted-flow-unguarded")]
+    res = eval_metadata.build_substrate_resolution(spec_text, fake_findings)
+    assert res["taint_outcome"] == "blocked"
+
+
+def test_build_substrate_resolution_no_82_block():
+    """Pre-v0.7 spec with no §8.2 → all fields empty/zero, no crash."""
+    res = eval_metadata.build_substrate_resolution("# spec without 8.2\n", [])
+    assert res["axis_completeness"] == 0
+    assert res["receiver_hash"] == ""
+    assert res["trust_profile"] == []
+    assert res["taint_outcome"] == "pass"  # no taint findings = pass
+    assert res["provenance_chain"] == []
+
+
 def test_evaluate_contract_spec_sidecar_contains_contract_resolution(tmp_path):
     """End-to-end: evaluate a spec with contracts, write sidecar, assert key on disk."""
     import shutil

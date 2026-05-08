@@ -49,6 +49,25 @@ Stdout: `TEMPLATES_AVAILABLE: N` followed by up to 10 ` <kind>: <name>` lines (e
 
 If templates exist, surface them as candidate starting points during Step 4's interrogation walk: "Your library has `<template_name>` (a `<kind>`). Import as a base for this spec? (import / no)". On `import`, call `templates.import_template(source_name=<name>, target_name=<slug>)`; the imported draft becomes the seed for the walk's draft materialization in Step 5.
 
+### Step 0.5 — Cognitive-substrate wizard (v0.7)
+
+Before §1 distillation, fire the substrate wizard. The wizard asks 4 mandatory questions to populate §8.2 (cognitive-substrate contract). Answers are cached at `~/.spectre/substrate-cache/<author-spec-hash>.json`; re-running /vision on an unchanged spec body skips re-prompting.
+
+```bash
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m bin.substrate_wizard run \
+  --author-spec-hash "$(printf %s "$DRAFT_BODY_NO_82" | sha256sum | awk '{print $1}')"
+```
+
+Capture stdout — that's the §8.2 markdown block. Inject it after §8.1 in the spec template.
+
+The 4 questions:
+1. **Receiver fingerprint** — claude-code+human / claude-code-autonomous / non-claude-ai / human-only.
+2. **Trust profile** — comma-separated subset of {untrusted-input, handles-secrets, touches-network, executes-generated-code} or "none".
+3. **Contextual binding** — one-line description of what this spec is FOR (the evaluator refuses replay as something else).
+4. **Provenance** — "none" or "derived-from <slug> <parent-envelope-sha256>".
+
+If `trust-profile` includes `untrusted-input` or `handles-secrets`, every step that produces an artifact MUST declare `untrusted-input: yes/no` and (when relevant) `sanitizes:` covering its sanitized OUTPUT. The evaluator's Tier 1 will block on missing annotations.
+
 ### Step 1 — Receive intent
 
 The user has typed `/vision <free-form text>`. Treat the text as **intent**, not as a spec. Anchor cwd via `pwd` to capture `$PROJECT`. If `$PROJECT` looks like a plugin cache (`/root/.claude/plugins/...`), HALT.
