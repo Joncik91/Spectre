@@ -627,3 +627,83 @@ def test_b3_multi_import_both_checked():
         assert any(f.kind == "unowned-requirement-heuristic" for f in fs)
     finally:
         _cleanup(p)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# v0.6.2 regression — issue #36: `from X import Y` symbol misclassified as module
+# ════════════════════════════════════════════════════════════════════════════
+
+
+def test_issue36_from_import_symbol_does_not_fire_as_unowned_module():
+    """`from foo.bar import baz` — `baz` is a SYMBOL, not a module.  The
+    IMPORT_ALT regex must skip spans already covered by IMPORT_RE (which
+    captures `foo.bar`)."""
+    p = _make_spec(
+        '- step: 1\n'
+        '  why: "create module"\n'
+        '  action: "mkdir -p /tmp/spectest/spectre_daemon && touch /tmp/spectest/spectre_daemon/blocklist.py"\n'
+        '  verification: "test -f /tmp/spectest/spectre_daemon/blocklist.py"\n'
+        '  produces:\n'
+        '    - "module:spectre_daemon.blocklist"\n'
+        '- step: 2\n'
+        '  why: "verify importable"\n'
+        '  action: "echo done"\n'
+        '  verification: \'python3 -c "from spectre_daemon.blocklist import is_blocked; print(is_blocked)"\'\n'
+        '  requires:\n'
+        '    - "module:spectre_daemon.blocklist"\n'
+    )
+    try:
+        fs = spec_ast.classify(p)
+        msgs = [f.message for f in fs if f.kind == "unowned-requirement-heuristic"]
+        assert msgs == [], f"unexpected heuristic findings: {msgs}"
+    finally:
+        _cleanup(p)
+
+
+def test_issue36_package_produces_shadows_submodule_requires():
+    """`package:foo` declared on step 1 must satisfy `module:foo.bar` required
+    by step 2 — parent-package match in contract resolution."""
+    p = _make_spec(
+        '- step: 1\n'
+        '  why: "create package"\n'
+        '  action: "mkdir -p /tmp/spectest/foo && touch /tmp/spectest/foo/__init__.py"\n'
+        '  verification: "test -f /tmp/spectest/foo/__init__.py"\n'
+        '  produces:\n'
+        '    - "package:foo"\n'
+        '- step: 2\n'
+        '  why: "verify submodule importable"\n'
+        '  action: "echo done"\n'
+        '  verification: "test -d /tmp/spectest/foo"\n'
+        '  requires:\n'
+        '    - "module:foo.bar"\n'
+    )
+    try:
+        fs = spec_ast.classify(p)
+        kinds = {f.kind for f in fs}
+        assert "unowned-requirement" not in kinds, f"unexpected unowned-requirement; got {kinds}"
+    finally:
+        _cleanup(p)
+
+
+def test_issue36_module_produces_shadows_deeper_module_requires():
+    """`module:foo.bar` declared on step 1 must satisfy `module:foo.bar.baz`
+    required by step 2 — parent-module match."""
+    p = _make_spec(
+        '- step: 1\n'
+        '  why: "create module"\n'
+        '  action: "echo init"\n'
+        '  verification: "true"\n'
+        '  produces:\n'
+        '    - "module:foo.bar"\n'
+        '- step: 2\n'
+        '  why: "verify deeper module"\n'
+        '  action: "echo done"\n'
+        '  verification: "true"\n'
+        '  requires:\n'
+        '    - "module:foo.bar.baz"\n'
+    )
+    try:
+        fs = spec_ast.classify(p)
+        assert not any(f.kind == "unowned-requirement" for f in fs)
+    finally:
+        _cleanup(p)
