@@ -40,7 +40,7 @@ _REQUIRED_FIELDS: dict[str, Any] = {
     # v0.6 artifact byte-hashes — included in integrity_hash payload
     "spec_sha256": str,
     "sidecar_sha256": (str, type(None)),  # None when sidecar absent (pre-v0.6)
-    # v0.7 §8.2 block hash — excluded from integrity_hash (payload pointer)
+    # v0.7 §8.2 block hash — included in integrity_hash (same as spec/sidecar hashes)
     "substrate_sha256": str,  # "" sentinel when §8.2 absent (backward compat)
     "integrity_hash": str,
     "created_at": str,
@@ -105,8 +105,6 @@ def validate(envelope: dict) -> list[str]:
 
 _HASH_EXCLUDE_KEYS: frozenset[str] = frozenset({
     "integrity_hash",
-    # v0.7: substrate bytes-hash is a payload pointer, excluded from metadata domain
-    "substrate_sha256",
 })
 
 
@@ -115,8 +113,10 @@ def compute_integrity_hash(envelope: dict) -> str:
 
     Excluded keys (see _HASH_EXCLUDE_KEYS):
     - integrity_hash: excluded to avoid circularity
-    - substrate_sha256: payload pointer, not metadata — excluded so consumers
-      can re-derive or verify it independently without invalidating the hash
+
+    substrate_sha256 is included alongside spec_sha256 and sidecar_sha256 —
+    all three byte-hashes are in the integrity-hash domain so post-lock §8.2
+    tampering is caught at Tier 0 verify (same tamper-detection property as v0.6).
 
     Uses sort_keys=True, separators=(',',':'), ensure_ascii=False for
     canonical serialization.
@@ -194,8 +194,8 @@ def build(
     sidecar_sha256 = hashlib.sha256(sidecar_path.read_bytes()).hexdigest()
 
     # v0.7: hash the §8.2 block bytes if present, else empty string sentinel.
-    # substrate_sha256 is excluded from compute_integrity_hash() (payload pointer,
-    # not metadata) — see _HASH_EXCLUDE_KEYS.
+    # substrate_sha256 is included in compute_integrity_hash() alongside
+    # spec_sha256/sidecar_sha256 — post-lock §8.2 tampering changes integrity_hash.
     spec_text = spec_bytes.decode("utf-8")
     _m = _82_BLOCK_RE.search(spec_text)
     substrate_sha256 = (

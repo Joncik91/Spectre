@@ -80,17 +80,18 @@ def test_envelope_without_82_block_has_empty_substrate_sha256(tmp_path):
     assert env["substrate_sha256"] == ""
 
 
-def test_integrity_hash_excludes_substrate_sha256_from_metadata_domain(tmp_path):
-    """Changing substrate_sha256 should NOT change integrity_hash on its own
-    (same exclusion pattern as spec_sha256 / sidecar_sha256 in v0.6)."""
+def test_integrity_hash_includes_substrate_sha256_in_payload(tmp_path):
+    """substrate_sha256 IS in the integrity hash domain — same as spec_sha256
+    and sidecar_sha256 in v0.6. Post-lock §8.2 byte tampering changes
+    integrity_hash and gets caught at Tier 0 verify."""
     spec = _write_spec(tmp_path, "# spec\n")
     sidecar = _write_sidecar(tmp_path)
     walk = tmp_path / ".walk.json"
-    walk.write_text(json.dumps({"yield_history": [], "stop_reason": None}))
+    walk.write_text("{}")
     decisions_dir = tmp_path / "decisions"
     decisions_dir.mkdir()
     env = handoff_envelope.build(spec, sidecar, walk, decisions_dir)
     h1 = handoff_envelope.compute_integrity_hash(env)
     env["substrate_sha256"] = "a" * 64
     h2 = handoff_envelope.compute_integrity_hash(env)
-    assert h1 == h2
+    assert h1 != h2, "substrate_sha256 must be in the integrity-hash domain"
