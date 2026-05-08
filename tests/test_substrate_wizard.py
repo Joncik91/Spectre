@@ -102,3 +102,83 @@ def test_compute_author_spec_hash_excludes_82_block_followed_by_another_heading(
         substrate_wizard.compute_author_spec_hash(body_no_82)
         == substrate_wizard.compute_author_spec_hash(body_with_82)
     )
+
+
+def test_run_with_all_answers_returns_82_markdown(monkeypatch, tmp_path):
+    """Wizard with mock prompts returns a complete §8.2 block."""
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    answers_iter = iter([
+        "1",                                  # receiver: claude-code+human
+        "untrusted-input,touches-network",    # trust-profile
+        "fetch external metadata for indexer",  # contextual-binding
+        "none",                                # provenance
+    ])
+
+    def fake_prompt(question: str) -> str:
+        return next(answers_iter)
+
+    block = substrate_wizard.run("hash-abc", prompt_fn=fake_prompt)
+    assert "### 8.2 Cognitive-substrate contract" in block
+    assert "claude-code+human" in block
+    assert "untrusted-input" in block
+    assert "touches-network" in block
+    assert "fetch external metadata for indexer" in block
+    assert "kind: none" in block
+
+
+def test_run_writes_cache(monkeypatch, tmp_path):
+    """A successful run persists answers to the cache."""
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    answers_iter = iter(["1", "none", "test", "none"])
+    substrate_wizard.run(
+        "hash-cache", prompt_fn=lambda _q: next(answers_iter)
+    )
+    cached = substrate_wizard.read_cache("hash-cache")
+    assert cached is not None
+    assert cached["receiver-fingerprint"] == "claude-code+human"
+
+
+def test_run_uses_cache_when_present(monkeypatch, tmp_path):
+    """If a fresh cache exists, run() uses it without re-prompting."""
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    substrate_wizard.write_cache("hash-fresh", {
+        "receiver-fingerprint": "claude-code-autonomous",
+        "trust-profile": [],
+        "contextual-binding": "x",
+        "provenance": {"kind": "none"},
+    })
+
+    def fail_prompt(_q):
+        raise AssertionError("should not prompt when cache is fresh")
+
+    block = substrate_wizard.run("hash-fresh", prompt_fn=fail_prompt)
+    assert "claude-code-autonomous" in block
+
+
+def test_run_raises_runtime_error_on_eof(monkeypatch, tmp_path):
+    """EOFError from prompt_fn raises RuntimeError signalling 'deferred'."""
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+
+    def eof_prompt(_q):
+        raise EOFError()
+
+    with pytest.raises(RuntimeError, match="deferred"):
+        substrate_wizard.run("hash-eof", prompt_fn=eof_prompt)
+
+
+def test_run_provenance_with_parent_envelope_hash(monkeypatch, tmp_path):
+    """Provenance answer in 'derived-from <slug> <sha>' form parses both fields."""
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    parent_sha = "f" * 64
+    answers_iter = iter([
+        "1",
+        "none",
+        "derived spec",
+        f"derived-from foo-bar {parent_sha}",
+    ])
+    block = substrate_wizard.run(
+        "hash-deriv", prompt_fn=lambda _q: next(answers_iter)
+    )
+    assert "kind: derived-from" in block
+    assert "parent-slug: foo-bar" in block
+    assert f"parent-envelope-sha256: {parent_sha}" in block

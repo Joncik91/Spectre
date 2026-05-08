@@ -87,3 +87,142 @@ def read_cache(author_spec_hash: str) -> dict | None:
     if body.get("schema_version") != SUBSTRATE_WIZARD_VERSION:
         return None
     return body.get("answers")
+
+
+_RECEIVER_TIERS = {
+    "1": "claude-code+human",
+    "2": "claude-code-autonomous",
+    "3": "non-claude-ai",
+    "4": "human-only",
+}
+
+_VALID_TRUST_TOKENS = frozenset({
+    "untrusted-input",
+    "handles-secrets",
+    "touches-network",
+    "executes-generated-code",
+    "none",
+})
+
+
+def _ask_receiver(prompt_fn) -> str:
+    """Q1: receiver fingerprint. Returns canonical string."""
+    raw = prompt_fn(
+        "Receiver?\n"
+        "  1) claude-code+human (default — Claude Code with human reviewing halts)\n"
+        "  2) claude-code-autonomous (Claude Code, no human in loop)\n"
+        "  3) non-claude-ai (Codex / Cursor / other vendor)\n"
+        "  4) human-only (no AI implementer)\n"
+        "Choice [1]: "
+    ).strip() or "1"
+    if raw not in _RECEIVER_TIERS:
+        raise ValueError(f"invalid receiver tier: {raw!r}")
+    return _RECEIVER_TIERS[raw]
+
+
+def _ask_trust_profile(prompt_fn) -> list[str]:
+    """Q2: trust profile. Comma-separated tokens or 'none'."""
+    raw = prompt_fn(
+        "Trust profile (comma-separated, or 'none'):\n"
+        "  untrusted-input | handles-secrets | touches-network | executes-generated-code\n"
+        "Choice: "
+    ).strip()
+    if not raw or raw == "none":
+        return []
+    tokens = [t.strip() for t in raw.split(",") if t.strip()]
+    for t in tokens:
+        if t not in _VALID_TRUST_TOKENS:
+            raise ValueError(f"unknown trust token: {t!r}")
+    return tokens
+
+
+def _ask_contextual_binding(prompt_fn) -> str:
+    """Q3: one-line description of what this spec is FOR."""
+    raw = prompt_fn(
+        "Contextual binding (one-line description of what this spec is FOR;\n"
+        "the evaluator will refuse to replay it as something else):\n"
+    ).strip()
+    if not raw:
+        raise ValueError("contextual-binding must not be empty")
+    return raw
+
+
+def _ask_provenance(prompt_fn) -> dict:
+    """Q4: provenance. 'none' or 'derived-from <slug> <parent-envelope-sha256>'."""
+    raw = prompt_fn(
+        "Provenance:\n"
+        "  none — fresh spec\n"
+        "  derived-from <slug> <parent-envelope-sha256> — fork of an existing locked spec\n"
+        "Choice: "
+    ).strip()
+    if not raw or raw == "none":
+        return {"kind": "none"}
+    parts = raw.split()
+    if len(parts) != 3 or parts[0] != "derived-from":
+        raise ValueError(
+            "provenance must be 'none' or 'derived-from <slug> <hex64-sha256>'"
+        )
+    _, slug, sha = parts
+    if len(sha) != 64 or not all(c in "0123456789abcdef" for c in sha.lower()):
+        raise ValueError(f"invalid parent envelope sha256: {sha!r}")
+    return {
+        "kind": "derived-from",
+        "parent-slug": slug,
+        "parent-envelope-sha256": sha.lower(),
+    }
+
+
+def _format_82_block(answers: dict) -> str:
+    """Render answers into a §8.2 markdown block (canonical schema)."""
+    receiver = answers["receiver-fingerprint"]
+    trust = answers["trust-profile"]
+    trust_str = ", ".join(trust) if trust else "none"
+    binding = answers["contextual-binding"]
+    prov = answers["provenance"]
+    if prov["kind"] == "none":
+        prov_str = "{ kind: none }"
+    else:
+        prov_str = (
+            "{ kind: derived-from, "
+            f"parent-slug: {prov['parent-slug']}, "
+            f"parent-envelope-sha256: {prov['parent-envelope-sha256']} }}"
+        )
+    return (
+        "\n### 8.2 Cognitive-substrate contract\n\n"
+        f"- receiver-fingerprint: {receiver}\n"
+        f"- trust-profile: {trust_str}\n"
+        f"- contextual-binding: {binding}\n"
+        f"- provenance: {prov_str}\n"
+        "- ux-contract:\n"
+        "    on-success: <one-line operator-visible message>\n"
+        "    on-failure: <one-line operator-visible message + remediation hint>\n"
+        "    log-target: <path or stream>\n"
+        "- assumptions-killed: <list of considered-and-ruled-out alternatives>\n"
+        "- requires-situated-judgment: <list of step IDs>\n"
+        "- roi-budget: <yield-curve slope target / scaffolding cost ceiling>\n"
+    )
+
+
+def run(author_spec_hash: str, *, prompt_fn) -> str:
+    """Fire the 4 mandatory questions; return §8.2 markdown.
+
+    Uses cached answers when fresh. Raises RuntimeError('deferred') if
+    prompt_fn raises EOFError (non-interactive caller).
+    """
+    cached = read_cache(author_spec_hash)
+    if cached is not None:
+        return _format_82_block(cached)
+    try:
+        answers = {
+            "receiver-fingerprint": _ask_receiver(prompt_fn),
+            "trust-profile": _ask_trust_profile(prompt_fn),
+            "contextual-binding": _ask_contextual_binding(prompt_fn),
+            "provenance": _ask_provenance(prompt_fn),
+        }
+    except EOFError as exc:
+        raise RuntimeError(
+            "substrate-wizard deferred: non-interactive caller (EOF). "
+            "Re-run /vision interactively to lock §8.2."
+        ) from exc
+    write_cache(author_spec_hash, answers)
+    return _format_82_block(answers)
