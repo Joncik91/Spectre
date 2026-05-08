@@ -226,3 +226,37 @@ def run(author_spec_hash: str, *, prompt_fn) -> str:
         ) from exc
     write_cache(author_spec_hash, answers)
     return _format_82_block(answers)
+
+
+def _stdin_prompt(question: str) -> str:
+    """Default prompt_fn for the CLI: print question to stderr, read stdin."""
+    import sys
+    sys.stderr.write(question)
+    sys.stderr.flush()
+    line = sys.stdin.readline()
+    if not line:
+        raise EOFError()
+    return line.rstrip("\n")
+
+
+def _main() -> int:
+    import argparse
+    import sys
+    parser = argparse.ArgumentParser(prog="substrate_wizard")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p_run = sub.add_parser("run", help="Run the wizard interactively.")
+    p_run.add_argument("--author-spec-hash", required=True)
+    args = parser.parse_args()
+    if args.cmd == "run":
+        try:
+            block = run(args.author_spec_hash, prompt_fn=_stdin_prompt)
+        except RuntimeError as exc:
+            sys.stderr.write(f"ERROR: {exc}\n")
+            return 1
+        sys.stdout.write(block)
+        return 0
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

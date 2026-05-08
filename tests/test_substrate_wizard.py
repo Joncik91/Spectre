@@ -182,3 +182,26 @@ def test_run_provenance_with_parent_envelope_hash(monkeypatch, tmp_path):
     assert "kind: derived-from" in block
     assert "parent-slug: foo-bar" in block
     assert f"parent-envelope-sha256: {parent_sha}" in block
+
+
+def test_cli_run_prints_82_block(tmp_path, monkeypatch):
+    """CLI 'run' subcommand reads stdin answers + prints §8.2 markdown."""
+    import subprocess
+    import sys
+
+    env = {
+        **__import__("os").environ,
+        "HOME": str(tmp_path),
+    }
+    answers = "1\nnone\ntest binding\nnone\n"
+    result = subprocess.run(
+        [sys.executable, "-m", "bin.substrate_wizard", "run",
+         "--author-spec-hash", "cli-hash"],
+        input=answers,
+        capture_output=True,
+        text=True,
+        env={**env, "PYTHONPATH": "."},
+    )
+    assert result.returncode == 0
+    assert "### 8.2 Cognitive-substrate contract" in result.stdout
+    assert "claude-code+human" in result.stdout
