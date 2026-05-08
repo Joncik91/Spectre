@@ -86,6 +86,8 @@ TIER3_CONTRADICTION_SEVERITY: dict[str, str] = {
     # v0.6 — Tier 3 CoT faithfulness check (P3)
     "tier3-unfaithful-contradiction": "warn",
     "tier3-faithfulness-malformed": "warn",
+    # v0.7 — adversarial-pathway rubric
+    "adversarial-pathway": "block",
 }
 
 SEVERITIES = {"block", "warn", "info"}

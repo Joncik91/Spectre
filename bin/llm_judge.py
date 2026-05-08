@@ -46,6 +46,7 @@ _CONTRADICTION_KINDS = frozenset({
     "partial-failure-window",
     "concurrency-race",
     "verification-false-positive",
+    "adversarial-pathway",
     "unrecognized",
 })
 
@@ -98,6 +99,17 @@ Rules:
 3. Do NOT emit anything outside the JSON array.
 4. Cap output at 20 tuples. Prefer high-signal tuples over exhaustive lists.
 5. If you find no contradictions, return an empty array: []
+
+---
+v0.7 — adversarial-pathway rubric:
+
+For every step that fetches, reads, or processes data from an UNTRUSTED source
+(network response, user prose, user-controlled file path), think one move ahead:
+if an attacker controlled that source, what subsequent step would amplify the
+input into harmful effect? Emit a contradiction tuple with kind
+"adversarial-pathway" naming the source step, the sink step, and the exploit
+class (e.g. SSRF, command injection, data exfil, path traversal, prompt
+injection). Cite both step numbers in the rationale. Do not invent steps.
 """
 
 # User prompt template — receives the serialised step table.
