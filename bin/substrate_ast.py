@@ -20,7 +20,7 @@ _BLOCK_SEVERITY_FIELDS = (
 )
 
 _82_BLOCK_RE = re.compile(
-    r"^###\s+8\.2\b.*?(?=^##\s|\Z)", re.DOTALL | re.MULTILINE
+    r"^###\s+8\.2\b.*?(?=^##\s|^###\s|\Z)", re.DOTALL | re.MULTILINE
 )
 
 

@@ -124,3 +124,24 @@ def test_missing_required_field_emits_substrate_incomplete(missing_field, expect
         assert any(expected_message_token in m for m in msgs)
     finally:
         _cleanup(p)
+
+
+def test_82_block_does_not_swallow_following_subsection():
+    """§8.2 followed by §8.3 must not bleed into the §8.3 contents."""
+    body = (
+        _HEADER_AND_FOOTER["header"]
+        + '- step: 1\n  why: "x"\n  action: "echo"\n  verification: "true"\n'
+        + _HEADER_AND_FOOTER["footer_complete_82"]
+        + "\n### 8.3 Future\n- foo: this-must-not-leak-into-82\n"
+    )
+    f = tempfile.NamedTemporaryFile(
+        suffix=".spec.md", mode="w", delete=False, encoding="utf-8"
+    )
+    f.write(body)
+    f.close()
+    p = pathlib.Path(f.name)
+    try:
+        block = substrate_ast._extract_82_block(p.read_text())
+        assert "this-must-not-leak-into-82" not in block
+    finally:
+        _cleanup(p)
