@@ -7,8 +7,9 @@ Public API (per Decision 8 of the v0.3 Plan A brief):
   - write_sidecar(spec_path, *, ...) -> pathlib.Path
   - validate_no_severity_downgrade(default_severity, override_severity) -> None
   - load_severity_overrides_from_config(config_path) -> dict[str, str]
+  - build_substrate_resolution(spec_text, findings_list) -> dict
 
-Stdlib only: hashlib, json, os, tempfile, pathlib, tomllib, datetime.
+Stdlib only: hashlib, json, os, re, tempfile, pathlib, tomllib, datetime.
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import tempfile
 import tomllib
 from datetime import datetime, timezone
@@ -161,6 +163,65 @@ def sidecar_path_for(spec_path: pathlib.Path) -> pathlib.Path:
 
 
 # ---------------------------------------------------------------------------
+# build_substrate_resolution
+# ---------------------------------------------------------------------------
+
+_82_BLOCK_RE_SIDECAR = re.compile(r"\n###\s+8\.2\b.*?(?=\n##\s|\n###\s|\Z)", re.DOTALL)
+
+
+def build_substrate_resolution(spec_text: str, findings_list) -> dict:
+    """Summarize the §8.2 cognitive-substrate outcome for the sidecar.
+
+    Returns a dict with five keys:
+      - receiver_hash       sha-256 of the receiver-fingerprint value (or "" if absent)
+      - trust_profile       sorted list of trust-profile tokens
+      - taint_outcome       "pass" or "blocked" (blocked when any
+                            untrusted-flow-unguarded finding is present)
+      - provenance_chain    list of parent-envelope SHA-256s (direct parent only in v0.7)
+      - axis_completeness   count of present §8.2 block-severity fields out of 5
+                            (receiver-fingerprint, trust-profile, contextual-binding,
+                            provenance, ux-contract)
+    """
+    block_match = _82_BLOCK_RE_SIDECAR.search(spec_text)
+    block = block_match.group(0) if block_match else ""
+
+    def _scalar(name: str) -> str:
+        m = re.search(rf"^\s*-\s+{re.escape(name)}\s*:\s*(.+)$", block, re.MULTILINE)
+        return m.group(1).strip() if m else ""
+
+    receiver = _scalar("receiver-fingerprint")
+    trust_raw = _scalar("trust-profile")
+    trust = (
+        sorted({t.strip() for t in trust_raw.split(",") if t.strip()})
+        if trust_raw and trust_raw != "none"
+        else []
+    )
+    taint_outcome = (
+        "blocked"
+        if any(getattr(f, "kind", "") == "untrusted-flow-unguarded" for f in findings_list)
+        else "pass"
+    )
+    provenance_chain: list[str] = []
+    prov_match = re.search(
+        r"parent-envelope-sha256:\s*([0-9a-f]{64})", block, re.IGNORECASE
+    )
+    if prov_match:
+        provenance_chain.append(prov_match.group(1).lower())
+    axis_completeness = sum(
+        1
+        for k in ("receiver-fingerprint", "trust-profile", "contextual-binding", "provenance")
+        if _scalar(k)
+    ) + (1 if "ux-contract" in block else 0)
+    return {
+        "receiver_hash": hashlib.sha256(receiver.encode("utf-8")).hexdigest() if receiver else "",
+        "trust_profile": trust,
+        "taint_outcome": taint_outcome,
+        "provenance_chain": provenance_chain,
+        "axis_completeness": axis_completeness,
+    }
+
+
+# ---------------------------------------------------------------------------
 # write_sidecar
 # ---------------------------------------------------------------------------
 
@@ -177,6 +238,7 @@ def write_sidecar(
     policy_hash: str,
     findings_summary: dict | None = None,
     contract_resolution: dict | None = None,
+    substrate_resolution: dict | None = None,
 ) -> pathlib.Path:
     """Atomic write of <spec>.eval.json next to the spec file.
 
@@ -238,6 +300,9 @@ def write_sidecar(
 
     if contract_resolution is not None:
         payload["contract_resolution"] = contract_resolution
+
+    if substrate_resolution is not None:
+        payload["substrate_resolution"] = substrate_resolution
 
     # Atomic write: mkstemp + os.replace
     fd, tmp = tempfile.mkstemp(
