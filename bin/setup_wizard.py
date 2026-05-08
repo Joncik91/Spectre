@@ -32,8 +32,10 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 import sys
 import tempfile
+import time
 
 
 def config_path_default() -> pathlib.Path:
@@ -145,6 +147,68 @@ def write_config(
         raise
 
 
+_STALE_MODELS: frozenset[str] = frozenset({"deepseek-reasoner", "deepseek-chat"})
+
+
+def _detect_stale_config(target: pathlib.Path) -> tuple[bool, dict[str, str]]:
+    """Inspect an existing reviewer.toml and decide whether it needs migration.
+
+    Returns ``(is_stale, preserved)`` where ``preserved`` maps the fields we
+    want to carry across migration (``enabled``, ``api_key_env``).
+
+    Stale conditions (any one triggers migration):
+      - ``model`` is in ``_STALE_MODELS`` (e.g. ``deepseek-reasoner`` from v0.5.0)
+      - ``chunk_timeout_s`` field is missing (predates v0.5.1 #25 split-timeout)
+      - ``total_timeout_s`` field is missing (predates v0.5.1 #25 split-timeout)
+    """
+    try:
+        body = target.read_text(encoding="utf-8")
+    except OSError:
+        return False, {}
+
+    def _match(field: str) -> str | None:
+        m = re.search(rf'^\s*{re.escape(field)}\s*=\s*"?([^"\n]+)"?', body, re.MULTILINE)
+        return m.group(1).strip() if m else None
+
+    model = _match("model")
+    has_chunk = re.search(r"^\s*chunk_timeout_s\s*=", body, re.MULTILINE) is not None
+    has_total = re.search(r"^\s*total_timeout_s\s*=", body, re.MULTILINE) is not None
+
+    is_stale = (
+        (model is not None and model in _STALE_MODELS)
+        or not has_chunk
+        or not has_total
+    )
+
+    preserved: dict[str, str] = {}
+    enabled = _match("enabled")
+    if enabled is not None:
+        preserved["enabled"] = enabled.lower()
+    api_key_env = _match("api_key_env")
+    if api_key_env is not None:
+        preserved["api_key_env"] = api_key_env
+
+    return is_stale, preserved
+
+
+def _migrate_stale_config(target: pathlib.Path, preserved: dict[str, str]) -> pathlib.Path:
+    """Back up the stale reviewer.toml and rewrite with current defaults.
+
+    Returns the backup path so the caller can surface it to the user.
+    """
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    backup = target.with_suffix(f".toml.bak-{ts}")
+    try:
+        backup.write_bytes(target.read_bytes())
+        os.chmod(backup, 0o600)
+    except OSError:
+        pass
+    enabled = preserved.get("enabled", "false") == "true"
+    api_key_env = preserved.get("api_key_env", "DEEPSEEK_API_KEY")
+    write_config(target, enabled=enabled, api_key_env=api_key_env)
+    return backup
+
+
 def maybe_provision(
     target: pathlib.Path,
     *,
@@ -155,6 +219,9 @@ def maybe_provision(
 
     Outcomes:
       - "exists"        — config already present, no-op.
+      - "migrated"      — stale config (v0.5.0-era model or pre-v0.5.1 single
+                          timeout field) detected; backed up and rewritten
+                          with current defaults.
       - "enabled"       — key found; Tier 3 enabled silently.
       - "setup-skipped" — no key found; enabled=false placeholder written silently.
 
@@ -169,6 +236,15 @@ def maybe_provision(
     To re-prompt provisioning: delete ~/.spectre/reviewer.toml.
     """
     if target.exists():
+        is_stale, preserved = _detect_stale_config(target)
+        if is_stale:
+            backup = _migrate_stale_config(target, preserved)
+            print(
+                f"reviewer.toml migrated to v0.6.2 schema (deepseek-v4-flash + "
+                f"split timeouts); backup at {backup}",
+                file=sys.stderr,
+            )
+            return "migrated"
         return "exists"
 
     detection = detect_api_key(env_var_name=api_key_env, secrets_file_path=secrets_file_path)

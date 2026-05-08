@@ -863,10 +863,26 @@ def _run_contradiction_prompt(
             f" ({config.total_timeout_s}s wall-clock budget exceeded)"
         )]
     except urllib.error.HTTPError as exc:
-        kind_label = f"http-{exc.code}"
+        # v0.6.2 (#37): distinguish auth failures from provider/transient errors so
+        # the user knows whether to check ~/.spectre/secrets.env or wait and retry.
+        if exc.code in (401, 403):
+            return [_unavailable(
+                f"Tier 3 unavailable: auth failure (HTTP {exc.code} —"
+                f" check ~/.spectre/secrets.env or {config.api_key_env})"
+            )]
+        if exc.code == 400:
+            return [_unavailable(
+                f"Tier 3 unavailable: bad request (HTTP 400 — model"
+                f" {config.model!r} may be unavailable on your plan)"
+            )]
+        if 500 <= exc.code <= 599:
+            return [_unavailable(
+                f"Tier 3 unavailable: provider error after {total_attempts} attempts"
+                f" (HTTP {exc.code})"
+            )]
         return [_unavailable(
             f"Tier 3 unavailable: contradiction-prompt after {total_attempts} attempts"
-            f" (last error: {kind_label})"
+            f" (last error: http-{exc.code})"
         )]
     except urllib.error.URLError:
         return [_unavailable(

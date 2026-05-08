@@ -232,7 +232,15 @@ tier 3: PASS (n findings)        # if tiers_run includes 3
 tier 3: SKIPPED (<reason>)        # if a tier3-unavailable finding is present
 ```
 
-Reasons for SKIPPED come from the `tier3-unavailable` finding's `message` field: `config-missing`, `disabled-in-config`, or `no-api-key`. The user should always see one line per tier — the goal is to make Tier 3 status as visible as Tiers 1 and 2.
+Reasons for SKIPPED come from the `tier3-unavailable` finding's `message` field: `config-missing`, `disabled-in-config`, `no-api-key`, `auth failure (HTTP 401/403 …)`, `provider error (HTTP 5xx)`, `bad request`, or `socket-timeout`. The user should always see one line per tier — the goal is to make Tier 3 status as visible as Tiers 1 and 2.
+
+**v0.6.2 (#37) — auth-failure prominence.** When the `tier3-unavailable` message contains the substring `auth failure`, prepend a separate banner ABOVE the tier status block so the user can act on it without scanning findings:
+
+```
+⚠ Tier 3 unavailable due to auth — fix ~/.spectre/secrets.env or DEEPSEEK_API_KEY then re-run /vision.
+```
+
+The banner must precede the `tier 1/2/3` lines and be visible regardless of how many other findings the evaluator emitted. This catches the "Tier 3 silently degraded after a stale-config migration" failure mode.
 
 Interpret the result:
 
