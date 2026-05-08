@@ -164,7 +164,7 @@ def test_validator_blocks_when_substrate_tampered(tmp_path):
     envelope_path.write_text(json.dumps(env), encoding="utf-8")
 
     violations = handoff_validator.validate_on_implement_start(project_path)
-    assert any("substrate" in v.lower() for v in violations)
+    assert any(v.startswith("envelope-tampered:substrate-bytes-changed:") for v in violations)
 
 
 def test_validator_warn_on_pre_v07_envelope(tmp_path):

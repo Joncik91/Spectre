@@ -74,7 +74,8 @@ def validate_on_implement_start(project_path: pathlib.Path) -> list[str]:
     # We strip it from schema_violations here and handle it in Step 9 instead.
     schema_violations = handoff_envelope.validate(stored_envelope)
     hard_schema_violations = [
-        v for v in schema_violations if v != "missing field: substrate_sha256"
+        v for v in schema_violations
+        if v != handoff_envelope.MISSING_FIELD_PREFIX + "substrate_sha256"
     ]
     if hard_schema_violations:
         return [f"envelope-malformed: {v}" for v in hard_schema_violations]

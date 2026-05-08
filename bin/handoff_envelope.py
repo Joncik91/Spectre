@@ -27,6 +27,10 @@ from typing import Any
 _PROTOCOL_VERSION = "0.6"
 _RECEIVER = "claude-code-implementer"
 
+#: Prefix for missing-field error messages. Used by substrate-validator to
+#: intercept pre-v0.7 envelopes safely (avoids string-matching brittle templates).
+MISSING_FIELD_PREFIX = "missing field: "
+
 _REQUIRED_FIELDS: dict[str, Any] = {
     "protocol_version": str,
     "receiver": str,
@@ -67,7 +71,7 @@ def validate(envelope: dict) -> list[str]:
 
     for field, expected_type in _REQUIRED_FIELDS.items():
         if field not in envelope:
-            violations.append(f"missing field: {field}")
+            violations.append(f"{MISSING_FIELD_PREFIX}{field}")
             continue
 
         value = envelope[field]
