@@ -76,3 +76,29 @@ def test_compute_author_spec_hash_excludes_82_block():
     body_with_82 = body_no_82 + "\n### 8.2 Cognitive-substrate contract\n- foo: bar\n"
     assert substrate_wizard.compute_author_spec_hash(body_no_82) == \
            substrate_wizard.compute_author_spec_hash(body_with_82)
+
+
+def test_compute_author_spec_hash_excludes_82_block_followed_by_another_heading():
+    """§8.2 block in the MIDDLE of a spec (followed by ## 9. ...) is also stripped."""
+    body_no_82 = (
+        "# Spec\n"
+        "## 8. Receiver\n"
+        "### 8.1 Hard contract\n"
+        "- foo: bar\n"
+        "## 9. Out of scope\n"
+        "- nothing\n"
+    )
+    body_with_82 = (
+        "# Spec\n"
+        "## 8. Receiver\n"
+        "### 8.1 Hard contract\n"
+        "- foo: bar\n"
+        "\n### 8.2 Cognitive-substrate contract\n"
+        "- receiver-fingerprint: claude-code+human\n"
+        "## 9. Out of scope\n"
+        "- nothing\n"
+    )
+    assert (
+        substrate_wizard.compute_author_spec_hash(body_no_82)
+        == substrate_wizard.compute_author_spec_hash(body_with_82)
+    )

@@ -27,7 +27,7 @@ import tempfile
 
 SUBSTRATE_WIZARD_VERSION = "0.7"
 
-_82_BLOCK_RE = re.compile(r"\n###\s+8\.2\b.*?(?=\n##\s|\Z)", re.DOTALL)
+_82_BLOCK_RE = re.compile(r"\n\n?###\s+8\.2\b.*?(?=\n##\s|\n\Z|\Z)", re.DOTALL)
 
 
 def cache_dir_default() -> pathlib.Path:
