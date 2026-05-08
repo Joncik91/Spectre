@@ -1,4 +1,4 @@
-"""handoff_envelope.py — Context Sled v0.6 handoff envelope builder/validator.
+"""handoff_envelope.py — Context Sled v0.7 handoff envelope builder/validator.
 
 Public API:
   - build(spec_path, sidecar_path, walk_path, decisions_dir) -> dict
@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import tempfile
 from datetime import datetime, timezone
 from typing import Any
@@ -39,6 +40,8 @@ _REQUIRED_FIELDS: dict[str, Any] = {
     # v0.6 artifact byte-hashes — included in integrity_hash payload
     "spec_sha256": str,
     "sidecar_sha256": (str, type(None)),  # None when sidecar absent (pre-v0.6)
+    # v0.7 §8.2 block hash — excluded from integrity_hash (payload pointer)
+    "substrate_sha256": str,  # "" sentinel when §8.2 absent (backward compat)
     "integrity_hash": str,
     "created_at": str,
 }
@@ -100,16 +103,39 @@ def validate(envelope: dict) -> list[str]:
 # compute_integrity_hash
 # ---------------------------------------------------------------------------
 
+_HASH_EXCLUDE_KEYS: frozenset[str] = frozenset({
+    "integrity_hash",
+    # v0.7: substrate bytes-hash is a payload pointer, excluded from metadata domain
+    "substrate_sha256",
+})
+
+
 def compute_integrity_hash(envelope: dict) -> str:
-    """SHA-256 over canonical JSON of envelope MINUS the integrity_hash key.
+    """SHA-256 over canonical JSON of envelope MINUS excluded keys.
+
+    Excluded keys (see _HASH_EXCLUDE_KEYS):
+    - integrity_hash: excluded to avoid circularity
+    - substrate_sha256: payload pointer, not metadata — excluded so consumers
+      can re-derive or verify it independently without invalidating the hash
 
     Uses sort_keys=True, separators=(',',':'), ensure_ascii=False for
     canonical serialization.
     """
-    # Build a copy without integrity_hash to avoid circularity
-    payload = {k: v for k, v in envelope.items() if k != "integrity_hash"}
+    payload = {k: v for k, v in envelope.items() if k not in _HASH_EXCLUDE_KEYS}
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# §8.2 block extraction
+# ---------------------------------------------------------------------------
+
+# Matches the §8.2 block from its heading line up to the next ## or ### heading
+# or end of string.  Stops at "## " or "### " (not "####") to avoid over-capture.
+_82_BLOCK_RE = re.compile(
+    r"\n###\s+8\.2\b.*?(?=\n##\s|\n###\s|\Z)",
+    re.DOTALL,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -163,8 +189,18 @@ def build(
     # These are included as regular envelope fields so compute_integrity_hash()
     # covers them automatically — mutating either file post-lock is detected on
     # next validate_on_implement_start() call (fixes Gap E / B1-B3).
-    spec_sha256 = hashlib.sha256(spec_path.read_bytes()).hexdigest()
+    spec_bytes = spec_path.read_bytes()
+    spec_sha256 = hashlib.sha256(spec_bytes).hexdigest()
     sidecar_sha256 = hashlib.sha256(sidecar_path.read_bytes()).hexdigest()
+
+    # v0.7: hash the §8.2 block bytes if present, else empty string sentinel.
+    # substrate_sha256 is excluded from compute_integrity_hash() (payload pointer,
+    # not metadata) — see _HASH_EXCLUDE_KEYS.
+    spec_text = spec_bytes.decode("utf-8")
+    _m = _82_BLOCK_RE.search(spec_text)
+    substrate_sha256 = (
+        hashlib.sha256(_m.group(0).encode("utf-8")).hexdigest() if _m else ""
+    )
 
     created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -180,6 +216,7 @@ def build(
         "decisions_indexed": decisions_indexed,
         "spec_sha256": spec_sha256,
         "sidecar_sha256": sidecar_sha256,
+        "substrate_sha256": substrate_sha256,
         "created_at": created_at,
     }
 
