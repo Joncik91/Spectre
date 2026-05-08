@@ -267,14 +267,20 @@ def _trust_profile(body: str) -> set[str]:
 
 # ── Sink detectors ───────────────────────────────────────────────────────────
 
-_SHELL_EVAL_RE = re.compile(r"\b(?:bash|sh|zsh)\s+-c\b|\beval\b")
+_SHELL_EVAL_RE = re.compile(
+    r"\b(?:bash|sh|zsh)\s+-c\b"
+    r"|\b(?:python|python3|node|nodejs|perl|ruby)\s+-[ce]\b"
+    r"|\beval\b"
+    r"|\$\("
+)
 _SQL_RE = re.compile(
     r"\b(?:INSERT|UPDATE|REPLACE|DELETE\s+FROM)\b", re.IGNORECASE
 )
 _TEMPLATE_RE = re.compile(r"\b(?:jinja2|template_render|format_map)\b")
 _NETWORK_EGRESS_RE = re.compile(
     r"\b(?:curl|wget|httpie|http)\b[^|;\n]*"
-    r"\b(?:POST|PUT|--data|-d\b|--upload-file)",
+    r"(?:\bPOST\b|\bPUT\b|--data(?:-binary|-urlencode|-raw)?\b"
+    r"|--post-file=|--upload-file\b|\s-d\b|\s-F\b|\s-T\b)",
     re.IGNORECASE,
 )
 
@@ -298,6 +304,23 @@ def _classify_sinks(action: str, tainted_inputs: set[str]) -> list[str]:
     )
     if not has_taint_token:
         return sinks
+    return _sink_kinds_from_action(action)
+
+
+def _classify_source_step_sinks(action: str) -> list[str]:
+    """Sink kinds in a source step's own action.
+
+    A taint-source step (untrusted-input: yes) ingests external data
+    directly via its action — e.g. ``bash -c "$USER_INPUT"`` references
+    ``$USER_INPUT`` not a tracked produces path, so the substring-match
+    in :func:`_classify_sinks` would miss it. Skip the gate for the
+    source step's own action; the action *is* the taint surface.
+    """
+    return _sink_kinds_from_action(action)
+
+
+def _sink_kinds_from_action(action: str) -> list[str]:
+    sinks: list[str] = []
     if _SHELL_EVAL_RE.search(action):
         sinks.append("shell-eval")
     if _SQL_RE.search(action) or _TEMPLATE_RE.search(action):
@@ -315,6 +338,10 @@ _VALID_ANNOT = frozenset({"yes", "no"})
 def _check_trust_flow(body: str) -> list[_findings.Finding]:
     profile = _trust_profile(body)
     steps = _split_steps(body)
+    # Authors may write step 2 before step 1 in YAML; taint propagation
+    # must follow numeric order, not textual order, so a step-1 source
+    # always reaches a step-2 sink regardless of declaration order.
+    steps.sort(key=lambda s: s["step"])
     results: list[_findings.Finding] = []
 
     requires_annot = bool(profile & {"untrusted-input", "handles-secrets"})
@@ -370,14 +397,23 @@ def _check_trust_flow(body: str) -> list[_findings.Finding]:
         incoming = [r for r in step["requires"] if r in tainted]
 
         # Sink detection
-        if incoming:
-            sink_kinds = _classify_sinks(action, set(incoming))
+        if incoming or is_taint_source:
+            if incoming:
+                sink_kinds = _classify_sinks(action, set(incoming))
+            else:
+                # Source step with no tainted incoming: its action *is*
+                # the taint surface (e.g. `bash -c "$USER_INPUT"`).
+                # Skip the substring-gate; classify sinks directly.
+                sink_kinds = _classify_source_step_sinks(action)
             output_safe = bool(sanitized_outputs & set(step["produces"]))
             has_fs_write = any(
                 p.startswith(("file:", "db-table:", "db-column:"))
                 for p in step["produces"]
             )
-            if has_fs_write and not output_safe:
+            # filesystem-write sink is only meaningful when *external*
+            # taint flows through a write; a source step's own produces
+            # is what *introduces* the taint, not a sink for it.
+            if incoming and has_fs_write and not output_safe:
                 sink_kinds.append("filesystem-write")
             for kind in sink_kinds:
                 results.append(_findings.Finding(
