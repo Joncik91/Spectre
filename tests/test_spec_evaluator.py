@@ -111,6 +111,7 @@ def test_evaluate_max_severity_returns_warn_when_no_block_present(tmp_path):
     )
     with (
         patch("bin.spec_ast.classify", return_value=[warn_finding]),
+        patch("bin.substrate_ast.classify", return_value=[]),
         patch("bin.coverage_gate.classify", return_value=[]),
     ):
         result = spec_evaluator.evaluate(
@@ -123,6 +124,7 @@ def test_evaluate_max_severity_returns_info_when_only_info_findings(tmp_path):
     """When both tiers return no findings → max_severity defaults to 'info'."""
     with (
         patch("bin.spec_ast.classify", return_value=[]),
+        patch("bin.substrate_ast.classify", return_value=[]),
         patch("bin.coverage_gate.classify", return_value=[]),
     ):
         result = spec_evaluator.evaluate(
