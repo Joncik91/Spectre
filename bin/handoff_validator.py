@@ -70,9 +70,14 @@ def validate_on_implement_start(project_path: pathlib.Path) -> list[str]:
         return [f"envelope-tampered: cannot read envelope: {exc}"]
 
     # Step 5: Schema validation first — prefix violations with "envelope-malformed:"
+    # Special case: missing substrate_sha256 is a pre-v0.7 compat warning, not a hard error.
+    # We strip it from schema_violations here and handle it in Step 9 instead.
     schema_violations = handoff_envelope.validate(stored_envelope)
-    if schema_violations:
-        return [f"envelope-malformed: {v}" for v in schema_violations]
+    hard_schema_violations = [
+        v for v in schema_violations if v != "missing field: substrate_sha256"
+    ]
+    if hard_schema_violations:
+        return [f"envelope-malformed: {v}" for v in hard_schema_violations]
 
     # Step 6: Recompute integrity hash from stored envelope fields.
     # The hash covers all fields except integrity_hash itself, including the new
@@ -139,6 +144,32 @@ def validate_on_implement_start(project_path: pathlib.Path) -> list[str]:
                 return [
                     "envelope-tampered: spec/sidecar/contracts modified after lock — re-run /vision"
                 ]
+
+    # Step 9: §8.2 substrate integrity (v0.7).
+    # substrate_sha256 absent from envelope → pre-v0.7 lock, warn but proceed.
+    # substrate_sha256 == "" → spec had no §8.2 at lock time, nothing to verify.
+    # substrate_sha256 non-empty → compare against live §8.2 bytes; mismatch = block.
+    if "substrate_sha256" not in stored_envelope:
+        return [
+            "envelope-missing-substrate: §8.2 bytes not bound by envelope (pre-v0.7 lock)."
+        ]
+
+    substrate_recorded = stored_envelope["substrate_sha256"]
+    if substrate_recorded != "":
+        import re as _re
+        _82_re = _re.compile(r"\n###\s+8\.2\b.*?(?=\n##\s|\n###\s|\Z)", _re.DOTALL)
+        try:
+            spec_text = spec_path.read_text(encoding="utf-8")
+        except OSError:
+            spec_text = ""
+        _m = _82_re.search(spec_text)
+        substrate_live = (
+            hashlib.sha256(_m.group(0).encode("utf-8")).hexdigest() if _m else ""
+        )
+        if substrate_recorded != substrate_live:
+            return [
+                "envelope-tampered:substrate-bytes-changed: §8.2 modified since lock."
+            ]
 
     return []
 
