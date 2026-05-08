@@ -5,6 +5,7 @@ Public API:
 """
 from __future__ import annotations
 
+import math
 import pathlib
 import re
 
@@ -85,9 +86,105 @@ def _check_82_required_fields(body: str) -> list[_findings.Finding]:
     return results
 
 
+_LIST_FIELD_RE_TPL = (
+    r"^\s*-\s+{field}\s*:\s*(?P<inline>[^\n]*)$(?P<block>(?:\n\s+-\s+[^\n]+)*)"
+)
+
+
+def _extract_list_field(block: str, field: str) -> list[str]:
+    """Parse a list field that may be inline or indented sequence.
+
+    Returns empty list if value is angle-bracket placeholder (e.g.
+    ``<list of step IDs>``) — these are template stubs, not real entries.
+    """
+    pat = re.compile(_LIST_FIELD_RE_TPL.format(field=re.escape(field)), re.MULTILINE)
+    m = pat.search(block)
+    if not m:
+        return []
+    inline = m.group("inline").strip()
+    block_part = m.group("block") or ""
+    items: list[str] = []
+    if inline and not inline.startswith("<"):
+        if inline.startswith("[") and inline.endswith("]"):
+            inner = inline[1:-1]
+            items.extend(t.strip().strip("'\"") for t in inner.split(",") if t.strip())
+        else:
+            items.append(inline)
+    for line in block_part.splitlines():
+        s = line.strip()
+        if s.startswith("- "):
+            items.append(s[2:].strip().strip("'\""))
+    return items
+
+
+def _count_steps(body: str) -> int:
+    return len(re.findall(r"^\s*-\s+step\s*:\s*\d+", body, re.MULTILINE))
+
+
+def _check_assumptions_walk(body: str) -> list[_findings.Finding]:
+    block = _extract_82_block(body) or ""
+    items = _extract_list_field(block, "assumptions-killed")
+    n_steps = _count_steps(body)
+    if items:
+        return []
+    if n_steps > 3:
+        return [_findings.Finding(
+            tier=1,
+            kind="assumptions-walk-empty",
+            severity="block",
+            location=_findings.FindingLocation(
+                scope="spec-wide", ref="assumptions-killed"
+            ),
+            message=(
+                f"§8.2 assumptions-killed is empty; spec has {n_steps} steps so "
+                "the possibility-walk discipline is required."
+            ),
+            suggested_fix="List ≥1 considered-and-ruled-out alternative.",
+        )]
+    return [_findings.Finding(
+        tier=1,
+        kind="assumptions-walk-empty",
+        severity="warn",
+        location=_findings.FindingLocation(
+            scope="spec-wide", ref="assumptions-killed"
+        ),
+        message="§8.2 assumptions-killed is empty.",
+        suggested_fix="List considered-and-ruled-out alternatives.",
+    )]
+
+
+def _check_judgment_cap(body: str) -> list[_findings.Finding]:
+    block = _extract_82_block(body) or ""
+    items = _extract_list_field(block, "requires-situated-judgment")
+    n_steps = _count_steps(body)
+    if not items or n_steps == 0:
+        return []
+    cap = max(1, math.floor(0.3 * n_steps))
+    if len(items) <= cap:
+        return []
+    return [_findings.Finding(
+        tier=1,
+        kind="judgment-claim-overused",
+        severity="warn",
+        location=_findings.FindingLocation(
+            scope="spec-wide", ref="requires-situated-judgment"
+        ),
+        message=(
+            f"§8.2 requires-situated-judgment claims {len(items)} steps; "
+            f"cap is {cap} ({n_steps}-step spec)."
+        ),
+        suggested_fix=(
+            "Reduce judgment claims to ≤cap; situated-judgment is an escape "
+            "hatch, not the default."
+        ),
+    )]
+
+
 def classify(spec_path: pathlib.Path) -> list[_findings.Finding]:
     """Run all Tier 1 §8.2 checks; return finding list."""
     body = spec_path.read_text(encoding="utf-8")
     results: list[_findings.Finding] = []
     results.extend(_check_82_required_fields(body))
+    results.extend(_check_assumptions_walk(body))
+    results.extend(_check_judgment_cap(body))
     return results

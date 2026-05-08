@@ -42,6 +42,8 @@ _HEADER_AND_FOOTER = {
         "- trust-profile: none\n"
         "- contextual-binding: test binding\n"
         "- provenance: { kind: none }\n"
+        "- assumptions-killed: <list of considered-and-ruled-out alternatives>\n"
+        "- requires-situated-judgment: <list of step IDs>\n"
         "- ux-contract:\n"
         "    on-success: ok\n"
         "    on-failure: failed; check logs\n"
@@ -143,5 +145,76 @@ def test_82_block_does_not_swallow_following_subsection():
     try:
         block = substrate_ast._extract_82_block(p.read_text())
         assert "this-must-not-leak-into-82" not in block
+    finally:
+        _cleanup(p)
+
+
+# ── assumptions-killed + judgment-cap ─────────────────────────────────────────
+
+
+def _multi_step_yaml(n: int) -> str:
+    return "\n".join(
+        f'- step: {i+1}\n'
+        f'  why: "step {i+1}"\n'
+        f'  action: "echo {i+1}"\n'
+        f'  verification: "true"\n'
+        for i in range(n)
+    )
+
+
+def test_empty_assumptions_killed_blocks_when_more_than_3_steps():
+    """assumptions-killed empty + steps>3 → block."""
+    p = _make_spec(_multi_step_yaml(5))
+    try:
+        fs = substrate_ast.classify(p)
+        kinds = [f.kind for f in fs]
+        assert "assumptions-walk-empty" in kinds
+        assert any(
+            f.severity == "block" for f in fs if f.kind == "assumptions-walk-empty"
+        )
+    finally:
+        _cleanup(p)
+
+
+def test_assumptions_killed_filled_passes():
+    """assumptions-killed populated → no finding."""
+    body = _HEADER_AND_FOOTER["header"] + _multi_step_yaml(5)
+    body += _HEADER_AND_FOOTER["footer_complete_82"]
+    body = body.replace(
+        "- assumptions-killed: <list of considered-and-ruled-out alternatives>\n",
+        "- assumptions-killed:\n    - considered Syncthing — ruled out (no auth)\n",
+    )
+    f = tempfile.NamedTemporaryFile(
+        suffix=".spec.md", mode="w", delete=False, encoding="utf-8"
+    )
+    f.write(body)
+    f.close()
+    p = pathlib.Path(f.name)
+    try:
+        fs = substrate_ast.classify(p)
+        assert not any(f.kind == "assumptions-walk-empty" for f in fs)
+    finally:
+        _cleanup(p)
+
+
+def test_judgment_overused_warns_above_cap():
+    """≥30% of steps claiming requires-situated-judgment → warn."""
+    body = _HEADER_AND_FOOTER["header"] + _multi_step_yaml(5)
+    body += _HEADER_AND_FOOTER["footer_complete_82"]
+    # Cap on 5 steps = max(1, floor(0.3*5)) = 1; claiming 3 exceeds.
+    body = body.replace(
+        "- requires-situated-judgment: <list of step IDs>\n",
+        "- requires-situated-judgment:\n    - 1\n    - 2\n    - 3\n",
+    )
+    f = tempfile.NamedTemporaryFile(
+        suffix=".spec.md", mode="w", delete=False, encoding="utf-8"
+    )
+    f.write(body)
+    f.close()
+    p = pathlib.Path(f.name)
+    try:
+        fs = substrate_ast.classify(p)
+        kinds = [(f.kind, f.severity) for f in fs]
+        assert ("judgment-claim-overused", "warn") in kinds
     finally:
         _cleanup(p)
