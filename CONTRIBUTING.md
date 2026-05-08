@@ -53,7 +53,7 @@ If your change adds a new `bin/` module, a new skill, or a new hook:
 
 ## What we won't accept
 
-- **New third-party dependencies in `bin/`.** Stdlib has been enough for v0.1.0 → v0.6.1; it will be enough going forward.
+- **New third-party dependencies in `bin/`.** Stdlib has been enough for v0.1.0 → v0.6.2; it will be enough going forward.
 - **`async`/`await` for the sake of it.** The supervisor uses `select()` because that's the right primitive. Async is fine where it's a clear win; not as a default.
 - **Silent feature additions.** Every new behavior needs documentation in `README.md` (if user-visible) or `docs/ARCHITECTURE.md` (if internal). PRs without doc updates get sent back.
 - **Tests that don't fail when the code is wrong.** If you can comment out the production code and the test still passes, the test is a liability.

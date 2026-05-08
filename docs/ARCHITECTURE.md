@@ -340,3 +340,18 @@ References: vault pages `concepts/context-as-cognitive-substrate.md`, `entities/
 **Fix:** every `python3 -m bin.X` invocation in `skills/vision/SKILL.md` and `skills/implement/SKILL.md` now carries the `PYTHONPATH="${CLAUDE_PLUGIN_ROOT}"` prefix. A PYTHONPATH note section at the top of both skill files explains the requirement. CI sentinel `tests/test_skill_pythonpath_consistency.py` scans all `skills/**/SKILL.md` bash code blocks and asserts every `python3 -m bin.X` line carries the prefix.
 
 References: Issue #30 (closed).
+
+## Contract-shadow precision + Tier 3 silent-fail recovery (v0.6.2)
+
+**Hard problem:** the v0.6.1 retest of an activity-ingestion-daemon spec surfaced two bugs that defeated whole evaluator subsystems silently. (1) Tier 1's heuristic shadow couldn't suppress an `unowned-requirement-heuristic` block when a step verified `from spectre_daemon.blocklist import is_blocked` because `_PYTHON_IMPORT_ALT_RE` was matching the SYMBOL `is_blocked` as a module name — unmatched against `declared_modules`, fired anyway. (2) Tier 3 silently degraded for any user whose `~/.spectre/reviewer.toml` predated v0.5.1: stale `model = "deepseek-reasoner"` returned HTTP 401 against the user's plan, and `llm_judge` reported it as `socket-timeout — DeepSeek unreachable`, sending debug effort toward network instead of credentials.
+
+**Fixes (issues #36, #37):**
+
+1. **Contract-shadow precision.** `bin/spec_ast.py` now skips `_PYTHON_IMPORT_ALT_RE` matches whose start lies inside a span already matched by `_PYTHON_IMPORT_RE` (the `from X import Y` form). Parent-prefix match is added to both contract resolution (`unowned-requirement` block check on declared `requires:` entries) and the heuristic shadow: `package:foo` satisfies `module:foo.bar`; `module:foo.bar` satisfies `module:foo.bar.baz`. Three regression tests in `test_spec_ast_v052_gaps.py`.
+2. **Stale reviewer.toml auto-migration.** `bin/setup_wizard.maybe_provision()` no longer treats every existing config as authoritative. It detects (a) `model in {deepseek-reasoner, deepseek-chat}`, (b) missing `chunk_timeout_s`, (c) missing `total_timeout_s`. Any one trips migration: backup written to `reviewer.toml.bak-<timestamp>` (mode 0600), config rewritten with current defaults (`deepseek-v4-flash` + chunk/total split timeouts), preserving the user's `enabled` flag and `api_key_env`. Returns new outcome `"migrated"`. Stderr breadcrumb points at the backup. Five regression tests in `test_setup_wizard.py`.
+3. **Tier 3 error-class disambiguation.** `bin/llm_judge.evaluate()` now classifies `urllib.error.HTTPError` exceptions: `401`/`403` → `"auth failure (HTTP NNN — check ~/.spectre/secrets.env or DEEPSEEK_API_KEY)"`, `400` → `"bad request (model X may be unavailable on your plan)"`, `5xx` → `"provider error (HTTP NNN)"`, anything else → `"http-NNN"`. Network/timeout paths unchanged. Four regression tests in `test_llm_judge.py`.
+4. **Auth-failure prominence.** `skills/vision/SKILL.md` Step 4 now requires a `⚠ Tier 3 unavailable due to auth — fix ~/.spectre/secrets.env or DEEPSEEK_API_KEY then re-run /vision.` banner ABOVE the `tier 1/2/3` status block whenever the `tier3-unavailable` finding's message contains the substring `auth failure`. The banner makes credential issues actionable without scanning the findings list.
+
+`EVALUATOR_VERSION = "0.6.2"`. 1280 tests pass.
+
+References: Issues #36, #37 (closed). PR #39, release v0.6.2.
