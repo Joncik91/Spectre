@@ -2,6 +2,16 @@
 
 All notable changes to the Spectre plugin.
 
+## v0.7.1 — 2026-05-11
+
+**Fixed: Tier 1 `self-cycle-produces` check (#42).**
+
+A step whose `action:` consumes a path declared in its OWN `produces:` — with no earlier step producing it — now emits a `self-cycle-produces` block finding. Caught real-world in `test-spectrere`'s LLM-routing-gateway spec where step 3 referenced `_manifest.toml` as both input (`--manifest …`) and output (`produces: file:…/_manifest.toml`).
+
+Detection: `shlex`-tokenized `action:` strings, suffix allowlist (`.toml/.json/.sqlite/.onnx/.skops/.yaml/.yml/.md/.py/.txt/.db/.sqlite3`), input-option allowlist (`--manifest/--config/--from/--input/--source/--file/--from-file`, both `--opt value` and `--opt=value`). Subtracts write-destinations from `_action_authored_path()` (cp/install/tee/redirect targets). Suffix-matches relative action paths against absolute `produces:` paths. Dedupes per-step.
+
+Tests: +12 new (1331 → 1343). Coverage: minimal case, severity, prior-producer exemption, multi-path partial, gateway repro, directory-target guard, joined `--opt=value`, two-opts-one-path dedup.
+
 ## v0.7.0 — 2026-05-08
 
 **Added: cognitive-substrate contract (§8.2) + Tier 1 taint flow + adversarial-pathway rubric.**
