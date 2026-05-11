@@ -1311,7 +1311,7 @@ def _check_self_cycle_produces(steps: list[dict]) -> list[_findings.Finding]:
             authored = set(_action_authored_path(action))
             this_produces_paths = _produces_file_paths(produces)
 
-            for tok in action_tokens:
+            for tok in dict.fromkeys(action_tokens):
                 if tok in authored:
                     continue
                 # Check if this token matches any of THIS step's produces paths

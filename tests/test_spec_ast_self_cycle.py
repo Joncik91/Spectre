@@ -264,3 +264,52 @@ def test_no_self_cycle_for_directory_target_returns_empty():
         assert not any(f.kind == "self-cycle-produces" for f in fs)
     finally:
         p.unlink(missing_ok=True)
+
+
+# ── Case 7: --opt=value form (joined) emits finding same as --opt value ──────
+
+_JOINED_OPT_YAML = """\
+- step: 1
+  why: "Joined --opt=value form must also trip the check."
+  action: "python3 -m myapp --manifest=src/manifest.toml --go"
+  verification: "test -f src/manifest.toml"
+  produces:
+    - "file:/abs/path/src/manifest.toml"
+  negative-paths:
+    - trigger: "fail"
+      handler: "abort"
+"""
+
+
+def test_joined_option_value_form_emits_finding():
+    p = _write_spec(_JOINED_OPT_YAML)
+    try:
+        fs = spec_ast.classify(p)
+        assert any(f.kind == "self-cycle-produces" for f in fs)
+    finally:
+        p.unlink(missing_ok=True)
+
+
+# ── Case 8: same path under two allowlisted opts dedupes to one finding ──────
+
+_DUPLICATE_PATH_YAML = """\
+- step: 1
+  why: "Same path referenced via two options must produce only one finding."
+  action: "python3 -m myapp --manifest src/m.toml --config src/m.toml"
+  verification: "test -f src/m.toml"
+  produces:
+    - "file:/abs/path/src/m.toml"
+  negative-paths:
+    - trigger: "fail"
+      handler: "abort"
+"""
+
+
+def test_duplicate_path_across_options_emits_exactly_one_finding():
+    p = _write_spec(_DUPLICATE_PATH_YAML)
+    try:
+        fs = spec_ast.classify(p)
+        cycle = [f for f in fs if f.kind == "self-cycle-produces"]
+        assert len(cycle) == 1
+    finally:
+        p.unlink(missing_ok=True)
