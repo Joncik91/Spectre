@@ -67,6 +67,8 @@ KNOWN_KINDS = {
     "malformed-trust-annotation",
     "substrate-parse-error",
     "envelope-missing-substrate",
+    # v0.8 — self-cycle produces (§42)
+    "self-cycle-produces",
 }
 
 # Severity mapping for Tier 3 contradiction tuple kinds (v0.5.2).

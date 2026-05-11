@@ -1184,6 +1184,176 @@ def _check_negative_paths(
     return results
 
 
+# ── v0.8 §42: self-cycle produces ────────────────────────────────────────────
+
+# Option-name values that carry input file paths (not output/target paths).
+_SELF_CYCLE_INPUT_OPTS: frozenset[str] = frozenset({
+    "--manifest", "--config", "--from", "--input", "--source", "--file", "--from-file",
+})
+
+# File suffixes that make a bare token look like a file path.
+_FILE_SUFFIXES: frozenset[str] = frozenset({
+    ".toml", ".json", ".sqlite", ".onnx", ".skops", ".yaml", ".yml",
+    ".md", ".py", ".txt", ".db", ".sqlite3",
+})
+
+
+def _extract_action_path_tokens(action: str) -> list[str]:
+    """Return path tokens from an action string that look like input file paths.
+
+    Tokenises with shlex. Collects:
+    - tokens starting with '/' or containing './'
+    - tokens with a known file suffix
+    - values of long input-option flags (both '--opt value' and '--opt=value')
+
+    Returns the raw token strings (not URI-stripped).
+    """
+    tokens: list[str] | None = None
+    for attempt in [action, action + "'", action + '"']:
+        try:
+            tokens = shlex.split(attempt)
+            break
+        except ValueError:
+            continue
+    if tokens is None:
+        return []
+
+    paths: list[str] = []
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        # '--opt=value' form
+        if tok.startswith("--") and "=" in tok:
+            opt, _, val = tok.partition("=")
+            if opt in _SELF_CYCLE_INPUT_OPTS and val:
+                paths.append(val)
+            i += 1
+            continue
+        # '--opt value' form
+        if tok in _SELF_CYCLE_INPUT_OPTS:
+            if i + 1 < len(tokens):
+                paths.append(tokens[i + 1])
+                i += 2
+            else:
+                i += 1
+            continue
+        # Absolute path or relative-with-./
+        if tok.startswith("/") or "./" in tok:
+            paths.append(tok)
+            i += 1
+            continue
+        # Known file suffix (relative path token like 'src/foo.toml')
+        if any(tok.endswith(sfx) for sfx in _FILE_SUFFIXES):
+            paths.append(tok)
+            i += 1
+            continue
+        i += 1
+    return paths
+
+
+def _produces_file_paths(produces: list[str]) -> list[str]:
+    """Return the path portion of 'file:<path>' produces entries only.
+
+    Non-file: scheme entries (package:, route:, db-table:, etc.) are ignored.
+    """
+    result: list[str] = []
+    for entry in produces:
+        if not isinstance(entry, str):
+            continue
+        scheme, _, value = entry.partition(":")
+        if scheme == "file" and value:
+            result.append(value)
+    return result
+
+
+def _action_token_matches_produces_path(token: str, produces_path: str) -> bool:
+    """Return True if *token* (from the action string) refers to *produces_path*.
+
+    Exact match first. Then suffix-match: relative token is a suffix of an
+    absolute produces_path. This handles the gateway repro shape where the
+    action uses 'src/foo.toml' and produces declares
+    'file:/abs/path/to/src/foo.toml'.
+    """
+    if token == produces_path:
+        return True
+    # Relative token: check suffix against absolute produces path
+    if not token.startswith("/"):
+        return produces_path.endswith("/" + token)
+    # Absolute token: check suffix of produces path against token
+    return produces_path == token or produces_path.endswith("/" + token.lstrip("/"))
+
+
+def _check_self_cycle_produces(steps: list[dict]) -> list[_findings.Finding]:
+    """Tier 1 block: a step's action consumes a path it also produces, with no
+    earlier step's produces: covering that path.
+
+    Only 'file:' produces entries are considered; other URI schemes are not file
+    paths and are skipped.
+
+    Directories in --target (or similar) are excluded: a token must look like a
+    full file path (has a known suffix OR came from an explicit input-option flag
+    like --manifest/--config/etc.) to trigger a finding.
+    """
+    results: list[_findings.Finding] = []
+
+    # Accumulate 'file:' produces paths from all prior steps (exact path strings).
+    prior_file_produces: list[str] = []
+
+    for step in steps:
+        step_n: int = step["step"]  # type: ignore[assignment]
+        action: str = step.get("action", "")  # type: ignore[assignment]
+        produces: list[str] = step.get("produces", []) or []  # type: ignore[assignment]
+
+        if action:
+            action_tokens = _extract_action_path_tokens(action)
+            # Exclude paths the action itself *writes* (redirect destinations,
+            # cp/install/tee targets) — those are outputs, not consumed inputs.
+            authored = set(_action_authored_path(action))
+            this_produces_paths = _produces_file_paths(produces)
+
+            for tok in action_tokens:
+                if tok in authored:
+                    continue
+                # Check if this token matches any of THIS step's produces paths
+                matching_produce = next(
+                    (p for p in this_produces_paths
+                     if _action_token_matches_produces_path(tok, p)),
+                    None,
+                )
+                if matching_produce is None:
+                    continue
+                # Check if an EARLIER step's produces already covers this path
+                covered_by_prior = any(
+                    _action_token_matches_produces_path(tok, prior_p)
+                    for prior_p in prior_file_produces
+                )
+                if covered_by_prior:
+                    continue
+                # Self-cycle confirmed
+                display = tok if len(tok) <= 60 else "..." + tok[-57:]
+                msg = f"Step {step_n} action consumes {display!r} which it also produces (self-cycle)."
+                if len(msg) > 140:
+                    msg = msg[:137] + "..."
+                results.append(_findings.Finding(
+                    tier=1,
+                    kind="self-cycle-produces",
+                    severity="block",
+                    location=_findings.FindingLocation(
+                        scope="step", step=step_n, ref="produces"
+                    ),
+                    message=msg,
+                    suggested_fix=(
+                        "Move the file to a prior step's produces:, or remove it from "
+                        "this step's produces: if it is an input, not an output."
+                    )[:140],
+                ))
+
+        # Accumulate this step's 'file:' produces for subsequent checks
+        prior_file_produces.extend(_produces_file_paths(produces))
+
+    return results
+
+
 def classify(spec_path: pathlib.Path) -> list[_findings.Finding]:
     """Tier 1 deterministic classifier. Returns Finding list (possibly empty).
 
@@ -1272,5 +1442,8 @@ def classify(spec_path: pathlib.Path) -> list[_findings.Finding]:
 
     # ── Check 8 (v0.6): negative-path declarations ───────────────────────────
     results.extend(_check_negative_paths(steps, body))
+
+    # ── Check 9 (v0.8 §42): self-cycle produces ──────────────────────────────
+    results.extend(_check_self_cycle_produces(steps))
 
     return results
