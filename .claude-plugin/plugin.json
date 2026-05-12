@@ -1,5 +1,5 @@
 {
-  "name": "sdl-vision-engine",
+  "name": "spectre",
   "version": "1.1.0",
   "description": "Deterministic spec hydration + post-Bash Delta+Anchor injection.",
   "author": {

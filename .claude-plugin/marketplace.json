@@ -9,7 +9,7 @@
   },
   "plugins": [
     {
-      "name": "sdl-vision-engine",
+      "name": "spectre",
       "description": "Three-tier pre-lock spec evaluator + persistence-tier classifier. /vision, /implement, and /implement auto skills with action/verification gates and auto-routed Spectre-finding capture.",
       "version": "0.7.3",
       "source": "./"

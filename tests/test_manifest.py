@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def test_plugin_manifest_is_valid_json():
     data = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
-    assert data["name"] == "sdl-vision-engine"
+    assert data["name"] == "spectre"
     assert data["license"] == "MIT"
     # hooks/skills must NOT be in plugin.json — they live elsewhere
     assert "hooks" not in data
@@ -16,7 +16,7 @@ def test_plugin_manifest_is_valid_json():
 def test_marketplace_manifest_is_valid_json():
     data = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text())
     assert data["name"] == "spectre-marketplace"
-    assert any(p["name"] == "sdl-vision-engine" for p in data["plugins"])
+    assert any(p["name"] == "spectre" for p in data["plugins"])
 
 
 def test_hooks_json_post_tool_use_matcher_is_strictly_bash():
