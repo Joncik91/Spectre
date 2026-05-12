@@ -8,6 +8,31 @@
 
 [![tests](https://img.shields.io/badge/tests-1366%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+## What it does
+
+You type:
+
+```
+/vision Build a deterministic worker that polls Bitcoin prices and writes them to systemd
+```
+
+You get:
+
+- A markdown spec with numbered steps (10–20 atomic transactions)
+- Each step has `why:` / `action:` / `verification:` triples — purpose, command, and proof
+- Three review tiers run automatically before lock: deterministic AST (Tier 1), coverage gate (Tier 2), and optionally a DeepSeek adversarial reviewer (Tier 3)
+- Block-severity findings prevent lock until the spec is fixed
+
+Then:
+
+```
+/implement
+```
+
+Runs the spec one step at a time: prints the `why:` before each action, gates on the `verification:` command, halts on risky actions, never silently fails.
+
+Plain Claude Code lets you chat with the agent and hope it stays on-track. Spectre makes the spec the canonical artifact: every action ties back to a numbered step you can audit, every halt has a verification gate, and drift is detectable across reboots and session restarts.
+
 ## Table of Contents
 
 - [Background](#background)
@@ -24,7 +49,9 @@
 
 Default Claude Code auto-memory drifts during long sessions: spec-level intent gets buried under terminal scroll-back, "what did I just change on disk" answers require re-reading logs that have already aged out of context, and the agent will happily power through a half-broken plan when nobody re-grounds it.
 
-Spectre overrides this with a deterministic state machine that drives an unbroken **vision → spec → evaluate → lock → implement → verify** chain. Two hooks own the context plane, two skills own the agent plane, and stdlib-only Python modules own the state plane (interrogation walker, observations log, personal-rules overrides, CDLC ledger, templates registry, template-patcher). See [`CHANGELOG.md`](CHANGELOG.md) for the per-release log.
+Spectre overrides this with a deterministic state machine that drives an unbroken **vision → spec → evaluate → lock → implement → verify** chain.
+
+Two hooks own the context plane, two skills own the agent plane, and stdlib-only Python modules own the state plane (interrogation walker, observations log, personal-rules overrides, CDLC ledger, templates registry, template-patcher). See [`CHANGELOG.md`](CHANGELOG.md) for the per-release log.
 
 **The four invariants:**
 
@@ -124,46 +151,55 @@ Manual workflow: `cat` the proposed patch, decide. Move to `accepted/` to mark a
 
 ## Usage
 
-```text
-# 1. Lock a spec.
+Minimum viable sequence:
+
+```bash
+# 1. Lock a spec from a free-form vision
 /vision Build a real-time order sync between Shopify and our warehouse
-# → Codebase fingerprint scan, then Feasibility Audit (silent).
-# → Walker initialized with five seed concerns (1 assumption-surface + 4 §8.1
-#   receiver-clarification: mutates / never-touches / decision-budget / reboot-survival).
-# → Round 1: walker emits the next concern; skill phrases as a natural-language question.
-# → User answers; walker records answer, queues dependent concerns per receiver.
-# → Loop continues until: user types `stop`, OR Tier 3 yield-delta converges
-#   (3 rounds with <2 new findings), OR max-rounds (30), OR per-receiver-exhausted.
-# → After stop: skill renders the draft from accumulated answers.
-# → Confirm: yes / refine "<change>" / cancel.
-# → On yes: pre-lock evaluator runs Tier 1 (AST) + Tier 2 (coverage) + Tier 3 if configured.
-#   Block findings halt; warn/info pass through.
-# → ADRs auto-generated for each Decision marker; Resource nodes inferred for port:N etc.
-# → Atomic flip: <slug>.spec.md.draft → <slug>.spec.md, .active updated, scratchpad reset,
-#   .eval.json sidecar written with policy hash + tier metadata.
-#   state/.walk.json retained as audit trail.
 
-# 2. Run the active spec.
+# 2. Run the active spec step by step
 /implement
-# → Reads .active + scratchpad. Pre-flight re-verifies prior step (catches root-state desync).
-# → Tier classifier on action; halt on host/network/never-autonomous (yes/halt/skip).
-# → Resource lock acquire via supervisor (queues if at capacity).
-# → Prints WHY: <one-line first-principles justification> before executing.
-# → Action runs. Verification gates advance. State Auditor PBT-lite checks land in scratchpad.
-# → Pass: step advances, lock released. Fail: one Option-B retry with diagnosis, then halt.
-# → Every 5 steps, drift checkpoint re-reads §1 and audits the next batch against it.
 
-# 3. Verify-only (no execution).
+# 3. Verify-only re-check (no execution, no state advance)
 /implement check
-# → Re-runs the current step's verification. No execution, no scratchpad write.
+```
 
-# 4. Auto mode — walk consecutive low-tier steps without re-prompting.
+### Under the hood
+
+#### /vision flow
+
+`/vision` drives a multi-turn interrogation walk before writing a single line of spec:
+
+- Codebase fingerprint scan, then Feasibility Audit (silent).
+- Walker initialized with five seed concerns (1 assumption-surface + 4 §8.1 receiver-clarification: mutates / never-touches / decision-budget / reboot-survival).
+- Round 1: walker emits the next concern; skill phrases as a natural-language question.
+- User answers; walker records answer, queues dependent concerns per receiver.
+- Loop continues until: user types `stop`, OR Tier 3 yield-delta converges (3 rounds with <2 new findings), OR max-rounds (30), OR per-receiver-exhausted.
+- After stop: skill renders the draft from accumulated answers.
+- Confirm: yes / refine "\<change\>" / cancel.
+- On yes: pre-lock evaluator runs Tier 1 (AST) + Tier 2 (coverage) + Tier 3 if configured. Block findings halt; warn/info pass through.
+- ADRs auto-generated for each Decision marker; Resource nodes inferred for port:N etc.
+- Atomic flip: `<slug>.spec.md.draft` → `<slug>.spec.md`, `.active` updated, scratchpad reset, `.eval.json` sidecar written with policy hash + tier metadata. `state/.walk.json` retained as audit trail.
+
+#### /implement flow
+
+- Reads `.active` + scratchpad. Pre-flight re-verifies prior step (catches root-state desync).
+- Tier classifier on action; halt on host/network/never-autonomous (yes/halt/skip).
+- Resource lock acquire via supervisor (queues if at capacity).
+- Prints `WHY: <one-line first-principles justification>` before executing.
+- Action runs. Verification gates advance. State Auditor PBT-lite checks land in scratchpad.
+- Pass: step advances, lock released. Fail: one Option-B retry with diagnosis, then halt.
+- Every 5 steps, drift checkpoint re-reads §1 and audits the next batch against it.
+
+#### Additional modes
+
+```bash
+# Auto mode — walk consecutive low-tier steps without re-prompting
 /implement auto
-# → Same safety surface as plain /implement but batches silent/repo-tier steps.
-# → Halts at the first host/network/never-autonomous step, queued lock, verification
-#   fail, or drift trigger. User then types /implement (or /implement auto) again.
+# Halts at the first host/network/never-autonomous step, queued lock,
+# verification fail, or drift trigger. Then /implement (or /implement auto) to continue.
 
-# 5. Multi-track (parallel work in one project).
+# Multi-track (parallel work in one project)
 /implement payments       # acquires res-port-8080 for track "payments"
 /implement notifications  # queues if "payments" hasn't released yet
 ```
@@ -183,14 +219,14 @@ The hydrator re-injects the same active spec and the scratchpad's `step` (per tr
 
 | Skill | Trigger | Purpose |
 |---|---|---|
-| **vision** | `/vision <free-form text>` | Multi-turn inception. Codebase fingerprint → feasibility audit → First-Principles draft → 2–3 refinement Qs → step-by-step `why:/action:/verification:` triples → §8 Receiver Calibration → confirm → pre-lock evaluator (Tier 1+2 always, Tier 3 if configured) → ADR generation → atomic `.active` flip + scratchpad reset + `.eval.json` sidecar. Defined in `skills/vision/SKILL.md`. |
-| **implement** | `/implement [check \| auto] [<track>]` | Run the active spec's next step on the named track (default `default`). Tier 0 envelope check → pre-flight re-verify → tier classifier → resource lock → WHY emit → execute → verify → State Auditor → drift checkpoint every 5 steps. One Option-B retry with diagnosis on verification fail. Halts on missing-binary errors, spec gaps, root-state desync, or Tier=host/network without consent. Defined in `skills/implement/SKILL.md`. |
-| **implement check** | `/implement check [<track>]` | Re-run the current step's verification only. No execution, no advance. |
-| **implement auto** | `/implement auto [<track>]` | Walk consecutive silent/repo-tier steps without re-prompting. Halts at first host/network/never-autonomous step, queued lock, verification fail, or drift trigger. |
+| **vision** | `/vision <free-form text>` | Interrogates the user step-by-step, drafts a spec from first principles, runs three review tiers, and atomically locks the spec as the active mission. Full flow in `skills/vision/SKILL.md`. |
+| **implement** | `/implement [check \| auto] [<track>]` | Runs the active spec's next step: tier-classifies the action, acquires the resource lock, prints the justification, executes, and gates on the verification command. Halts on missing-binary errors, spec gaps, root-state desync, or elevated tier without consent. Full flow in `skills/implement/SKILL.md`. |
+| **implement check** | `/implement check [<track>]` | Re-runs the current step's verification only — no execution, no state advance. |
+| **implement auto** | `/implement auto [<track>]` | Walks consecutive silent/repo-tier steps without re-prompting; halts at the first elevated-tier step, queued lock, verification fail, or drift trigger. |
 
 ### Spec step schema (`specs/template.spec.md`)
 
-Each step is an atomic transaction:
+Each step is a self-contained transaction. Spectre verifies that the action did what it claims to do (via the separate `verification:` command) before allowing the next step to execute. The schema:
 
 ```yaml
 - step: 1
@@ -224,6 +260,8 @@ Soft verifications (`echo done`, `true`, `: ; …`) are rejected by the Tier 1 A
 
 Every spec declares two contracts: §8.1 hard-contract (what the technical implementer is allowed to touch) and §8.2 cognitive-substrate contract (who the spec is for, what it implies about trust and judgment, and what assumptions were killed).
 
+The Tier 2 coverage gate and Tier 1 substrate AST enforce these contracts before lock. A step that writes to a `never-touches` path is a block-severity `calibration-hard-violation`; a missing trust annotation or untrusted-input-to-sink flow without `sanitizes:` is caught by the substrate checker. The schema:
+
 ```yaml
 # §8.1 — hard contract
 mutates: /opt/btc-poller/, /etc/systemd/system/
@@ -242,7 +280,7 @@ requires-situated-judgment: [<step numbers>]
 roi-budget: <when this spec's payoff goes positive>
 ```
 
-The Tier 2 coverage gate cross-checks §8.1 against every action's path captures: a step that writes to `/var/log` while `never-touches` lists `/var/log` is a `block`-severity `calibration-hard-violation`. The Tier 1 substrate AST checks §8.2 for missing axes, malformed trust annotations, and untrusted-input-to-sink flow without `sanitizes:` declarations. Severity overrides in `~/.spectre/reviewer.toml` can raise severities (warn → block) but never lower them.
+Severity overrides in `~/.spectre/reviewer.toml` can raise severities (warn → block) but never lower them.
 
 ### Scratchpad schema v2 (`state/scratchpad.json`)
 
