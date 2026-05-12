@@ -349,59 +349,23 @@ def test_only_failing_step_gets_finding_when_one_step_anchored():
 
 # ── Classify() integration ────────────────────────────────────────────────────
 
-_SPEC_HEADER = """\
-# Verification Anchored Test Spec
-
-**Generated:** 2026-05-12
-**Slug:** verif-anchored-test
-
-## 1. Hard Problem
-Testing Contract 3 verification checks.
-
-## 2. First Principles
-- Verification should probe this step's own outputs.
-
-## 3. Algorithm Audit
-- deterministic
-
-## 4. Speed-of-Light Limit
-Under 100ms.
-
-## 5. Physics Guardrails
-- None.
-
-## 6. Steps
-
-```yaml
-"""
-
-_SPEC_FOOTER = """\
-```
-
-## 7. Success Criteria
-- [ ] Check passes.
-
-## 8. Receiver Calibration
-
-### 8.1 Hard contract (machine-enforced — `block` severity on violation)
-
-- `mutates:` /etc/app/
-- `never-touches:` /etc/passwd
-- `decision-budget:` none
-- `reboot-survival:` none
-
-### 8.2 Human-facing notes (informational only — `info` severity, never blocks)
-
-- `assumes:` linux
-"""
+# §1-§8 skeleton lives in tests/fixtures/spec_template.py.
+from tests.fixtures.spec_template import write_spec_file as _write_spec_helper
 
 
 def _write_spec(steps_yaml: str) -> pathlib.Path:
-    content = _SPEC_HEADER + steps_yaml + _SPEC_FOOTER
-    fd, path = tempfile.mkstemp(suffix=".spec.md")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(content)
-    return pathlib.Path(path)
+    return _write_spec_helper(
+        steps_yaml,
+        title="Verification Anchored Test Spec",
+        slug="verif-anchored-test",
+        problem="Testing Contract 3 verification checks.",
+        first_principles="- Verification should probe this step's own outputs.",
+        success_criteria="- [ ] Check passes.",
+        mutates="/etc/app/",
+        never_touches="/etc/passwd",
+    )
+
+
 
 
 _UNANCHORED_YAML = """\

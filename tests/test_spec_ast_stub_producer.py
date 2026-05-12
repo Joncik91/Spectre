@@ -21,91 +21,29 @@ import tempfile
 
 from bin import spec_ast
 
-# ── Spec template ──────────────────────────────────────────────────────────────
-
-_HEADER = """\
-# Stub Producer Test Spec
-
-**Generated:** 2026-05-12
-**Slug:** stub-producer-test
-
-## 1. Hard Problem
-Testing stub-producer-invoked Tier 1 detection.
-
-## 2. First Principles
-- A step invoking an artifact produced by a stub step must fail at lock time.
-
-## 3. Algorithm Audit
-- deterministic
-
-## 4. Speed-of-Light Limit
-Under 100ms.
-
-## 5. Physics Guardrails
-- None.
-
-## 6. Steps
-
-```yaml
-"""
-
-_FOOTER = """\
-```
-
-## 7. Success Criteria
-- [ ] Check passes.
-
-## 8. Receiver Calibration
-
-### 8.1 Hard contract (machine-enforced — `block` severity on violation)
-
-- `mutates:` /app/
-- `never-touches:` /etc
-- `decision-budget:` none
-- `reboot-survival:` none
-
-### 8.2 Human-facing notes (informational only — `info` severity, never blocks)
-
-- `assumes:` linux
-"""
+# §1-§8 skeleton lives in tests/fixtures/spec_template.py.
+from tests.fixtures.spec_template import write_spec_file as _write_spec_helper
 
 
 def _write_spec(steps_yaml: str) -> pathlib.Path:
-    content = _HEADER + steps_yaml + _FOOTER
-    fd, path = tempfile.mkstemp(suffix=".spec.md")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(content)
-    return pathlib.Path(path)
+    return _write_spec_helper(
+        steps_yaml,
+        title="Stub Producer Test Spec",
+        slug="stub-producer-test",
+        problem="Testing stub-producer-invoked Tier 1 detection.",
+        first_principles="- A step invoking an artifact produced by a stub step must fail at lock time.",
+        success_criteria="- [ ] Check passes.",
+        mutates="/app/",
+    )
 
 
 SPI = "stub-producer-invoked"
 
 
 # ── Step helpers for direct _check_stub_producer_invoked calls ────────────────
+# Shared with tests/test_walker_stub_invocation.py via tests/fixtures/stub_helpers.
 
-def _step(
-    n: int,
-    action: str = "",
-    why: str = "test",
-    produces: list | None = None,
-    requires: list | None = None,
-) -> dict:
-    return {
-        "step": n,
-        "why": why,
-        "action": action,
-        "produces": produces or [],
-        "requires": requires or [],
-        "negative_paths": [],
-    }
-
-
-_STUB_ACTION = (
-    "cat > /app/vidence/bootstrap.py <<'EOF'\n"
-    "def bootstrap():\n"
-    "    raise NotImplementedError\n"
-    "EOF"
-)
+from tests.fixtures.stub_helpers import step as _step, STUB_ACTION as _STUB_ACTION
 
 _REAL_ACTION = (
     "cat > /app/vidence/bootstrap.py <<'EOF'\n"
@@ -309,67 +247,54 @@ def _write_spec_raw(content: str) -> pathlib.Path:
     return pathlib.Path(path)
 
 
-def _vidence_v2_spec() -> str:
-    """Vidence v2 (#49) spec: Step 1 has 'stub' in why:, Step 3 requires it.
+from tests.fixtures.spec_template import make_spec_text as _make_spec_text
 
-    classify() detects the stub via why: text (W2 limitation means action-body
-    heredoc parsing isn't available from single-line YAML fields; why: keyword
-    detection is the reliable path through classify()).
-    """
-    return (
-        _HEADER
-        + "- step: 1\n"
-        "  why: \"Write bootstrap stub — placeholder until step 3 is implemented.\"\n"
-        "  action: \"cat > /app/vidence/bootstrap.py <<'EOF'\\ndef bootstrap():\\n    pass\\nEOF\"\n"
-        "  verification: \"test -f /app/vidence/bootstrap.py\"\n"
-        "  produces:\n"
-        "    - \"file:/app/vidence/bootstrap.py\"\n"
-        "  negative-paths:\n"
-        "    - trigger: \"disk full\"\n"
-        "      handler: \"escalate\"\n"
-        "- step: 3\n"
-        "  why: \"Run bootstrap.\"\n"
-        "  action: \"python3 /app/vidence/bootstrap.py --root .\"\n"
-        "  verification: \"test -d .vidence\"\n"
-        "  requires:\n"
-        "    - \"file:/app/vidence/bootstrap.py\"\n"
-        "  negative-paths:\n"
-        "    - trigger: \"disk full\"\n"
-        "      handler: \"escalate\"\n"
-        + _FOOTER
-    )
+
+_VIDENCE_V2_STEPS_STUB = (
+    "- step: 1\n"
+    "  why: \"Write bootstrap stub — placeholder until step 3 is implemented.\"\n"
+    "  action: \"cat > /app/vidence/bootstrap.py <<'EOF'\\ndef bootstrap():\\n    pass\\nEOF\"\n"
+    "  verification: \"test -f /app/vidence/bootstrap.py\"\n"
+    "  produces:\n"
+    "    - \"file:/app/vidence/bootstrap.py\"\n"
+    "  negative-paths:\n"
+    "    - trigger: \"disk full\"\n"
+    "      handler: \"escalate\"\n"
+    "- step: 3\n"
+    "  why: \"Run bootstrap.\"\n"
+    "  action: \"python3 /app/vidence/bootstrap.py --root .\"\n"
+    "  verification: \"test -d .vidence\"\n"
+    "  requires:\n"
+    "    - \"file:/app/vidence/bootstrap.py\"\n"
+    "  negative-paths:\n"
+    "    - trigger: \"disk full\"\n"
+    "      handler: \"escalate\"\n"
+)
+
+_VIDENCE_V2_STEPS_CORRECTED = _VIDENCE_V2_STEPS_STUB.replace(
+    "Write bootstrap stub — placeholder until step 3 is implemented.",
+    "Write the initial bootstrap module.",
+)
+
+
+_SPEC_KW = dict(
+    title="Stub Producer Test Spec",
+    slug="stub-producer-test",
+    problem="Testing stub-producer-invoked Tier 1 detection.",
+    first_principles="- A step invoking an artifact produced by a stub step must fail at lock time.",
+    success_criteria="- [ ] Check passes.",
+    mutates="/app/",
+)
+
+
+def _vidence_v2_spec() -> str:
+    """Vidence v2 (#49) spec: Step 1 has 'stub' in why:, Step 3 requires it."""
+    return _make_spec_text(_VIDENCE_V2_STEPS_STUB, **_SPEC_KW)
 
 
 def _vidence_v2_corrected_spec() -> str:
-    """Vidence v2 corrected: step 1 why: has no stub keywords; classify() passes.
-
-    W2 note: healing via an intermediate step's heredoc body is not detectable
-    from single-line YAML action values (action body parser limitation). The
-    corrected spec instead fixes the root cause — step 1's why: no longer
-    signals stub intent, so _why_is_stub returns False and no finding fires.
-    """
-    return (
-        _HEADER
-        + "- step: 1\n"
-        "  why: \"Write the initial bootstrap module.\"\n"
-        "  action: \"cat > /app/vidence/bootstrap.py <<'EOF'\\ndef bootstrap():\\n    pass\\nEOF\"\n"
-        "  verification: \"test -f /app/vidence/bootstrap.py\"\n"
-        "  produces:\n"
-        "    - \"file:/app/vidence/bootstrap.py\"\n"
-        "  negative-paths:\n"
-        "    - trigger: \"disk full\"\n"
-        "      handler: \"escalate\"\n"
-        "- step: 3\n"
-        "  why: \"Run bootstrap.\"\n"
-        "  action: \"python3 /app/vidence/bootstrap.py --root .\"\n"
-        "  verification: \"test -d .vidence\"\n"
-        "  requires:\n"
-        "    - \"file:/app/vidence/bootstrap.py\"\n"
-        "  negative-paths:\n"
-        "    - trigger: \"disk full\"\n"
-        "      handler: \"escalate\"\n"
-        + _FOOTER
-    )
+    """Vidence v2 corrected: step 1 why: has no stub keywords; classify() passes."""
+    return _make_spec_text(_VIDENCE_V2_STEPS_CORRECTED, **_SPEC_KW)
 
 
 def test_vidence_v2_classify_emits_stub_producer_invoked():

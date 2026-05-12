@@ -10,62 +10,23 @@ import tempfile
 from bin import spec_ast
 
 # ── Shared spec template ──────────────────────────────────────────────────────
+# §1-§8 skeleton lives in tests/fixtures/spec_template.py to keep the §8
+# receiver-calibration shape consistent across spec_ast satellite test files.
 
-_SPEC_HEADER = """\
-# Self-Cycle Test Spec
-
-**Generated:** 2026-05-11
-**Slug:** self-cycle-test
-
-## 1. Hard Problem
-Testing self-cycle detection in step produces.
-
-## 2. First Principles
-- A step must not consume a file it also declares as its own output.
-
-## 3. Algorithm Audit
-- **Delete:** unnecessary steps
-- **Simplify:** single check
-- **Accelerate:** deterministic
-
-## 4. Speed-of-Light Limit
-Under 100ms.
-
-## 5. Physics Guardrails
-- Files must exist before being referenced.
-
-## 6. Steps
-
-```yaml
-"""
-
-_SPEC_FOOTER = """\
-```
-
-## 7. Success Criteria
-- [ ] Self-cycle detected.
-
-## 8. Receiver Calibration
-
-### 8.1 Hard contract (machine-enforced — `block` severity on violation)
-
-- `mutates:` /home/joncik/apps/test-spectrere/
-- `never-touches:` /etc
-- `decision-budget:` none
-- `reboot-survival:` none
-
-### 8.2 Human-facing notes (informational only — `info` severity, never blocks)
-
-- `assumes:` linux
-"""
+from tests.fixtures.spec_template import write_spec_file as _write_spec_helper
 
 
 def _write_spec(steps_yaml: str) -> pathlib.Path:
-    content = _SPEC_HEADER + steps_yaml + _SPEC_FOOTER
-    fd, path = tempfile.mkstemp(suffix=".spec.md")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(content)
-    return pathlib.Path(path)
+    return _write_spec_helper(
+        steps_yaml,
+        title="Self-Cycle Test Spec",
+        slug="self-cycle-test",
+        problem="Testing self-cycle detection in step produces.",
+        first_principles="- A step must not consume a file it also declares as its own output.",
+        guardrails="- Files must exist before being referenced.",
+        success_criteria="- [ ] Self-cycle detected.",
+        mutates="/home/joncik/apps/test-spectrere/",
+    )
 
 
 # ── Case 1: self-cycle — action consumes path it also produces, no prior producer ──

@@ -9,65 +9,23 @@ import tempfile
 from bin import spec_ast
 
 # ── Shared spec template ──────────────────────────────────────────────────────
+# §1-§8 skeleton lives in tests/fixtures/spec_template.py.
 
-_SPEC_HEADER = """\
-# Negative Paths Test Spec
-
-**Generated:** 2026-05-07
-**Slug:** negpath-test
-
-## 1. Hard Problem
-Installing a service atomically.
-
-## 2. First Principles
-- Files must exist before being referenced.
-
-## 3. Algorithm Audit
-- **Delete:** unnecessary steps
-- **Simplify:** single install step
-- **Accelerate:** idempotent writes
-
-## 4. Speed-of-Light Limit
-Completes in under 5 seconds.
-
-## 5. Physics Guardrails
-- Target directory must be writable.
-
-## 6. Steps
-
-```yaml
-"""
-
-_SPEC_FOOTER = """\
-```
-
-## 7. Success Criteria
-- [ ] Service running after install.
-
-## 8. Receiver Calibration
-
-### 8.1 Hard contract (machine-enforced — `block` severity on violation)
-
-- `mutates:` /opt/svc/
-- `never-touches:` /home
-- `decision-budget:` none
-- `reboot-survival:` {reboot_survival}
-
-### 8.2 Human-facing notes (informational only — `info` severity, never blocks)
-
-- `assumes:` linux
-"""
+from tests.fixtures.spec_template import write_spec_file as _write_spec_helper
 
 
 def _write_spec(steps_yaml: str, reboot_survival: str = "best-effort") -> pathlib.Path:
-    content = _SPEC_HEADER + steps_yaml + _SPEC_FOOTER.format(
-        reboot_survival=reboot_survival
+    return _write_spec_helper(
+        steps_yaml,
+        title="Negative Paths Test Spec",
+        slug="negpath-test",
+        problem="Installing a service atomically.",
+        guardrails="- Target directory must be writable.",
+        success_criteria="- [ ] Service running after install.",
+        mutates="/opt/svc/",
+        never_touches="/home",
+        reboot_survival=reboot_survival,
     )
-    fd, path = tempfile.mkstemp(suffix=".spec.md")
-    import os
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(content)
-    return pathlib.Path(path)
 
 
 # ── missing-negative-path warn (best-effort reboot-survival) ─────────────────
