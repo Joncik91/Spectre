@@ -73,8 +73,6 @@ KNOWN_KINDS = {
     "tier3-filter-applied",
     # v0.9 — implicit precondition missing (§46)
     "implicit-precondition-missing",
-    # v0.9 — walker scaffold-precondition concern kind (info; authoring-time)
-    "scaffold-precondition",
 }
 
 # Severity mapping for Tier 3 contradiction tuple kinds (v0.5.2).
