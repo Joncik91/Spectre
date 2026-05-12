@@ -1354,6 +1354,145 @@ def _check_self_cycle_produces(steps: list[dict]) -> list[_findings.Finding]:
     return results
 
 
+# ── v0.9 §46: implicit-precondition-missing ──────────────────────────────────
+
+# Verb phrases in negative-paths trigger text that flag a precondition gap.
+_PRECOND_VERB_RE = re.compile(
+    r"\b(absent|missing|does\s+not\s+exist|not\s+found|malformed|not\s+writable)\b",
+    re.IGNORECASE,
+)
+
+# File-like suffixes that make a bare token look like a filesystem path.
+# Mirrors _FILE_SUFFIXES above but is a separate constant so callers can
+# extend independently.
+_PRECOND_PATH_SUFFIXES: frozenset[str] = frozenset({
+    ".toml", ".json", ".yaml", ".yml", ".lock", ".txt", ".md",
+    ".py", ".sh", ".rs", ".go", ".js", ".ts", ".cfg", ".ini",
+    ".conf", ".env", ".service",
+})
+
+
+def _extract_precond_path_token(trigger: str) -> str | None:
+    """Extract the filesystem-path-shaped noun from a negative-paths trigger.
+
+    Returns the token (without surrounding whitespace) if:
+    1. The trigger contains one of the precondition verb-phrases (absent,
+       missing, does not exist, not found, malformed, not writable).
+    2. The first whitespace-delimited token looks like a filesystem path:
+       - contains '/' (e.g. 'state/db.sqlite'), OR
+       - has a known file suffix (e.g. 'pyproject.toml'), OR
+       - ends with '/' (directory shape, e.g. 'state/').
+    3. The trigger does NOT look like an environmental trigger (port numbers,
+       env-var names, WAL-mode, etc.) — these pass through without a finding.
+
+    Returns None if no match, or if the trigger is environmental.
+    """
+    trigger_stripped = trigger.strip()
+
+    # Must contain a precondition verb
+    if not _PRECOND_VERB_RE.search(trigger_stripped):
+        return None
+
+    # Extract first token (the noun before the verb)
+    parts = trigger_stripped.split()
+    if not parts:
+        return None
+    noun = parts[0].rstrip(",:;")
+
+    # Reject environmental tokens:
+    # - pure numeric (port number)
+    if re.match(r"^\d+$", noun):
+        return None
+    # - ALL_CAPS env-var pattern
+    if re.match(r"^[A-Z][A-Z0-9_]+$", noun):
+        return None
+    # - common non-path starters (WAL, port, socket, etc.)
+    if re.match(r"^(port|socket|WAL|mode|env|var|flag|pid)\b", noun, re.IGNORECASE):
+        return None
+
+    # Accept if path-shaped
+    if "/" in noun or noun.endswith("/"):
+        return noun
+    if any(noun.endswith(sfx) for sfx in _PRECOND_PATH_SUFFIXES):
+        return noun
+
+    return None
+
+
+def _check_implicit_precondition_missing(
+    steps: list[dict],
+) -> list[_findings.Finding]:
+    """Tier 1 block: a step's negative-paths trigger names a filesystem path
+    that no step's produces: covers.
+
+    For each step:
+    1. Parse negative_paths entries.
+    2. For each trigger, attempt to extract a path-shaped noun.
+    3. If the noun is not present in any step's produces: (across all steps,
+       not just earlier ones — the forgotten-scaffold pattern usually omits
+       the file entirely), emit ``implicit-precondition-missing`` block.
+
+    Edge case — directory-shaped tokens (e.g. ``state/``): compare against
+    produces entries after stripping a trailing slash from both sides.
+    """
+    results: list[_findings.Finding] = []
+
+    # Build flat set of all produce values across ALL steps
+    all_produces_raw: list[str] = []
+    for s in steps:
+        for entry in (s.get("produces", []) or []):
+            if isinstance(entry, str):
+                all_produces_raw.append(entry)
+
+    def _covered(noun: str) -> bool:
+        """Return True when *noun* is covered by at least one produces entry."""
+        noun_norm = noun.rstrip("/")
+        for entry in all_produces_raw:
+            if noun_norm in entry:
+                return True
+            # Directory match: 'state/' covered by 'file:/abs/path/state'
+            if entry.rstrip("/").endswith("/" + noun_norm):
+                return True
+        return False
+
+    for step in steps:
+        step_n: int = step.get("step")  # type: ignore[assignment]
+        if step_n is None:
+            continue
+        negative_paths: list[dict] = step.get("negative_paths", []) or []
+        for entry in negative_paths:
+            if not isinstance(entry, dict):
+                continue
+            trigger: str = entry.get("trigger", "") or ""
+            noun = _extract_precond_path_token(trigger)
+            if noun is None:
+                continue
+            if _covered(noun):
+                continue
+            noun_display = noun[:60] if len(noun) <= 60 else "..." + noun[-57:]
+            msg = (
+                f"Step {step_n} negative-path trigger names {noun_display!r} "
+                f"but no step's produces: covers it."
+            )
+            if len(msg) > 140:
+                msg = msg[:137] + "..."
+            results.append(_findings.Finding(
+                tier=1,
+                kind="implicit-precondition-missing",
+                severity="block",
+                location=_findings.FindingLocation(
+                    scope="step", step=step_n, ref="negative-paths"
+                ),
+                message=msg,
+                suggested_fix=(
+                    "Add a prior step that produces this path, or remove the "
+                    "negative-path if the file is always present."
+                )[:140],
+            ))
+
+    return results
+
+
 def classify(spec_path: pathlib.Path) -> list[_findings.Finding]:
     """Tier 1 deterministic classifier. Returns Finding list (possibly empty).
 
@@ -1445,5 +1584,8 @@ def classify(spec_path: pathlib.Path) -> list[_findings.Finding]:
 
     # ── Check 9 (v0.8 §42): self-cycle produces ──────────────────────────────
     results.extend(_check_self_cycle_produces(steps))
+
+    # ── Check 10 (v0.9 §46): implicit-precondition-missing ───────────────────
+    results.extend(_check_implicit_precondition_missing(steps))
 
     return results
