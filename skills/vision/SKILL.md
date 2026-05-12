@@ -221,7 +221,7 @@ Stdout: `WIZARD: <result> (<target>)`. Outcomes: `exists` (no-op), `enabled` (De
 
 ### Step 6.4 — Pre-lock spec evaluator (CDLC Evaluate phase, v0.3+)
 
-After the user replies `yes` (or `refine`), run the spec evaluator over a *review bundle* (preview ADRs + preview Resource nodes + preview tier classifications materialized but not committed). Tiers 1+2 always run (deterministic, local). Tier 3 (DeepSeek `deepseek-reasoner` adversarial reviewer) runs only when `~/.spectre/reviewer.toml` has `[tier3] enabled = true` AND the configured API key is present in the environment. When Tier 3 is unavailable for any reason, the evaluator emits an info-severity `tier3-unavailable` finding so the skip is **visible**, never silent.
+After the user replies `yes` (or `refine`), run the spec evaluator over a *review bundle* (preview ADRs + preview Resource nodes + preview tier classifications materialized but not committed). Tiers 1+2 always run (deterministic, local). Tier 3 (DeepSeek `deepseek-v4-flash` adversarial reviewer) runs only when `~/.spectre/reviewer.toml` has `[tier3] enabled = true` AND the configured API key is present in the environment. When Tier 3 is unavailable for any reason, the evaluator emits an info-severity `tier3-unavailable` finding so the skip is **visible**, never silent.
 
 First derive the canonical draft path from the slug — never substitute the slug into a `Path("specs/<slug>...")` literal inline. Use the Phase 2A CLI, which validates the slug and emits the spec-file path (the draft path is the same string with `.draft` appended):
 

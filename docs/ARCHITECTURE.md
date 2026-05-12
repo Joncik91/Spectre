@@ -367,6 +367,6 @@ References: Issue #30 (closed).
 3. **Tier 3 error-class disambiguation.** `bin/llm_judge.evaluate()` now classifies `urllib.error.HTTPError` exceptions: `401`/`403` → `"auth failure (HTTP NNN — check ~/.spectre/secrets.env or DEEPSEEK_API_KEY)"`, `400` → `"bad request (model X may be unavailable on your plan)"`, `5xx` → `"provider error (HTTP NNN)"`, anything else → `"http-NNN"`. Network/timeout paths unchanged. Four regression tests in `test_llm_judge.py`.
 4. **Auth-failure prominence.** `skills/vision/SKILL.md` Step 6.4 now requires a `⚠ Tier 3 unavailable due to auth — fix ~/.spectre/secrets.env or DEEPSEEK_API_KEY then re-run /vision.` banner ABOVE the `tier 1/2/3` status block whenever the `tier3-unavailable` finding's message contains the substring `auth failure`. The banner makes credential issues actionable without scanning the findings list.
 
-`EVALUATOR_VERSION = "0.6.2"`. 1364 tests pass.
+`EVALUATOR_VERSION = "0.6.2"`. 1280 tests passed at release.
 
 References: Issues #36, #37 (closed). PR #39, release v0.6.2.

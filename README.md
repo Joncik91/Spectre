@@ -6,7 +6,7 @@
 
 > Spectre — a deterministic spec-driven Claude Code plugin. Vision → Spec → Evaluate → Lock → Implement → Verify, with three-tier pre-lock review and per-project resource locking.
 
-[![tests](https://img.shields.io/badge/tests-1364%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![tests](https://img.shields.io/badge/tests-1366%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## Table of Contents
 
@@ -347,7 +347,7 @@ decisions/                      ADR landing zone (NNNN-<slug>.md)
 docs/
   ARCHITECTURE.md               internal architecture overview
   superpowers/                  design specs + implementation plans (archival)
-tests/                          1364 pytest tests, stdlib + pytest only
+tests/                          1366 pytest tests, stdlib + pytest only
 ```
 
 ## Architecture
@@ -357,7 +357,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full breakdown: hook 
 ## Tests
 
 ```bash
-pytest tests/                  # 1364 tests, all stdlib + pytest
+pytest tests/                  # 1366 tests, all stdlib + pytest
 pytest tests/ -v               # verbose
 pytest tests/test_spec_evaluator.py -v   # single module
 ```
