@@ -31,6 +31,7 @@ KNOWN_CONCERN_KINDS: tuple[str, ...] = (
     "branch-resolution",
     "negative-path",
     "scaffold-precondition",
+    "stub-invocation-detected",
 )
 STOP_REASONS: tuple[str, ...] = (
     "author-arbitrated",
@@ -209,12 +210,18 @@ def should_stop(
     max_rounds: int = DEFAULT_MAX_ROUNDS,
     yield_threshold: int = DEFAULT_YIELD_THRESHOLD,
     yield_converge_rounds: int = DEFAULT_YIELD_CONVERGE_ROUNDS,
+    draft_text: str = "",
 ) -> tuple[bool, str | None]:
-    """Check all four stop conditions. Returns (stop, reason).
+    """Check all stop conditions. Returns (stop, reason).
 
     Order of evaluation: author-arbitrated > tier3-yield-converged >
     max-rounds > per-receiver-exhausted. The first match wins so the
     reason field is deterministic.
+
+    Drive-to-completeness override: yield-convergence is NOT authoritative
+    while any hard drive-to-completeness contract is unsatisfied (Contract 1
+    or Contract 2). In that case, tier3-yield-converged is suppressed so
+    the walker keeps walking. max-rounds and author-arbitrated still fire.
     """
     if yield_converge_rounds <= 0:
         raise ValueError("yield_converge_rounds must be >= 1")
@@ -223,13 +230,17 @@ def should_stop(
         return (True, "author-arbitrated")
 
     # Tier 3 yield convergence: last `yield_converge_rounds` deltas all below threshold.
-    if (
+    # Only fires when drive-to-completeness contracts are satisfied.
+    yield_converged = (
         len(state.yield_history) >= yield_converge_rounds
         and all(
             d < yield_threshold for d in state.yield_history[-yield_converge_rounds:]
         )
-    ):
-        return (True, "tier3-yield-converged")
+    )
+    if yield_converged:
+        if _drive_to_completeness_satisfied(state, draft_text):
+            return (True, "tier3-yield-converged")
+        # Contracts unsatisfied — suppress yield-convergence, keep walking.
 
     if state.round_count >= max_rounds:
         return (True, "max-rounds")
@@ -711,6 +722,295 @@ def generate_scaffold_precondition_concern(
     ]
 
 
+# ── Stub-invocation concern ───────────────────────────────────────────────────
+
+# Stub marker strings — kept in sync with spec_ast._STUB_MARKER_STRINGS.
+_WALKER_STUB_MARKERS: tuple[str, ...] = (
+    "raise NotImplementedError",
+    "pass  # stub",
+    "pass  # TODO",
+    "pass  # placeholder",
+    "# TODO: implement",
+    "# todo: implement",
+    "# TODO: Implement",
+    'console.log("stub")',
+    "console.log('stub')",
+    'console.log("not implemented")',
+    "console.log('not implemented')",
+)
+
+_WALKER_STUB_WHY_KEYWORDS: tuple[str, ...] = (
+    "stub",
+    "placeholder",
+    "scaffold-only",
+    "replaced by step",
+)
+
+# Heredoc body extraction pattern for walker (same as spec_ast).
+_WALKER_HEREDOC_RE = re.compile(
+    r"(?:cat\s*>|tee)\s*(/[a-zA-Z0-9_./\-]+)\s*<<['\"]?(\w+)['\"]?\n(.*?)\n\s*\2\b",
+    re.DOTALL,
+)
+
+_WALKER_WRITE_RE = re.compile(
+    r"(?:echo|printf)\s+['\"]([^'\"]{0,500})['\"]\s*(?:>>?\s*)(/[a-zA-Z0-9_./\-]+)"
+)
+
+_WALKER_REDIRECT_RE = re.compile(r"(?:>>?)\s*(/[a-zA-Z0-9_./\-]+)")
+
+
+def _walker_extract_write_bodies(action: str) -> list[tuple[str, str]]:
+    """Return (path, body) pairs from write operations in *action*."""
+    results: list[tuple[str, str]] = []
+    for m in _WALKER_HEREDOC_RE.finditer(action):
+        results.append((m.group(1), m.group(3)))
+    for m in _WALKER_WRITE_RE.finditer(action):
+        results.append((m.group(2), m.group(1)))
+    return results
+
+
+def _walker_body_is_stub(body: str) -> tuple[bool, str]:
+    """Return (is_stub, reason) using heuristic stub detection."""
+    for marker in _WALKER_STUB_MARKERS:
+        if marker in body:
+            return True, f"contains {marker!r}"
+    non_blank = [l for l in body.splitlines() if l.strip() and not l.strip().startswith("#")]
+    if non_blank and all(l.strip() in ("pass",) for l in non_blank):
+        return True, "body is only 'pass'"
+    if len(non_blank) < 5:
+        bl = body.lower()
+        if "pass" in bl or "todo" in bl or "stub" in bl:
+            return True, f"short body ({len(non_blank)} lines) with stub keyword"
+    return False, ""
+
+
+def _walker_why_is_stub(why: str) -> tuple[bool, str]:
+    """Return (is_stub, reason) if why: text contains stub-intent keywords."""
+    wl = why.lower()
+    for kw in _WALKER_STUB_WHY_KEYWORDS:
+        if kw in wl:
+            return True, f"why: contains {kw!r}"
+    return False, ""
+
+
+def _walker_action_writes_path(action: str, path_suffix: str) -> bool:
+    """Return True if *action* writes to a path matching *path_suffix*."""
+    for path, _ in _walker_extract_write_bodies(action):
+        if path and (
+            path == path_suffix
+            or path.endswith("/" + path_suffix.lstrip("/"))
+        ):
+            return True
+    for m in _WALKER_REDIRECT_RE.finditer(action):
+        p = m.group(1)
+        if p == path_suffix or p.endswith("/" + path_suffix.lstrip("/")):
+            return True
+    return False
+
+
+def _walker_artifact_path(entry: str) -> str:
+    """Return a path-like string from a contract entry."""
+    if ":" not in entry:
+        return entry
+    scheme, _, value = entry.partition(":")
+    if scheme == "file":
+        return value
+    if scheme == "module":
+        return value.replace(".", "/")
+    return value
+
+
+def generate_stub_invocation_concerns(
+    state: WalkState,
+    steps: list[dict],
+) -> list[Concern]:
+    """Seed-pass: emit ``stub-invocation-detected`` concerns.
+
+    For each step N with a requires: entry produced by step M, check:
+    1. Does step M's action write a stub body for the artifact?
+    2. Does step M's why: text contain stub-intent keywords?
+    3. Is there a healing step between M and N that replaces the stub body?
+
+    If stub detected and not healed, emit one concern per (step_n, artifact) pair.
+    Idempotent: skips concerns whose id is already in state.
+
+    Parameters
+    ----------
+    state:
+        Current walk state; used for idempotency check.
+    steps:
+        Parsed steps from spec_ast._parse_steps_section.
+    """
+    existing_ids: set[str] = (
+        {c.id for c in state.asked}
+        | {c.id for c in state.pending}
+        | set(state.answered)
+    )
+
+    concerns: list[Concern] = []
+
+    for idx_n, step in enumerate(steps):
+        step_n: int = step.get("step", 0)
+        requires: list[str] = step.get("requires", []) or []
+
+        for req_entry in requires:
+            if ":" not in req_entry:
+                continue
+
+            # Find last producing step before step N
+            producer_step: dict | None = None
+            producer_idx: int = -1
+            for idx_m in range(idx_n):
+                m_step = steps[idx_m]
+                m_produces: list[str] = m_step.get("produces", []) or []
+                if req_entry in m_produces:
+                    producer_step = m_step
+                    producer_idx = idx_m
+
+            if producer_step is None:
+                continue
+
+            m_action: str = producer_step.get("action", "") or ""
+            m_why: str = producer_step.get("why", "") or ""
+            m_step_n: int = producer_step.get("step", 0)
+
+            is_stub = False
+            stub_reason = ""
+
+            stub_from_why, why_reason = _walker_why_is_stub(m_why)
+            if stub_from_why:
+                is_stub = True
+                stub_reason = why_reason
+
+            if not is_stub and m_action:
+                for _p, body in _walker_extract_write_bodies(m_action):
+                    body_stub, body_reason = _walker_body_is_stub(body)
+                    if body_stub:
+                        is_stub = True
+                        stub_reason = body_reason
+                        break
+
+            if not is_stub:
+                continue
+
+            # Check for healing step between M and N
+            artifact_path = _walker_artifact_path(req_entry)
+            healed = False
+            for idx_h in range(producer_idx + 1, idx_n):
+                h_step = steps[idx_h]
+                h_action: str = h_step.get("action", "") or ""
+                if not h_action:
+                    continue
+                if not _walker_action_writes_path(h_action, artifact_path):
+                    continue
+                # Non-stub write heals the chain
+                all_stub = True
+                for _p, body in _walker_extract_write_bodies(h_action):
+                    body_stub, _ = _walker_body_is_stub(body)
+                    if not body_stub:
+                        all_stub = False
+                        break
+                if not all_stub:
+                    healed = True
+                    break
+
+            if healed:
+                continue
+
+            concern_id = f"seed-stub-{step_n}-{req_entry.replace(':', '-').replace('/', '-')}"
+            # Truncate id to a safe length
+            if len(concern_id) > 80:
+                concern_id = concern_id[:80]
+            if concern_id in existing_ids:
+                continue
+
+            artifact_display = artifact_path[:50] if len(artifact_path) <= 50 else artifact_path[-47:]
+            summary = (
+                f"Step {step_n} invokes {req_entry!r} produced by Step {m_step_n}. "
+                f"Step {m_step_n}'s action looks like a stub ({stub_reason}). "
+                f"No later step replaces Step {m_step_n}'s body before Step {step_n}. "
+                f"Either Step {m_step_n} should write the real implementation of "
+                f"{artifact_display!r}, or insert an authoring step before Step {step_n}. "
+                f"Otherwise /implement will hit Path B retry at Step {step_n}."
+            )
+            if len(summary) > 280:
+                summary = summary[:277] + "..."
+
+            concerns.append(Concern(
+                id=concern_id,
+                kind="stub-invocation-detected",
+                receivers=["implement"],
+                depends_on=[],
+                summary=summary,
+            ))
+
+    return concerns
+
+
+def _drive_to_completeness_satisfied(
+    state: WalkState,
+    draft_text: str,
+) -> bool:
+    """Return True when all drive-to-completeness contracts are satisfied.
+
+    Checks:
+    1. No pending unresolved-requires concerns (Contract 1 — requires resolution).
+       Proxy: any pending concern whose summary mentions 'requires' and 'unowned'.
+    2. No stub-invocation-detected concerns still pending (Contract 2).
+    3. (Contract 3 is warn-only — does NOT block convergence here.)
+
+    This is a lightweight heuristic check; the authoritative enforcement is Tier 1
+    at lock time. The walker uses this to keep yielding when a hard gap is detected.
+    """
+    from bin import spec_ast as _spec_ast  # lazy import
+
+    if not draft_text:
+        return True
+
+    try:
+        steps = _spec_ast._parse_steps_section(draft_text)
+    except Exception:  # noqa: BLE001
+        return True  # Can't parse — don't block on parse failure
+
+    # Contract 1: any step with requires: not satisfied by a prior produces:
+    cumulative: set[str] = set()
+    for step in steps:
+        requires: list[str] = step.get("requires", []) or []
+        produces: list[str] = step.get("produces", []) or []
+        for req in requires:
+            if ":" not in req:
+                continue
+            scheme, _, value = req.partition(":")
+            # Simple check: is it in cumulative produces?
+            if req not in cumulative:
+                # Check parent-package match (mirrors spec_ast logic)
+                satisfied = False
+                if scheme == "module":
+                    top = value.split(".")[0] if value else ""
+                    if top and f"package:{top}" in cumulative:
+                        satisfied = True
+                    if not satisfied:
+                        for prod in cumulative:
+                            if prod.startswith("module:"):
+                                pv = prod.split(":", 1)[1]
+                                if value == pv or value.startswith(pv + "."):
+                                    satisfied = True
+                                    break
+                if not satisfied:
+                    return False
+        # Accumulate valid produces
+        for p in produces:
+            if ":" in p:
+                cumulative.add(p)
+
+    # Contract 2: any stub-invocation-detected concern still pending
+    for c in state.pending:
+        if c.id not in state.stale and c.kind == "stub-invocation-detected":
+            return False
+
+    return True
+
+
 # ── CLI entrypoint ────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -898,6 +1198,10 @@ if __name__ == "__main__":
                     steps = _spec_ast._parse_steps_section(draft_text)
                     state.pending.extend(
                         generate_scaffold_precondition_concern(state, steps)
+                    )
+                    # Contract 2: stub-invocation-detected concerns
+                    state.pending.extend(
+                        generate_stub_invocation_concerns(state, steps)
                     )
             try:
                 persist(state, state_path)

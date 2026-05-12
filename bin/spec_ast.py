@@ -1521,6 +1521,379 @@ def _check_implicit_precondition_missing(
     return results
 
 
+# ── v0.9 §50 Contract 2: stub-producer-invoked ───────────────────────────────
+
+# Stub marker patterns checked inside heredoc / write bodies.
+_STUB_MARKER_STRINGS: tuple[str, ...] = (
+    "raise NotImplementedError",
+    "pass  # stub",
+    "pass  # TODO",
+    "pass  # placeholder",
+    "# TODO: implement",
+    "# todo: implement",
+    "# TODO: Implement",
+    'console.log("stub")',
+    "console.log('stub')",
+    'console.log("not implemented")',
+    "console.log('not implemented')",
+)
+
+
+def _extract_write_bodies(action: str) -> list[tuple[str, str]]:
+    """Extract (target_path, body) pairs from write operations in *action*.
+
+    Handles:
+    1. Heredoc: ``cat > <path> <<'EOF' ... EOF`` (and variants without quotes).
+    2. ``echo "..." > <path>`` / ``printf "..." > <path>``.
+    3. ``python3 -c "..." > <path>`` bodies via shlex.
+    4. ``tee <path>`` with preceding pipe body.
+
+    Returns list of (path, body_text) tuples.  The path may be empty string if
+    the target cannot be determined; callers should still check the body.
+    """
+    results: list[tuple[str, str]] = []
+
+    # 1. Heredoc: cat > <path> <<'EOF'\n...\nEOF
+    # Allow: cat >, cat>  (optional spaces), tee, echo with heredoc
+    for m in re.finditer(
+        r"(?:cat\s*>|tee)\s*(/[a-zA-Z0-9_./\-]+)\s*<<['\"]?(\w+)['\"]?\n(.*?)\n\s*\2\b",
+        action,
+        re.DOTALL,
+    ):
+        path = m.group(1)
+        body = m.group(3)
+        results.append((path, body))
+
+    # 2. echo "..." > path  (single-line write)
+    for m in re.finditer(
+        r"""\becho\s+['"]([^'"]{0,300})['"]\s*(?:>>?\s*)(/[a-zA-Z0-9_./\-]+)""",
+        action,
+    ):
+        results.append((m.group(2), m.group(1)))
+
+    # 3. printf "..." > path
+    for m in re.finditer(
+        r"""\bprintf\s+['"]([^'"]{0,500})['"]\s*(?:>>?\s*)(/[a-zA-Z0-9_./\-]+)""",
+        action,
+    ):
+        results.append((m.group(2), m.group(1)))
+
+    return results
+
+
+def _body_is_stub(body: str) -> tuple[bool, str]:
+    """Return (is_stub, reason) based on heuristic stub detection.
+
+    Checks for explicit stub markers and empty-function bodies.
+    """
+    for marker in _STUB_MARKER_STRINGS:
+        if marker in body:
+            return True, f"contains {marker!r}"
+
+    # Empty function body: only 'pass' (no other non-blank, non-comment lines)
+    non_blank_lines = [
+        line for line in body.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    if non_blank_lines and all(line.strip() in ("pass",) for line in non_blank_lines):
+        return True, "body is only 'pass'"
+
+    # Body length < 5 non-blank non-comment lines AND contains 'pass' or TODO
+    if len(non_blank_lines) < 5:
+        body_lower = body.lower()
+        if "pass" in body_lower or "todo" in body_lower or "stub" in body_lower:
+            return True, f"short body ({len(non_blank_lines)} lines) with stub keyword"
+
+    return False, ""
+
+
+def _why_is_stub(why: str) -> tuple[bool, str]:
+    """Return (is_stub, reason) if a step's why: text contains stub-intent keywords."""
+    why_lower = why.lower()
+    for kw in ("stub", "placeholder", "scaffold-only", "replaced by step"):
+        if kw in why_lower:
+            return True, f"why: contains {kw!r}"
+    return False, ""
+
+
+def _action_writes_path(action: str, path_suffix: str) -> bool:
+    """Return True if *action* writes to a path ending with *path_suffix*."""
+    for pat, _ in _extract_write_bodies(action):
+        if pat and (pat == path_suffix or pat.endswith("/" + path_suffix.lstrip("/"))):
+            return True
+    # Also check simple redirect targets not in heredoc form
+    for m in re.finditer(r"(?:>>?)\s*(/[a-zA-Z0-9_./\-]+)", action):
+        p = m.group(1)
+        if p == path_suffix or p.endswith("/" + path_suffix.lstrip("/")):
+            return True
+    return False
+
+
+def _extract_artifact_path_from_contract(entry: str) -> str:
+    """Return a filesystem-path-like string from a contract entry.
+
+    For 'file:/some/path' returns '/some/path'.
+    For 'module:foo.bar' returns 'foo/bar' (dot-to-slash).
+    For 'package:foo' returns 'foo'.
+    Otherwise returns the value portion.
+    """
+    if ":" not in entry:
+        return entry
+    scheme, _, value = entry.partition(":")
+    if scheme == "file":
+        return value
+    if scheme == "module":
+        return value.replace(".", "/")
+    return value
+
+
+def _module_invoked_in_action(action: str, artifact_value: str) -> bool:
+    """Return True if *action* invokes the module/package named by *artifact_value*.
+
+    Checks: python3 -m <module>, direct invocation of path patterns.
+    """
+    # python3 -m <module>
+    mod_slash = artifact_value.replace(".", "/")
+    mod_dot = artifact_value.replace("/", ".")
+    for m in re.finditer(r"\bpython3?\s+-m\s+([\w.]+)", action):
+        invoked = m.group(1)
+        if invoked == mod_dot or invoked.startswith(mod_dot + "."):
+            return True
+    # Direct path invocation
+    for m in re.finditer(
+        r"\b(?:python3?|bash|sh|node|ruby|perl)\s+(/[a-zA-Z0-9_./\-]+)",
+        action,
+    ):
+        p = m.group(1)
+        if mod_slash in p:
+            return True
+    return False
+
+
+def _check_stub_producer_invoked(steps: list[dict]) -> list[_findings.Finding]:
+    """Tier 1 block: a step invokes an artifact produced by an earlier stub step,
+    and no intermediate step replaces the stub body.
+
+    Logic per step N:
+    1. For each requires: entry in step N, identify the producing step M
+       (the latest step < N that produces the entry).
+    2. Check if step M's action writes a stub body for the artifact.
+       Also check if step M's why: text contains stub keywords.
+    3. Scan steps M+1..N-1 for any action that overwrites the artifact without
+       a stub body (healing step).
+    4. If stub detected and no healer found: emit block finding.
+    """
+    results: list[_findings.Finding] = []
+
+    # Build: artifact -> (step_index, step_dict) for each produces entry
+    # We want the LAST step that produces each artifact before step N.
+    for idx_n, step in enumerate(steps):
+        step_n: int = step["step"]  # type: ignore[assignment]
+        requires: list[str] = step.get("requires", []) or []  # type: ignore[assignment]
+
+        for req_entry in requires:
+            if not _validate_contract_entry(req_entry):
+                continue
+
+            # Find the LAST producer step before step N
+            producer_step: dict | None = None
+            producer_idx: int = -1
+            for idx_m in range(idx_n):
+                m_step = steps[idx_m]
+                m_produces: list[str] = m_step.get("produces", []) or []
+                if req_entry in m_produces:
+                    producer_step = m_step
+                    producer_idx = idx_m
+
+            if producer_step is None:
+                # unowned-requirement catches this; skip
+                continue
+
+            # Check if the producer step looks like a stub
+            m_action: str = producer_step.get("action", "") or ""
+            m_why: str = producer_step.get("why", "") or ""
+
+            is_stub = False
+            stub_reason = ""
+
+            # Check why: text first (explicit intent signal)
+            stub_from_why, why_reason = _why_is_stub(m_why)
+            if stub_from_why:
+                is_stub = True
+                stub_reason = why_reason
+
+            # Check action bodies
+            if not is_stub and m_action:
+                for _path, body in _extract_write_bodies(m_action):
+                    body_stub, body_reason = _body_is_stub(body)
+                    if body_stub:
+                        is_stub = True
+                        stub_reason = body_reason
+                        break
+
+            if not is_stub:
+                continue
+
+            # Determine the artifact path for healing check
+            artifact_path = _extract_artifact_path_from_contract(req_entry)
+
+            # Scan steps M+1..N-1 for a healing write (real body, no stub markers)
+            healed = False
+            for idx_h in range(producer_idx + 1, idx_n):
+                h_step = steps[idx_h]
+                h_action: str = h_step.get("action", "") or ""
+                if not h_action:
+                    continue
+                # Does this step write to the artifact path?
+                if not _action_writes_path(h_action, artifact_path):
+                    continue
+                # Confirm the write is NOT itself a stub
+                all_stub = True
+                for _p, body in _extract_write_bodies(h_action):
+                    body_stub, _ = _body_is_stub(body)
+                    if not body_stub:
+                        all_stub = False
+                        break
+                if not all_stub:
+                    healed = True
+                    break
+
+            if healed:
+                continue
+
+            m_step_n: int = producer_step["step"]  # type: ignore[assignment]
+            artifact_display = artifact_path[:40] if len(artifact_path) <= 40 else "..." + artifact_path[-37:]
+            msg = (
+                f"Step {step_n} requires {req_entry!r} produced by Step {m_step_n} "
+                f"which looks like a stub ({stub_reason})."
+            )
+            if len(msg) > 140:
+                msg = msg[:137] + "..."
+            results.append(_findings.Finding(
+                tier=1,
+                kind="stub-producer-invoked",
+                severity="block",
+                location=_findings.FindingLocation(
+                    scope="step", step=step_n, ref="requires"
+                ),
+                message=msg,
+                suggested_fix=(
+                    f"Step {m_step_n} should write the real implementation of "
+                    f"{artifact_display!r}, or insert an authoring step before Step {step_n}."
+                )[:140],
+            ))
+
+    return results
+
+
+# ── v0.9 §50 Contract 3: verification-anchored-to-produces ───────────────────
+
+
+def _produces_path_tokens(produces: list[str]) -> set[str]:
+    """Return path-like tokens from a produces: list (file: entries only).
+
+    Returns both full paths and basenames so substring checks against
+    verification text can match either form.
+    """
+    result: set[str] = set()
+    for entry in produces:
+        if not isinstance(entry, str):
+            continue
+        scheme, _, value = entry.partition(":")
+        if scheme == "file" and value:
+            result.add(value)
+            # Also add basename for partial-match verification
+            basename = value.split("/")[-1] if "/" in value else value
+            if basename:
+                result.add(basename)
+    return result
+
+
+def _verification_references_any(verification: str, path_tokens: set[str]) -> bool:
+    """Return True if *verification* contains any of *path_tokens* as a substring."""
+    for tok in path_tokens:
+        if tok and tok in verification:
+            return True
+    return False
+
+
+def _check_verification_anchored(steps: list[dict]) -> list[_findings.Finding]:
+    """Contract 3a: warn if step's verification has no path token overlapping
+    with THIS step's produces: (verification-not-anchored-to-produces).
+
+    Only applies when:
+    - The step has at least one 'file:' produces entry
+    - The step has a non-trivial verification (not a tautology)
+
+    Contract 3b: warn if verification ONLY references paths from earlier steps'
+    produces, not this step's (verification-upstream-only).
+
+    Implementation uses substring matching (not _PATH_RE) because the word-
+    boundary anchor in _PATH_RE clips paths that follow non-word chars like
+    spaces or flag dashes (e.g. ``test -x /opt/hello/hello``).
+    """
+    results: list[_findings.Finding] = []
+
+    # Cumulative produces path tokens across prior steps
+    cumulative_file_paths: list[set[str]] = []
+
+    for idx, step in enumerate(steps):
+        step_n: int = step["step"]  # type: ignore[assignment]
+        verification: str = step.get("verification", "") or ""  # type: ignore[assignment]
+        produces: list[str] = step.get("produces", []) or []  # type: ignore[assignment]
+
+        this_produces_paths = _produces_path_tokens(produces)
+        prior_paths: set[str] = set()
+        for prior_set in cumulative_file_paths:
+            prior_paths.update(prior_set)
+
+        if verification and not _is_soft_verification(verification) and this_produces_paths:
+            # Contract 3a: does verification reference ANY token from THIS step's produces?
+            anchored_to_this = _verification_references_any(verification, this_produces_paths)
+
+            if not anchored_to_this:
+                # Contract 3b: does it reference prior-step paths only?
+                anchored_to_prior = _verification_references_any(verification, prior_paths)
+                if anchored_to_prior:
+                    msg = (
+                        f"Step {step_n} verification references only prior-step paths, "
+                        f"not this step's produces: ({', '.join(sorted(this_produces_paths)[:2])})."
+                    )
+                    if len(msg) > 140:
+                        msg = msg[:137] + "..."
+                    results.append(_findings.Finding(
+                        tier=1,
+                        kind="verification-upstream-only",
+                        severity="warn",
+                        location=_findings.FindingLocation(
+                            scope="step", step=step_n, ref="verification"
+                        ),
+                        message=msg,
+                        suggested_fix="Add a check on this step's own produced artifacts.",
+                    ))
+                else:
+                    msg = (
+                        f"Step {step_n} verification has no path token overlapping "
+                        f"this step's produces: ({', '.join(sorted(this_produces_paths)[:2])})."
+                    )
+                    if len(msg) > 140:
+                        msg = msg[:137] + "..."
+                    results.append(_findings.Finding(
+                        tier=1,
+                        kind="verification-not-anchored-to-produces",
+                        severity="warn",
+                        location=_findings.FindingLocation(
+                            scope="step", step=step_n, ref="verification"
+                        ),
+                        message=msg,
+                        suggested_fix="Add a check on this step's produced paths.",
+                    ))
+
+        cumulative_file_paths.append(this_produces_paths)
+
+    return results
+
+
 def classify(spec_path: pathlib.Path) -> list[_findings.Finding]:
     """Tier 1 deterministic classifier. Returns Finding list (possibly empty).
 
@@ -1615,5 +1988,11 @@ def classify(spec_path: pathlib.Path) -> list[_findings.Finding]:
 
     # ── Check 10 (v0.9 §46): implicit-precondition-missing ───────────────────
     results.extend(_check_implicit_precondition_missing(steps))
+
+    # ── Check 11 (v0.9 §50): stub-producer-invoked ───────────────────────────
+    results.extend(_check_stub_producer_invoked(steps))
+
+    # ── Check 12 (v0.9 §50): verification anchored to produces ───────────────
+    results.extend(_check_verification_anchored(steps))
 
     return results
