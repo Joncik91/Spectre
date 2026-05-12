@@ -1371,6 +1371,13 @@ _PRECOND_PATH_SUFFIXES: frozenset[str] = frozenset({
     ".conf", ".env", ".service",
 })
 
+# Canonical bare-name files that have no extension and no '/' but are
+# unambiguously filesystem paths (e.g. Makefile, Dockerfile).
+_PRECOND_BARE_NAMES: frozenset[str] = frozenset({
+    "Makefile", "Dockerfile", "go.mod", "go.sum", "Gemfile", "Rakefile",
+    "BUILD", "WORKSPACE", "Cargo.lock", "package-lock.json", "yarn.lock",
+})
+
 
 def _extract_precond_path_token(trigger: str) -> str | None:
     """Extract the filesystem-path-shaped noun from a negative-paths trigger.
@@ -1414,6 +1421,8 @@ def _extract_precond_path_token(trigger: str) -> str | None:
     if "/" in noun or noun.endswith("/"):
         return noun
     if any(noun.endswith(sfx) for sfx in _PRECOND_PATH_SUFFIXES):
+        return noun
+    if noun in _PRECOND_BARE_NAMES:
         return noun
 
     return None

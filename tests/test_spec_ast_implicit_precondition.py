@@ -516,3 +516,107 @@ def test_slash_path_ipm_message_names_the_path():
         assert "db/state.db" in f.message
     finally:
         p.unlink(missing_ok=True)
+
+
+# ── Bare-name files (no extension, no slash) ──────────────────────────────────
+
+_MAKEFILE_ABSENT_YAML = """\
+- step: 1
+  why: "Build the project."
+  action: "make all"
+  verification: "test -f bin/myapp"
+  negative-paths:
+    - trigger: "Makefile absent"
+      handler: "escalate"
+"""
+
+_DOCKERFILE_MISSING_YAML = """\
+- step: 1
+  why: "Build the image."
+  action: "docker build -t myapp ."
+  verification: "docker images | grep myapp"
+  negative-paths:
+    - trigger: "Dockerfile missing"
+      handler: "escalate"
+"""
+
+_GO_MOD_ABSENT_YAML = """\
+- step: 1
+  why: "Build the Go binary."
+  action: "go build ./..."
+  verification: "test -f bin/myapp"
+  negative-paths:
+    - trigger: "go.mod absent"
+      handler: "escalate"
+"""
+
+_GEMFILE_MISSING_YAML = """\
+- step: 1
+  why: "Install Ruby gems."
+  action: "bundle install"
+  verification: "bundle exec ruby -e 'puts :ok'"
+  negative-paths:
+    - trigger: "Gemfile missing"
+      handler: "escalate"
+"""
+
+
+def test_bare_name_makefile_absent_emits_ipm():
+    p = _write_spec(_MAKEFILE_ABSENT_YAML)
+    try:
+        fs = spec_ast.classify(p)
+        f = next((x for x in fs if x.kind == IPM), None)
+        assert f is not None
+    finally:
+        p.unlink(missing_ok=True)
+
+
+def test_bare_name_dockerfile_missing_emits_ipm():
+    p = _write_spec(_DOCKERFILE_MISSING_YAML)
+    try:
+        fs = spec_ast.classify(p)
+        f = next((x for x in fs if x.kind == IPM), None)
+        assert f is not None
+    finally:
+        p.unlink(missing_ok=True)
+
+
+def test_bare_name_go_mod_absent_emits_ipm():
+    p = _write_spec(_GO_MOD_ABSENT_YAML)
+    try:
+        fs = spec_ast.classify(p)
+        f = next((x for x in fs if x.kind == IPM), None)
+        assert f is not None
+    finally:
+        p.unlink(missing_ok=True)
+
+
+def test_bare_name_gemfile_missing_emits_ipm():
+    p = _write_spec(_GEMFILE_MISSING_YAML)
+    try:
+        fs = spec_ast.classify(p)
+        f = next((x for x in fs if x.kind == IPM), None)
+        assert f is not None
+    finally:
+        p.unlink(missing_ok=True)
+
+
+def test_bare_noun_not_in_list_no_ipm_returns_empty():
+    # "database" is not in _PRECOND_BARE_NAMES and has no suffix/slash
+    yaml = """\
+- step: 1
+  why: "Run query."
+  action: "python3 -m myapp.query"
+  verification: "echo done"
+  produces:
+    - "package:myapp"
+  negative-paths:
+    - trigger: "database missing"
+      handler: "escalate"
+"""
+    p = _write_spec(yaml)
+    try:
+        fs = spec_ast.classify(p)
+        assert not any(f.kind == IPM for f in fs)
+    finally:
+        p.unlink(missing_ok=True)
