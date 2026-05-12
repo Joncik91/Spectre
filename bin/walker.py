@@ -886,6 +886,19 @@ if __name__ == "__main__":
                 spec_intent=args.intent,
                 spec_draft_path=draft_path,
             )
+            # Extend seeds with scaffold-precondition concern if the draft
+            # already exists and Step 1 implies a missing scaffold.
+            if draft_path.exists():
+                try:
+                    draft_text = draft_path.read_text(encoding="utf-8")
+                except OSError:
+                    draft_text = ""
+                if draft_text:
+                    from bin import spec_ast as _spec_ast  # lazy — avoid circular import cost
+                    steps = _spec_ast._parse_steps_section(draft_text)
+                    state.pending.extend(
+                        generate_scaffold_precondition_concern(state, steps)
+                    )
             try:
                 persist(state, state_path)
             except OSError as exc:

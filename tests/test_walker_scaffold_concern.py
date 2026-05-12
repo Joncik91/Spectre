@@ -6,7 +6,10 @@ Covers:
 - no-fire when Step 1 has a no-op / non-matching action
 - idempotency (seed-scaffold already in state)
 - concern has correct kind, receiver, id
+- init-or-resume production wiring: scaffold-precondition in pending after init
 """
+import json
+import os
 import pathlib
 import tempfile
 
@@ -374,3 +377,151 @@ def test_no_fire_when_seed_scaffold_already_answered():
     steps = [_step(1, "pip install -e .")]
     result = walker.generate_scaffold_precondition_concern(state, steps)
     assert result == []
+
+
+# ── init-or-resume production wiring ──────────────────────────────────────────
+
+# Minimal spec draft that has Step 1 = pip install -e . with no Step 0 scaffold.
+# Uses the same header/footer shape as the walker CLI consumer.
+_BROKEN_SPEC_DRAFT = """\
+# Scaffold Wiring Test Spec
+
+**Generated:** 2026-05-12
+**Slug:** scaffold-wiring-test
+
+## 1. Hard Problem
+Testing scaffold-precondition wiring into init-or-resume.
+
+## 2. First Principles
+- pip install -e . requires pyproject.toml.
+
+## 3. Algorithm Audit
+- deterministic
+
+## 4. Speed-of-Light Limit
+Under 100ms.
+
+## 5. Physics Guardrails
+- None.
+
+## 6. Steps
+
+```yaml
+- step: 1
+  why: "Install the package."
+  action: "pip install -e ."
+  verification: "pip show myapp"
+  negative-paths:
+    - trigger: "pyproject.toml absent"
+      handler: "escalate"
+```
+
+## 7. Success Criteria
+- [ ] Scaffold concern present in walker pending.
+
+## 8. Receiver Calibration
+
+### 8.1 Hard contract (machine-enforced — `block` severity on violation)
+
+- `mutates:` /tmp/test/
+- `never-touches:` /etc
+- `decision-budget:` none
+- `reboot-survival:` none
+
+### 8.2 Human-facing notes (informational only — `info` severity, never blocks)
+
+- `assumes:` linux
+"""
+
+
+def _simulate_init_or_resume(
+    draft_path: pathlib.Path,
+    state_path: pathlib.Path,
+    intent: str = "test intent",
+) -> walker.WalkState:
+    """Simulate the init-or-resume production wiring without the CLI.
+
+    Mirrors the logic in walker.py's ``if args.cmd == "init-or-resume":`` branch:
+    1. Load existing state (None if not found).
+    2. If None, call init_walk(), extend with scaffold concerns from draft, persist.
+    3. Return the resulting state.
+    """
+    try:
+        state = walker.load(state_path)
+    except ValueError:
+        state = None
+
+    if state is None:
+        state = walker.init_walk(
+            spec_intent=intent,
+            spec_draft_path=draft_path,
+        )
+        if draft_path.exists():
+            try:
+                draft_text = draft_path.read_text(encoding="utf-8")
+            except OSError:
+                draft_text = ""
+            if draft_text:
+                from bin import spec_ast as _spec_ast
+                steps = _spec_ast._parse_steps_section(draft_text)
+                state.pending.extend(
+                    walker.generate_scaffold_precondition_concern(state, steps)
+                )
+        walker.persist(state, state_path)
+
+    return state
+
+
+def test_init_or_resume_adds_scaffold_concern_when_broken_spec():
+    """After init on a broken spec (pip install -e . with no Step 0), the
+    walk state must contain the seed-scaffold concern in pending."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        draft_path = pathlib.Path(tmpdir) / "test.spec.md.draft"
+        draft_path.write_text(_BROKEN_SPEC_DRAFT, encoding="utf-8")
+        state_path = pathlib.Path(tmpdir) / ".walk.json"
+
+        state = _simulate_init_or_resume(draft_path, state_path)
+
+        scaffold_concerns = [c for c in state.pending if c.id == "seed-scaffold"]
+        assert len(scaffold_concerns) == 1
+
+
+def test_init_or_resume_scaffold_concern_kind():
+    """The scaffold concern emitted during init must have kind scaffold-precondition."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        draft_path = pathlib.Path(tmpdir) / "test.spec.md.draft"
+        draft_path.write_text(_BROKEN_SPEC_DRAFT, encoding="utf-8")
+        state_path = pathlib.Path(tmpdir) / ".walk.json"
+
+        state = _simulate_init_or_resume(draft_path, state_path)
+
+        c = next(x for x in state.pending if x.id == "seed-scaffold")
+        assert c.kind == "scaffold-precondition"
+
+
+def test_init_or_resume_scaffold_concern_persisted():
+    """The scaffold concern must be persisted to state_path on first init."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        draft_path = pathlib.Path(tmpdir) / "test.spec.md.draft"
+        draft_path.write_text(_BROKEN_SPEC_DRAFT, encoding="utf-8")
+        state_path = pathlib.Path(tmpdir) / ".walk.json"
+
+        _simulate_init_or_resume(draft_path, state_path)
+
+        # Re-load from disk — scaffold concern must survive round-trip.
+        reloaded = walker.load(state_path)
+        assert reloaded is not None
+        scaffold_ids = [c.id for c in reloaded.pending]
+        assert "seed-scaffold" in scaffold_ids
+
+
+def test_init_or_resume_no_scaffold_concern_without_draft():
+    """When the draft file does not exist, no scaffold concern is seeded."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        draft_path = pathlib.Path(tmpdir) / "nonexistent.spec.md.draft"
+        state_path = pathlib.Path(tmpdir) / ".walk.json"
+
+        state = _simulate_init_or_resume(draft_path, state_path)
+
+        scaffold_concerns = [c for c in state.pending if c.id == "seed-scaffold"]
+        assert scaffold_concerns == []
