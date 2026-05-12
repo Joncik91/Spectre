@@ -17,61 +17,19 @@ import tempfile
 
 from bin import spec_ast
 
-# ── Spec template ──────────────────────────────────────────────────────────────
-
-_HEADER = """\
-# Implicit Precondition Test Spec
-
-**Generated:** 2026-05-12
-**Slug:** implicit-precondition-test
-
-## 1. Hard Problem
-Testing implicit-precondition-missing detection.
-
-## 2. First Principles
-- Negative-path triggers naming absent files must be covered by a producer.
-
-## 3. Algorithm Audit
-- deterministic
-
-## 4. Speed-of-Light Limit
-Under 100ms.
-
-## 5. Physics Guardrails
-- None.
-
-## 6. Steps
-
-```yaml
-"""
-
-_FOOTER = """\
-```
-
-## 7. Success Criteria
-- [ ] Check passes.
-
-## 8. Receiver Calibration
-
-### 8.1 Hard contract (machine-enforced — `block` severity on violation)
-
-- `mutates:` /tmp/test/
-- `never-touches:` /etc
-- `decision-budget:` none
-- `reboot-survival:` none
-
-### 8.2 Human-facing notes (informational only — `info` severity, never blocks)
-
-- `assumes:` linux
-"""
+# §1-§8 skeleton lives in tests/fixtures/spec_template.py.
+from tests.fixtures.spec_template import write_spec_file as _write_spec_helper
 
 
 def _write_spec(steps_yaml: str) -> pathlib.Path:
-    content = _HEADER + steps_yaml + _FOOTER
-    fd, path = tempfile.mkstemp(suffix=".spec.md")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(content)
-    return pathlib.Path(path)
+    return _write_spec_helper(
+        steps_yaml,
+        title="Implicit Precondition Test Spec",
+        slug="implicit-precondition-test",
+        problem="Testing implicit-precondition-missing detection.",
+        first_principles="- Negative-path triggers naming absent files must be covered by a producer.",
+        success_criteria="- [ ] Check passes.",
+    )
 
 
 IPM = "implicit-precondition-missing"

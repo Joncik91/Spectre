@@ -29,29 +29,8 @@ def _state() -> walker.WalkState:
     )
 
 
-def _step(
-    n: int,
-    action: str = "",
-    why: str = "test",
-    produces: list[str] | None = None,
-    requires: list[str] | None = None,
-) -> dict:
-    return {
-        "step": n,
-        "why": why,
-        "action": action,
-        "produces": produces or [],
-        "requires": requires or [],
-        "negative_paths": [],
-    }
-
-
-_STUB_ACTION = (
-    "cat > /app/vidence/bootstrap.py <<'EOF'\n"
-    "def bootstrap():\n"
-    "    raise NotImplementedError\n"
-    "EOF"
-)
+# _step + _STUB_ACTION shared with tests/test_spec_ast_stub_producer.py
+from tests.fixtures.stub_helpers import step as _step, STUB_ACTION as _STUB_ACTION
 
 _REAL_ACTION = (
     "cat > /app/vidence/bootstrap.py <<'EOF'\n"

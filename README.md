@@ -6,7 +6,7 @@
 
 > Spectre — a deterministic spec-driven Claude Code plugin. Vision → Spec → Evaluate → Lock → Implement → Verify, with three-tier pre-lock review and per-project resource locking.
 
-[![tests](https://img.shields.io/badge/tests-1366%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![tests](https://img.shields.io/badge/tests-1512%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## What it does
 
@@ -217,7 +217,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full breakdown: hook 
 ## Tests
 
 ```bash
-pytest tests/                  # 1366 tests, all stdlib + pytest
+pytest tests/                  # 1512 tests, all stdlib + pytest
 pytest tests/ -v               # verbose
 pytest tests/test_spec_evaluator.py -v   # single module
 ```
@@ -226,7 +226,8 @@ Test discipline:
 
 - Stdlib + pytest only. No mocks of `urllib.request` outside `test_llm_judge.py`. No mocks of network for any other module.
 - Pragma test-gaming guard: tests with `rejects/raises/refuses/denies` in the name without `pytest.raises` are blocked at edit time.
-- 1:1 module → test mapping for production code (every `bin/<x>.py` has a `tests/test_<x>.py`); plus four E2E suites covering bundle handoff, dismissal flow, BTC-poller regression, and full skill flow.
+- 1:1 module → test mapping for production code (every `bin/<x>.py` has at least one `tests/test_<x>*.py`); plus four integration/E2E tests: bundle handoff (`test_bundle_handoff_integration.py`), dismissal flow (`test_dismiss_integration.py`), evaluator regression (`test_btc_poller_regression.py`, using a BTC-poller spec fixture), and a full hydrate→implement→compact cycle (`test_e2e.py`).
+- Shared fixture builders live in `tests/fixtures/` (e.g. `stub_helpers.py`, `spec_template.py`) — used across multi-file test clusters for one module.
 
 ## Maintainers
 
