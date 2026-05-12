@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import re
 import tempfile
 from dataclasses import dataclass, field
 from typing import Any
@@ -442,6 +443,41 @@ _SCAFFOLD_STDLIB_TOPS: frozenset[str] = frozenset({
     "http.server", "venv", "ensurepip", "distutils",
 })
 
+# Pre-compiled patterns for _detect_scaffold_gap — compiled once at import time.
+_SCAFFOLD_PIP_INSTALL_RE = re.compile(
+    r"\bpip\s+install\s+(-e\s+\.|\.)(?:\s|$|&&|;)"
+)
+_SCAFFOLD_PIP_REQUIREMENTS_RE = re.compile(
+    r"\bpip\s+install\s+-r\s+(\S+)"
+)
+_SCAFFOLD_CARGO_RE = re.compile(
+    r"\bcargo\s+(build|run|test|install)\b"
+)
+_SCAFFOLD_NPM_RE = re.compile(
+    r"\bnpm\s+(install|ci|run)\b"
+)
+_SCAFFOLD_YARN_PNPM_RE = re.compile(
+    r"\b(yarn|pnpm)\s*(install)?\b"
+)
+_SCAFFOLD_MAKE_BARE_RE = re.compile(
+    r"^\s*make(\s+\S+)?\s*$"
+)
+_SCAFFOLD_MAKE_INLINE_RE = re.compile(
+    r"(?:^|&&|;|\s)\bmake\b(?:\s+\w+)?(?:\s|$|&&|;)"
+)
+_SCAFFOLD_GO_RE = re.compile(
+    r"\bgo\s+(build|test|run)\b"
+)
+_SCAFFOLD_PYTHON_M_RE = re.compile(
+    r"\bpython3?\s+-m\s+([\w.]+)"
+)
+_SCAFFOLD_SYSTEMCTL_RE = re.compile(
+    r"\bsystemctl\s+(start|enable)\s+([\w@.-]+)"
+)
+_SCAFFOLD_DOCKER_COMPOSE_RE = re.compile(
+    r"\bdocker[\s-]compose\s+up\b"
+)
+
 
 def _detect_scaffold_gap(
     action: str,
@@ -456,8 +492,6 @@ def _detect_scaffold_gap(
     used to check whether the implied precondition is covered anywhere in the
     spec (the forgotten-scaffold pattern often omits the file entirely).
     """
-    import re
-
     a = action.strip()
 
     def _produces_contains(token: str) -> bool:
@@ -465,7 +499,7 @@ def _detect_scaffold_gap(
         return any(token in p for p in all_produces)
 
     # ── pip install -e . / pip install . ─────────────────────────────────────
-    if re.search(r"\bpip\s+install\s+(-e\s+\.|\.)(?:\s|$|&&|;)", a):
+    if _SCAFFOLD_PIP_INSTALL_RE.search(a):
         if not (_produces_contains("pyproject.toml") or _produces_contains("setup.py")):
             return (
                 "pyproject.toml (or setup.py)",
@@ -478,7 +512,7 @@ def _detect_scaffold_gap(
             )
 
     # ── pip install -r <file> ─────────────────────────────────────────────────
-    m = re.search(r"\bpip\s+install\s+-r\s+(\S+)", a)
+    m = _SCAFFOLD_PIP_REQUIREMENTS_RE.search(a)
     if m:
         req_file = m.group(1).split("&&")[0].split(";")[0].strip()
         if not _produces_contains(req_file):
@@ -494,7 +528,7 @@ def _detect_scaffold_gap(
             )
 
     # ── cargo build / cargo run / cargo test / cargo install --path . ────────
-    if re.search(r"\bcargo\s+(build|run|test|install)\b", a):
+    if _SCAFFOLD_CARGO_RE.search(a):
         if not _produces_contains("Cargo.toml"):
             return (
                 "Cargo.toml",
@@ -506,7 +540,7 @@ def _detect_scaffold_gap(
             )
 
     # ── npm install / npm ci / npm run ───────────────────────────────────────
-    if re.search(r"\bnpm\s+(install|ci|run)\b", a):
+    if _SCAFFOLD_NPM_RE.search(a):
         if not _produces_contains("package.json"):
             return (
                 "package.json",
@@ -518,7 +552,7 @@ def _detect_scaffold_gap(
             )
 
     # ── yarn / yarn install / pnpm install ───────────────────────────────────
-    if re.search(r"\b(yarn|pnpm)\s*(install)?\b", a):
+    if _SCAFFOLD_YARN_PNPM_RE.search(a):
         if not _produces_contains("package.json"):
             return (
                 "package.json",
@@ -530,7 +564,7 @@ def _detect_scaffold_gap(
             )
 
     # ── make / make <target> ─────────────────────────────────────────────────
-    if re.search(r"^\s*make(\s+\S+)?\s*$", a) or re.search(r"(?:^|&&|;|\s)\bmake\b(?:\s+\w+)?(?:\s|$|&&|;)", a):
+    if _SCAFFOLD_MAKE_BARE_RE.search(a) or _SCAFFOLD_MAKE_INLINE_RE.search(a):
         if not _produces_contains("Makefile"):
             return (
                 "Makefile",
@@ -541,7 +575,7 @@ def _detect_scaffold_gap(
             )
 
     # ── go build / go test / go run (bare cwd form) ──────────────────────────
-    if re.search(r"\bgo\s+(build|test|run)\b", a):
+    if _SCAFFOLD_GO_RE.search(a):
         if not _produces_contains("go.mod"):
             return (
                 "go.mod",
@@ -553,7 +587,7 @@ def _detect_scaffold_gap(
             )
 
     # ── python -m <pkg> / python3 -m <pkg> ───────────────────────────────────
-    m = re.search(r"\bpython3?\s+-m\s+([\w.]+)", a)
+    m = _SCAFFOLD_PYTHON_M_RE.search(a)
     if m:
         pkg = m.group(1)
         top = pkg.split(".")[0]
@@ -575,7 +609,7 @@ def _detect_scaffold_gap(
                 )
 
     # ── systemctl start/enable <unit> ────────────────────────────────────────
-    m = re.search(r"\bsystemctl\s+(start|enable)\s+([\w@.-]+)", a)
+    m = _SCAFFOLD_SYSTEMCTL_RE.search(a)
     if m:
         unit = m.group(2)
         unit_file = unit if unit.endswith(".service") else unit + ".service"
@@ -595,7 +629,7 @@ def _detect_scaffold_gap(
             )
 
     # ── docker compose up / docker-compose up ────────────────────────────────
-    if re.search(r"\bdocker[\s-]compose\s+up\b", a):
+    if _SCAFFOLD_DOCKER_COMPOSE_RE.search(a):
         if not (
             _produces_contains("docker-compose.yml")
             or _produces_contains("compose.yaml")
