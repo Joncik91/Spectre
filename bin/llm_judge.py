@@ -99,6 +99,12 @@ Rules:
 3. Do NOT emit anything outside the JSON array.
 4. Cap output at 20 tuples. Prefer high-signal tuples over exhaustive lists.
 5. If you find no contradictions, return an empty array: []
+6. CRITICAL — before emitting a "missing-producer" or "unowned-requirement" \
+finding, check the step entry's "produces" and "requires" lists in the \
+provided step table. If the required artifact already appears in any prior \
+step's "produces" list, the requirement IS resolved — do NOT emit a \
+missing-producer finding for it. The step table's "produces"/"requires" \
+fields are ground truth from deterministic Tier 1 analysis.
 
 ---
 v0.7 — adversarial-pathway rubric:
@@ -532,6 +538,7 @@ def _call_deepseek(prompts: dict, *, config: JudgeConfig) -> str:
                 {"role": "user", "content": prompts["user"]},
             ],
             "response_format": {"type": "json_object"},
+            "temperature": 0,
         }
     ).encode("utf-8")
 
@@ -838,6 +845,84 @@ def _verify_block_tuples_with_citations(
     return result
 
 
+# ── Deterministic contract-resolution post-filter ────────────────────────────
+
+def _drop_resolved_producer_findings(
+    tuple_findings: list[Finding],
+    contract_resolution: dict | None,
+) -> tuple[list[Finding], list[Finding]]:
+    """Drop missing-producer findings for artifacts the Tier 1 resolver shows as resolved.
+
+    Tier 1 (_build_contract_resolution in spec_evaluator) has the ground truth on what
+    each step produces and whether each requires is satisfied.  DeepSeek must not be
+    allowed to override a resolved produces with a hallucinated missing-producer.
+
+    Args:
+        tuple_findings: Raw findings list from the primary contradiction prompt.
+        contract_resolution: The dict from spec_evaluator._build_contract_resolution,
+            shaped as {"steps": {"<n>": {"produces": [...], "requires": [...],
+            "resolution": {"<entry>": {"resolved_by_step": N} | null}}}}.
+            When None, no filtering is performed.
+
+    Returns (kept, dropped) where dropped contains the deterministically vetoed findings.
+    """
+    if contract_resolution is None:
+        return list(tuple_findings), []
+
+    steps_map: dict[str, dict] = contract_resolution.get("steps", {})
+
+    # Build a flat set of ALL produces entries across all steps (for fast lookup).
+    all_produces: set[str] = set()
+    for step_data in steps_map.values():
+        all_produces.update(step_data.get("produces", []))
+
+    kept: list[Finding] = []
+    dropped: list[Finding] = []
+
+    for f in tuple_findings:
+        if f.kind != "missing-producer":
+            kept.append(f)
+            continue
+
+        # Extract the artifact name from the finding message.
+        # Message format: "missing: <artifact>; <rationale>" (built in _parse_contradiction_findings).
+        missing_artifact = _extract_missing_artifact(f.message)
+
+        # Check 1: artifact appears in any step's produces list.
+        if missing_artifact and missing_artifact in all_produces:
+            dropped.append(f)
+            continue
+
+        # Check 2: if consumer_step is known, check its resolution map.
+        step_n = f.location.step
+        if step_n is not None:
+            step_data = steps_map.get(str(step_n), {})
+            resolution = step_data.get("resolution", {})
+            if missing_artifact and missing_artifact in resolution:
+                entry = resolution[missing_artifact]
+                # entry is {"resolved_by_step": N} when resolved, None when not.
+                if entry is not None and entry.get("resolved_by_step") is not None:
+                    dropped.append(f)
+                    continue
+
+        kept.append(f)
+
+    return kept, dropped
+
+
+def _extract_missing_artifact(message: str) -> str:
+    """Extract the artifact name from a missing-producer finding message.
+
+    Message format from _parse_contradiction_findings:
+      "missing: <artifact>; <rationale>"
+    Falls back to returning empty string when format doesn't match.
+    """
+    m = re.match(r"missing:\s*([^;]+)\s*;", message)
+    if m:
+        return m.group(1).strip()
+    return ""
+
+
 # ── Single contradiction-oriented prompt runner ───────────────────────────────
 
 def _run_contradiction_prompt(
@@ -919,6 +1004,7 @@ def evaluate(
     *,
     config: JudgeConfig,
     step_objects: list | None = None,
+    contract_resolution: dict | None = None,
 ) -> list[Finding]:
     """Run the Tier 3 structured contradiction review over spec_text.
 
@@ -932,6 +1018,12 @@ def evaluate(
             contract fields (produces/requires). When absent (or the dataclass
             predates priority-3), those fields are left empty — DeepSeek can
             still reason from action/verification summaries.
+        contract_resolution: Optional dict from spec_evaluator._build_contract_resolution.
+            When provided, used as ground truth to drop missing-producer findings
+            that contradict Tier 1's resolved contract graph.  Shape::
+
+                {"steps": {"<n>": {"produces": [...], "requires": [...],
+                                   "resolution": {"<entry>": {"resolved_by_step": N} | null}}}}
 
     Returns Finding list (possibly empty, possibly with tier3-unavailable
     sentinel or tier3-malformed-response). Never raises.
@@ -946,6 +1038,16 @@ def evaluate(
 
     step_table = build_step_table(spec_text, step_objects=step_objects)
     primary_findings = _run_contradiction_prompt(step_table, config=config)
+
+    # Deterministic post-filter: drop missing-producer findings for artifacts
+    # that Tier 1 contract resolution shows as resolved.  This is a hard veto —
+    # the model cannot hallucinate a missing-producer when the ground truth says
+    # the artifact is produced.  Runs before the faithfulness check so demoted
+    # findings don't trigger an unnecessary second API call.
+    primary_findings, _dropped = _drop_resolved_producer_findings(
+        primary_findings, contract_resolution
+    )
+
     # Second pass: cite-and-verify for block-severity tuples (v0.6 faithfulness check).
     # Zero extra cost when no block tuples; one batched call otherwise.
     return _verify_block_tuples_with_citations(primary_findings, step_table, config=config)

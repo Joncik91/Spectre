@@ -388,7 +388,7 @@ def test_sidecar_payload_includes_deepseek_model_version_when_tier3_runs(tmp_pat
         b"[tier3]\nenabled = true\nmodel = \"deepseek-reasoner-v9\"\n"
     )
     from bin import llm_judge as _llm_judge
-    monkeypatch.setattr(_llm_judge, "evaluate", lambda spec_text, config: [])
+    monkeypatch.setattr(_llm_judge, "evaluate", lambda spec_text, *, config, step_objects=None, contract_resolution=None: [])
     result = spec_evaluator.evaluate(
         _GOOD_MINIMAL, config_path=config_path, bundle_persist_dir=tmp_path
     )

@@ -481,7 +481,19 @@ def evaluate(
                     chunk_timeout_s=chunk_timeout,
                     total_timeout_s=total_timeout,
                 )
-                tier3_findings = _llm_judge.evaluate(bundle.spec_text, config=judge_config)
+                # Build contract resolution before Tier 3 so it can be passed as
+                # ground truth — prevents DeepSeek from hallucinating missing-producer
+                # findings for artifacts that Tier 1 already resolved.
+                contract_resolution_early = _build_contract_resolution(bundle.spec_text)
+                # Parse step objects so the step table sent to DeepSeek includes
+                # the deterministic produces/requires fields from Tier 1.
+                step_objects_for_t3 = _spec_ast._parse_steps_section(bundle.spec_text)
+                tier3_findings = _llm_judge.evaluate(
+                    bundle.spec_text,
+                    config=judge_config,
+                    step_objects=step_objects_for_t3,
+                    contract_resolution=contract_resolution_early,
+                )
                 # tiers_run only flips to [1, 2, 3] when llm_judge actually reached the API
                 # (i.e. didn't return a tier3-unavailable sentinel). Detect by absence of
                 # tier3-unavailable findings.
