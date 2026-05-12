@@ -51,29 +51,35 @@ The hooks **never read or write** the active spec body itself — only the point
 
 ## Skill protocols
 
-### `/vision <text>` (`skills/vision/SKILL.md`, ~350 lines)
+### `/vision <text>` (`skills/vision/SKILL.md`, ~410 lines)
 
 ```
-Step 0   Codebase fingerprint        → state/local-symbols.json
-Step 1   Receive Spark               (user input)
-Step 2   Feasibility Audit (silent)  refuse if physically impossible
-Step 3   First-Principles draft + 2–3 refinement Qs (multi-turn)
-Step 4   Draft steps with why/action/verification (5–15 steps)
-Step 5   Confirm: yes / refine "<change>" / cancel
-Step 6   Draft to disk: <slug>.spec.md.draft (atomic write)
-Step 6.4 Pre-lock Evaluator           ── see "Evaluator pipeline" below ──
-         Tier 1 spec_ast (AST)
-         Tier 2 coverage_gate (structural)
-         Tier 3 llm_judge (DeepSeek, opt-in)
-         Halt on any block-severity finding.
-Step 6.5 ADR generation               decisions/<NNNN>-<slug>.md per Decision marker
-Step 6.6 Resource node inference      auto-detect port:N → res-port-<N> in .graph.md
-Step 6.7 Lock                         atomic rename .draft → .spec.md
+Step 0    Codebase fingerprint        → state/local-symbols.json + template surfacing
+Step 0.5  Cognitive-substrate wizard  4 mandatory §8.2 questions; cached by author-spec-hash
+Step 1    Receive intent              (user input)
+Step 2    Feasibility Audit (silent)  refuse if physically impossible
+Step 3    Initialize the walker       init-or-resume state/.walk.json
+Step 4    Walk loop (interrogation)   peek-pending → question → answer-concern → yield-check
+                                      Loop until: stop / Tier 3 yield-delta converged /
+                                      max-rounds / per-receiver exhausted
+Step 5    Materialize draft + confirm render from state.answered → .spec.md.draft
+                                      Confirm: yes / refine "<change>" / cancel
+Step 6    Draft-to-disk               atomic write <slug>.spec.md.draft
+Step 6.3a First-run setup wizard      ensure ~/.spectre/reviewer.toml exists
+Step 6.4  Pre-lock Evaluator          ── see "Evaluator pipeline" below ──
+          Tier 1 spec_ast (AST)
+          Tier 2 coverage_gate (structural)
+          Tier 3 llm_judge (DeepSeek, opt-in)
+          Halt on any block-severity finding.
+Step 6.5  ADR generation              decisions/<NNNN>-<slug>.md per Decision marker
+Step 6.6  Resource node inference     auto-detect port:N → res-port-<N> in .graph.md
+Step 6.7  Lock                        atomic rename .draft → .spec.md
                                       flip specs/.active
                                       reset state/scratchpad.json (v2 shape)
                                       write <slug>.spec.md.eval.json sidecar
                                       clear state/.eval-bundle.json
-Step 7   Print VISION LOCKED transition signal
+                                      write <slug>.envelope.json handoff envelope
+Step 7    Print VISION LOCKED transition signal
 ```
 
 Two architectural commitments shape the protocol:
@@ -81,17 +87,24 @@ Two architectural commitments shape the protocol:
 - **Draft → confirm → lock is explicit.** No silent locks. The user reads the draft on disk in their own editor before saying yes.
 - **The evaluator's bundle is materialized once.** §6.4 builds a `ReviewBundle` containing preview ADRs, preview Resources, and tier classifications, persists it to `state/.eval-bundle.json` keyed by the draft's SHA-256, and §6.5/§6.6/§6.7 read from it. No recomputation; if the draft changes between steps, the SHA mismatch forces a re-run.
 
-### `/implement [<track>]` (`skills/implement/SKILL.md`, ~320 lines)
+### `/implement [check | auto] [<track>]` (`skills/implement/SKILL.md`, ~520 lines)
 
 ```
+Step 0    Mode routing                parse check / auto / track args
 Step 0.5  Track selection             default = "default"
+Step 0.7  Tier 0 handoff integrity    validate <slug>.envelope.json before reading spec
+                                      Halt: ENVELOPE TAMPERED / schema violation
 Step 1    Read context                .active + scratchpad[track]
                                       Halt: SPEC COMPLETE if all steps verified
+Step 1.5  Environment setup           ensure_venv + normalize_action rewrites
+                                      Halt: VENV CREATION FAILED (no fallback)
 Step 2    Pre-flight re-verify        re-run prior step's verification
                                       Halt: ROOT-STATE DESYNC on fail
 Step 3    /implement check branch     verify-only, no scratchpad write
 Step 3.5  Persistence-tier classifier  bin/tier.py — silent/repo/host/network/NA
                                       Halt+ask on host, network, or never-autonomous
+Step 3.5b Post-halt-success prompt    adopt / once-only / never-ask-again (v0.4.1+)
+                                      sandbox-paradox brake at 3 adoptions/session
 Step 3.6  Resource lock acquire        bin/track.acquire() via UDS to supervisor
                                       Halt: RESOURCE QUEUED if at capacity
 Step 3.7  Reasoning-in-Public          print "WHY: <why text>"
@@ -99,13 +112,14 @@ Step 4    Execute action               Bash → PostToolUse hook fires compact.p
 Step 5    Verification gate            run verification:; halt on non-zero
 Step 5.5  State Auditor                bin/auditor.py PBT-lite checks (informational)
 Step 6    Branch on result
-          Path A (pass):  advance step, release locks
+          Path A (pass):  advance step, CDLC ledger implement entry
           Path B (fail):  one Option-B retry with diagnosis, then halt
 Step 6.5  Drift checkpoint             every 5 successful steps
                                        re-read §1, audit next batch
                                        Halt: DRIFT DETECTED on concern
 Step 6.7  Release locks                bin/track.release() on terminal step state
 Step 7    Failure logging              append to scratchpad.failed_hypotheses[]
+Step 7.5  Spectre-finding capture      Path B retry succeeded → prompt project/spectre
 ```
 
 The persistence-tier gate (§3.5) is the single source of truth for halt-vs-execute. v1 used a regex risk-gate inline in the skill prose; v0.2.1 replaced it with `bin/tier.py` so the rule set is testable and project-overridable.
@@ -137,9 +151,10 @@ draft.spec.md.draft
         │                 decision-without-adr (warn, deterministic).
         │
         └──→ Tier 3: llm_judge.evaluate(spec_text, config=…)
-                Three prompts to DeepSeek v4 Pro:
-                  tier3-context-gap, tier3-spec-asserts-wrong,
-                  tier3-attacker-view.
+                Single JSON-only API call to DeepSeek deepseek-v4-flash.
+                Contradiction-tuple protocol — 10 kinds + unrecognized fallback.
+                CoT faithfulness cite-and-verify pass (zero extra API calls
+                  when no block tuples exist).
                 Never raises. All failures become a single
                 tier3-unavailable info-severity sentinel finding.
         │
@@ -350,8 +365,8 @@ References: Issue #30 (closed).
 1. **Contract-shadow precision.** `bin/spec_ast.py` now skips `_PYTHON_IMPORT_ALT_RE` matches whose start lies inside a span already matched by `_PYTHON_IMPORT_RE` (the `from X import Y` form). Parent-prefix match is added to both contract resolution (`unowned-requirement` block check on declared `requires:` entries) and the heuristic shadow: `package:foo` satisfies `module:foo.bar`; `module:foo.bar` satisfies `module:foo.bar.baz`. Three regression tests in `test_spec_ast_v052_gaps.py`.
 2. **Stale reviewer.toml auto-migration.** `bin/setup_wizard.maybe_provision()` no longer treats every existing config as authoritative. It detects (a) `model in {deepseek-reasoner, deepseek-chat}`, (b) missing `chunk_timeout_s`, (c) missing `total_timeout_s`. Any one trips migration: backup written to `reviewer.toml.bak-<timestamp>` (mode 0600), config rewritten with current defaults (`deepseek-v4-flash` + chunk/total split timeouts), preserving the user's `enabled` flag and `api_key_env`. Returns new outcome `"migrated"`. Stderr breadcrumb points at the backup. Five regression tests in `test_setup_wizard.py`.
 3. **Tier 3 error-class disambiguation.** `bin/llm_judge.evaluate()` now classifies `urllib.error.HTTPError` exceptions: `401`/`403` → `"auth failure (HTTP NNN — check ~/.spectre/secrets.env or DEEPSEEK_API_KEY)"`, `400` → `"bad request (model X may be unavailable on your plan)"`, `5xx` → `"provider error (HTTP NNN)"`, anything else → `"http-NNN"`. Network/timeout paths unchanged. Four regression tests in `test_llm_judge.py`.
-4. **Auth-failure prominence.** `skills/vision/SKILL.md` Step 4 now requires a `⚠ Tier 3 unavailable due to auth — fix ~/.spectre/secrets.env or DEEPSEEK_API_KEY then re-run /vision.` banner ABOVE the `tier 1/2/3` status block whenever the `tier3-unavailable` finding's message contains the substring `auth failure`. The banner makes credential issues actionable without scanning the findings list.
+4. **Auth-failure prominence.** `skills/vision/SKILL.md` Step 6.4 now requires a `⚠ Tier 3 unavailable due to auth — fix ~/.spectre/secrets.env or DEEPSEEK_API_KEY then re-run /vision.` banner ABOVE the `tier 1/2/3` status block whenever the `tier3-unavailable` finding's message contains the substring `auth failure`. The banner makes credential issues actionable without scanning the findings list.
 
-`EVALUATOR_VERSION = "0.6.2"`. 1280 tests pass.
+`EVALUATOR_VERSION = "0.6.2"`. 1280 tests passed at release.
 
 References: Issues #36, #37 (closed). PR #39, release v0.6.2.
