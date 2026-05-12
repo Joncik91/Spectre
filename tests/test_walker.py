@@ -14,7 +14,7 @@ def test_known_receivers_includes_four_canonical_names():
     assert set(walker.KNOWN_RECEIVERS) == {"implement", "tier3", "human", "deterministic"}
 
 
-def test_known_concern_kinds_is_closed_set_of_six():
+def test_known_concern_kinds_is_closed_set_of_seven():
     assert set(walker.KNOWN_CONCERN_KINDS) == {
         "edge-case",
         "receiver-clarification",
@@ -22,6 +22,7 @@ def test_known_concern_kinds_is_closed_set_of_six():
         "branch-resolution",
         "negative-path",
         "scaffold-precondition",
+        "stub-invocation-detected",
     }
 
 
