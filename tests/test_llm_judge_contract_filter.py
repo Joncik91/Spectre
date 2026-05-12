@@ -425,3 +425,134 @@ model = "deepseek-v4-flash"
     assert "steps" in cr
     assert "1" in cr["steps"]
     assert "package:foo" in cr["steps"]["1"]["produces"]
+
+
+# ---------------------------------------------------------------------------
+# Fix 1 — target_artifact field: structured field used by filter when present
+# ---------------------------------------------------------------------------
+
+
+def test_target_artifact_set_when_missing_field_present():
+    """_parse_contradiction_findings sets target_artifact when 'missing' field is non-empty."""
+    content = json.dumps([
+        {
+            "kind": "missing-producer",
+            "consumer_step": 2,
+            "missing": "package:foo",
+            "rationale": "step 2 uses foo but no prior step installs it",
+        }
+    ])
+    result = llm_judge._parse_contradiction_findings(content)
+    assert len(result) == 1
+    assert result[0].target_artifact == "package:foo"
+
+
+def test_target_artifact_none_when_missing_field_absent():
+    """_parse_contradiction_findings sets target_artifact=None when 'missing' field is omitted."""
+    content = json.dumps([
+        {
+            "kind": "missing-producer",
+            "consumer_step": 2,
+            # no 'missing' field
+            "rationale": "step 2 uses foo but no prior step installs it",
+        }
+    ])
+    result = llm_judge._parse_contradiction_findings(content)
+    assert len(result) == 1
+    assert result[0].target_artifact is None
+
+
+def test_post_filter_uses_target_artifact_directly_when_set():
+    """Filter drops finding via target_artifact without regex-parsing the message."""
+    # Craft a finding where the message does NOT contain the canonical prefix
+    # but target_artifact IS set — verifies structured field is preferred.
+    f = findings.Finding(
+        tier=3,
+        kind="missing-producer",
+        severity="block",
+        location=findings.FindingLocation(scope="step", step=2),
+        message="step 2 uses foo but no prior step installs it",  # no "missing: X;" prefix
+        dismissable=True,
+        target_artifact="package:foo",
+    )
+
+    kept, dropped = llm_judge._drop_resolved_producer_findings([f], _CONTRACT_RESOLUTION)
+
+    assert dropped == [f], "Finding with target_artifact='package:foo' must be dropped"
+    assert kept == []
+
+
+def test_post_filter_falls_back_to_regex_when_target_artifact_none():
+    """When target_artifact is None, filter falls back to regex over the message string."""
+    # No target_artifact; message has canonical prefix so regex should match.
+    f = findings.Finding(
+        tier=3,
+        kind="missing-producer",
+        severity="block",
+        location=findings.FindingLocation(scope="step", step=2),
+        message="missing: package:foo; rationale",
+        dismissable=True,
+        target_artifact=None,
+    )
+
+    kept, dropped = llm_judge._drop_resolved_producer_findings([f], _CONTRACT_RESOLUTION)
+
+    assert dropped == [f], "Regex fallback must still drop the finding"
+    assert kept == []
+
+
+@mock.patch("urllib.request.urlopen")
+def test_filter_drops_when_missing_field_present_in_tuple(mock_urlopen, monkeypatch):
+    """When 'missing' field IS in the tuple, target_artifact is set and filter drops it."""
+    _env(monkeypatch)
+    tuples = [
+        {
+            "kind": "missing-producer",
+            "consumer_step": 2,
+            "missing": "package:foo",
+            "rationale": "step 2 uses foo",
+        }
+    ]
+    mock_urlopen.return_value = _contradiction_resp(tuples)
+
+    result = llm_judge.evaluate(
+        _SPEC_WITH_CONTRACTS,
+        config=_CFG,
+        contract_resolution=_CONTRACT_RESOLUTION,
+    )
+
+    missing_findings = [f for f in result if f.kind == "missing-producer"]
+    assert missing_findings == [], "Should be dropped via target_artifact"
+
+
+@mock.patch("urllib.request.urlopen")
+def test_filter_falls_back_when_missing_field_absent_in_tuple(mock_urlopen, monkeypatch):
+    """When 'missing' field is absent, target_artifact=None; regex fallback; finding passes through
+    (no artifact name → can't match → survives)."""
+    _env(monkeypatch)
+    tuples = [
+        {
+            "kind": "missing-producer",
+            "consumer_step": 2,
+            # no 'missing' field — model omitted it
+            "rationale": "step 2 uses foo but no prior step installs it",
+        }
+    ]
+    # Primary + cite call (cite affirms → finding kept).
+    cite_resp = json.dumps([{"index": 0, "step": 2, "citation": "python app.py"}])
+    mock_urlopen.side_effect = [
+        _contradiction_resp(tuples),
+        _api_resp(cite_resp),
+    ]
+
+    result = llm_judge.evaluate(
+        _SPEC_WITH_CONTRACTS,
+        config=_CFG,
+        contract_resolution=_CONTRACT_RESOLUTION,
+    )
+
+    # No artifact name → regex returns "" → filter can't match → finding survives.
+    missing_findings = [f for f in result if f.kind == "missing-producer"]
+    assert len(missing_findings) == 1, (
+        "Without artifact name, filter cannot match, finding must pass through"
+    )

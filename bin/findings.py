@@ -120,6 +120,13 @@ class Finding:
     message: str
     suggested_fix: str | None = None
     dismissable: bool = False
+    # v0.8 — structured artifact name for missing-producer findings.
+    # Populated by _parse_contradiction_findings when the model provides a
+    # non-empty "missing" field in the tuple.  Used by the post-filter in
+    # preference to re-parsing the message string with a regex, so the filter
+    # works even when the model omits the "missing: X;" message prefix.
+    # NOT included in fingerprint() — message text already excluded there.
+    target_artifact: str | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in KNOWN_KINDS:
@@ -185,6 +192,7 @@ def from_dict(d: dict[str, Any]) -> Finding:
         message=d["message"],
         suggested_fix=d.get("suggested_fix"),
         dismissable=d.get("dismissable", False),
+        target_artifact=d.get("target_artifact"),
     )
 
 

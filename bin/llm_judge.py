@@ -394,10 +394,14 @@ def _parse_contradiction_findings(content: str) -> list[Finding]:
             message_parts.append(f"contradiction detected (kind={kind})")
 
         # Enrich with structured fields for specific kinds.
+        # For missing-producer: capture the artifact name in a structured field
+        # so the post-filter can use it without re-parsing the message string.
+        target_artifact: str | None = None
         if kind == "missing-producer":
             missing = str(item.get("missing", "")).strip()
             if missing:
                 message_parts.insert(0, f"missing: {missing};")
+                target_artifact = missing
         elif kind == "shallow-ownership":
             claimed = str(item.get("claimed", "")).strip()
             if claimed:
@@ -432,6 +436,7 @@ def _parse_contradiction_findings(content: str) -> list[Finding]:
             location=location,
             message=message,
             dismissable=True,
+            target_artifact=target_artifact,
         ))
 
     return result
@@ -884,9 +889,14 @@ def _drop_resolved_producer_findings(
             kept.append(f)
             continue
 
-        # Extract the artifact name from the finding message.
-        # Message format: "missing: <artifact>; <rationale>" (built in _parse_contradiction_findings).
-        missing_artifact = _extract_missing_artifact(f.message)
+        # Prefer the structured target_artifact field (set in _parse_contradiction_findings
+        # when the model provides a non-empty "missing" field in the tuple).
+        # Fall back to regex over the message string for findings created by other paths
+        # (e.g. tests that construct Finding directly without target_artifact).
+        if f.target_artifact:
+            missing_artifact = f.target_artifact
+        else:
+            missing_artifact = _extract_missing_artifact(f.message)
 
         # Check 1: artifact appears in any step's produces list.
         if missing_artifact and missing_artifact in all_produces:
