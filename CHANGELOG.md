@@ -2,6 +2,27 @@
 
 All notable changes to the Spectre plugin.
 
+## v0.7.4 — 2026-05-12
+
+**Hygiene release: rename `sdl-vision-engine` → `spectre`, split API ref out of README, consolidate test fixtures, fix stale doc counts.**
+
+User-facing change:
+
+- **Plugin renamed to `spectre`** (#53). Slash commands now surface as `/spectre:vision` and `/spectre:implement` (previously `/sdl-vision-engine:vision` etc.). Hard rename — no other installations to preserve. Plugin manifest schema version (`plugin.json:version`) unchanged at `1.1.0`; only the marketplace plugin name + Spectre release version were touched.
+
+Docs:
+
+- **README split** (#53). \`## API\` section (Hooks, Skills, Spec step schema, §8 Receiver Calibration, Scratchpad schema, .eval.json sidecar, Layout) moved to a new \`docs/API.md\`. README's \`## API\` is now a 3-line pointer. README: 420 → 241 lines.
+- **Test counts + E2E suite names fixed** (#54). Badge + inline count bumped to current (1512). "BTC-poller regression" line rewritten with the actual E2E file names.
+
+Test hygiene:
+
+- **Shared fixtures extracted** (#54). \`tests/fixtures/stub_helpers.py\` (\`_step()\` + \`STUB_ACTION\` shared by stub-producer + stub-invocation pair). \`tests/fixtures/spec_template.py\` (\`make_spec_text()\` factory covering the §1-§8 skeleton). 6 satellite spec_ast test files migrated to the shared factory. Net LOC: -254 in tests/, +150 in tests/fixtures/. No behavior change.
+
+Tests: 1512 → 1512 (0 regressions).
+
+**Issue closures:** #53, #54.
+
 ## v0.7.3 — 2026-05-12
 
 **Added: drive-to-completeness contract — walker + Tier 1 detect scaffold gaps, stub-producer invocations, and unanchored verifications.**
