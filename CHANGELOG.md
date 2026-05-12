@@ -2,6 +2,29 @@
 
 All notable changes to the Spectre plugin.
 
+## v0.7.2 — 2026-05-12
+
+**Fixed: Tier 3 hallucinations contradicting Tier 1+2 ground truth (#45).**
+
+Real-world repro on a `vidence` spec: 5 /vision runs, 28 Tier 3 findings, **only 1 legitimate catch (~3.5% useful-signal rate)**. The rest hallucinated "step N's produces is empty" while the same review bundle's deterministic `contract_resolution.steps.N.produces` listed entries 30 lines lower. Dismissals (SHA-256 of finding message text) couldn't keep up because the model reworded the same hallucination on every run.
+
+Three root causes, three fixes:
+
+- **Bundle assembly gap**: Tier 1's parsed `produces:`/`requires:` graph + `contract_resolution` were never threaded into the Tier 3 bundle. The model had to re-parse YAML inside fenced code blocks and hallucinated when it failed. Fix: `spec_evaluator.py` now passes `step_objects` + `contract_resolution` into `llm_judge.evaluate()`.
+- **Non-deterministic sampling**: no `temperature` key in the DeepSeek request body, defaulting to >0. Fix: explicit `temperature: 0` in every API request (both primary contradiction call and cite-and-verify pass).
+- **No deterministic veto**: even with the right context, the model can still emit a false `missing-producer`. Tier 1+2 already KNOW the answer; v0.7.2 stops letting the model override them. New `_drop_resolved_producer_findings()` post-filter looks up each `missing-producer` finding's target artifact in `contract_resolution`; if resolved, the finding is DROPPED (not demoted). Audit trail: an info-severity `tier3-filter-applied` sentinel records the drop count in the sidecar.
+
+Other improvements:
+- New `Finding.target_artifact: str | None` field decouples the post-filter from message-text regex parsing. Filter consults the structured field first, falls back to regex only when absent.
+- System-prompt "Rule 6" anchors `produces:`/`requires:` as ground truth for the model.
+- `unowned-requirement` reference removed from Rule 6 (not in the Tier 3 taxonomy).
+
+Tests: +21 new (1343 → 1364). Covers temperature=0 payload assertion, target_artifact field round-trip, post-filter drops/keeps, audit sentinel emit/quiet, spec_evaluator wiring.
+
+**Out of scope (follow-up):**
+- Run-3 hallucination: model misread `never-touches:` as also forbidding reads. System-prompt clarification needed.
+- Runs 4-5: injection false-positives despite Physics Guardrail §5. Adversarial-pathway rubric doesn't reference §5 as a mitigation the model must consult.
+
 ## v0.7.1 — 2026-05-11
 
 **Fixed: Tier 1 `self-cycle-produces` check (#42).**
