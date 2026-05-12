@@ -78,7 +78,13 @@ def _make_synthetic_tier3_finding(fingerprint_input: str | None = None) -> findi
     )
 
 
-def _mock_llm_judge_evaluate(spec_text: str, config: llm_judge.JudgeConfig) -> list[findings.Finding]:
+def _mock_llm_judge_evaluate(
+    spec_text: str,
+    *,
+    config: llm_judge.JudgeConfig,
+    step_objects=None,
+    contract_resolution=None,
+) -> list[findings.Finding]:
     """Mocked version of llm_judge.evaluate that returns a single Tier 3 finding."""
     return [_make_synthetic_tier3_finding()]
 
