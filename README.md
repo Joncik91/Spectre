@@ -6,7 +6,7 @@
 
 > Spectre — a deterministic spec-driven Claude Code plugin. Vision → Spec → Evaluate → Lock → Implement → Verify, with three-tier pre-lock review and per-project resource locking.
 
-[![tests](https://img.shields.io/badge/tests-1268%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![tests](https://img.shields.io/badge/tests-1343%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## Table of Contents
 
@@ -24,16 +24,7 @@
 
 Default Claude Code auto-memory drifts during long sessions: spec-level intent gets buried under terminal scroll-back, "what did I just change on disk" answers require re-reading logs that have already aged out of context, and the agent will happily power through a half-broken plan when nobody re-grounds it.
 
-Spectre overrides this with a deterministic state machine that drives an unbroken **vision → spec → evaluate → lock → implement → verify** chain. Two hooks own the context plane, two skills own the agent plane, and stdlib-only Python modules own the state plane (interrogation walker, observations log, personal-rules overrides, CDLC ledger, templates registry, template-patcher). See `CHANGELOG.md` for the full release log.
-
-**Recent releases:**
-
-- **v0.5.0** — heredoc-python elimination initiative complete: all 20 `python3 - <<'PY'` blocks in skill prose replaced with tested `python3 -m bin.<module> <subcommand>` CLIs. Drift-prevention CI guard added. 928 tests.
-- **v0.5.1** — patch from v0.5.0 live test: walker CLI subcommands (`get-state`, `peek-pending`, `answer-concern`, `stop`), scratchpad `ensure-v2`/`reset` CLIs, Tier 1 h3-header + brace-pattern fixes, Tier 3 split chunk/total timeouts. 988 tests.
-- **v0.5.2** — closes five deterministic gap classes (A–E) surfaced by yt-readable retest: executor-owned venv (`bin/managed_venv.py`), explicit step contracts (`produces:`/`requires:`, 8 types, `contract_resolution` in sidecar), Tier 1 syntax/artifact/import heuristics, Tier 3 contradiction-tuple protocol (single JSON API call, 10 kinds). `DEEPSEEK_MODEL` default changed from `deepseek-reasoner` → `deepseek-v4-flash`. Per Copilot/GPT-5.4 peer review (#32). 1109 tests.
-- **v0.6.0** — handoff envelope (`bin/handoff_envelope.py` + `bin/handoff_validator.py`): bytewise integrity (spec + sidecar SHA-256) enforced at implement start (Step 0.7 Tier 0 check). Walker yield countdown + negative-path concerns. Tier 1 `negative-paths:` enforcement. Tier 3 CoT faithfulness cite-and-verify pass after primary contradiction tuples. 1265 tests.
-- **v0.6.1** — PYTHONPATH consistency fix: all `python3 -m bin.X` in skill prose now carry `PYTHONPATH="${CLAUDE_PLUGIN_ROOT}"` prefix; CI sentinel added. 1268 tests.
-- **v0.6.2** — closes #36 (Tier 1 `_PYTHON_IMPORT_ALT_RE` was capturing the symbol after `from X import Y` as an unowned module; parent-prefix match in contract resolution + heuristic shadow so `package:foo` covers `module:foo.bar`) and #37 (Tier 3 silent-fail trio: `setup_wizard` auto-migrates stale `~/.spectre/reviewer.toml` from v0.5.0-era `deepseek-reasoner` and pre-#25 single-`timeout_s` schemas; `llm_judge` distinguishes HTTP 401/403 `auth failure` from network `socket-timeout` and 5xx `provider error`; `skills/vision/SKILL.md` requires a `⚠ Tier 3 unavailable due to auth` banner above the tier status when auth failed). 1280 tests.
+Spectre overrides this with a deterministic state machine that drives an unbroken **vision → spec → evaluate → lock → implement → verify** chain. Two hooks own the context plane, two skills own the agent plane, and stdlib-only Python modules own the state plane (interrogation walker, observations log, personal-rules overrides, CDLC ledger, templates registry, template-patcher). See [`CHANGELOG.md`](CHANGELOG.md) for the per-release log.
 
 **The four invariants:**
 
@@ -207,12 +198,12 @@ Each step is an atomic transaction:
   verification: "curl -sf http://127.0.0.1:8080 > /dev/null"
   resources:                # OPTIONAL — auto-inferred from action when port:N pattern matches
     - res-port-8080
-  produces:                 # OPTIONAL — explicit step contracts (v0.5.2)
+  produces:                 # OPTIONAL — explicit step contracts
     - file:/opt/myapp/server.py
     - package:myapp
   requires:                 # OPTIONAL — Tier 1 cross-validates against prior produces:
     - package:myapp
-  negative-paths:           # OPTIONAL — Tier 1 warn/block on missing hazard handlers (v0.6.0)
+  negative-paths:           # OPTIONAL — Tier 1 warn/block on missing hazard handlers
     - trigger: "port already bound"
       handler: "kill existing occupant or fail fast"
   properties:               # OPTIONAL — State Auditor PBT-lite checks
@@ -230,16 +221,27 @@ Soft verifications (`echo done`, `true`, `: ; …`) are rejected by the Tier 1 A
 
 ### §8 Receiver Calibration (machine-enforced)
 
-Every spec must declare a hard contract:
+Every spec declares two contracts: §8.1 hard-contract (what the technical implementer is allowed to touch) and §8.2 cognitive-substrate contract (who the spec is for, what it implies about trust and judgment, and what assumptions were killed).
 
 ```yaml
+# §8.1 — hard contract
 mutates: /opt/btc-poller/, /etc/systemd/system/
 never-touches: /home, /etc/passwd, /var/log
 decision-budget: 1 paid API call per minute (CoinGecko free tier)
 reboot-survival: required
+
+# §8.2 — cognitive-substrate contract (auto-prompted at /vision Step 0.5)
+receiver-fingerprint: claude-code+human
+trust-profile: handles-secrets, touches-network
+contextual-binding: <one-line product hypothesis>
+provenance: { kind: none }
+ux-contract: { on-success, on-failure, log-target }
+assumptions-killed: [<rejected alternatives + why>]
+requires-situated-judgment: [<step numbers>]
+roi-budget: <when this spec's payoff goes positive>
 ```
 
-The Tier 2 coverage gate cross-checks this against every action's path captures. A step that writes to `/var/log` while `never-touches` lists `/var/log` is a `block`-severity `calibration-hard-violation`. Severity overrides in `~/.spectre/reviewer.toml` can raise severities (warn → block) but never lower them.
+The Tier 2 coverage gate cross-checks §8.1 against every action's path captures: a step that writes to `/var/log` while `never-touches` lists `/var/log` is a `block`-severity `calibration-hard-violation`. The Tier 1 substrate AST checks §8.2 for missing axes, malformed trust annotations, and untrusted-input-to-sink flow without `sanitizes:` declarations. Severity overrides in `~/.spectre/reviewer.toml` can raise severities (warn → block) but never lower them.
 
 ### Scratchpad schema v2 (`state/scratchpad.json`)
 
@@ -276,7 +278,7 @@ Written next to every locked spec for reproducibility:
 
 ```json
 {
-  "evaluator_version": "0.5.1",
+  "evaluator_version": "<x.y.z>",
   "tiers_run": [1, 2, 3],
   "findings": [...],
   "dismissals": [...],
@@ -285,13 +287,14 @@ Written next to every locked spec for reproducibility:
   "policy_hash": "<sha256 of severity policy>",
   "spec_sha256": "<sha256 of locked spec body>",
   "sidecar_sha256": "<sha256 of this sidecar>",
+  "substrate_resolution": { ... },
   "contract_resolution": {
     "step-2-requires-package-foo": "step-1-produces-package-foo"
   }
 }
 ```
 
-`policy_hash` covers the resolved severity table — if a project tightens severities mid-flight, the next spec's sidecar diverges from the prior one, and the gap is auditable. `spec_sha256` and `sidecar_sha256` are the bytewise integrity anchors written by the v0.6.0 handoff envelope. `contract_resolution` records how each `requires:` entry resolved to a prior step's `produces:` declaration.
+`policy_hash` covers the resolved severity table — if a project tightens severities mid-flight, the next spec's sidecar diverges from the prior one, and the gap is auditable. `spec_sha256` and `sidecar_sha256` are the bytewise integrity anchors checked by the handoff envelope at `/implement` start. `contract_resolution` records how each `requires:` entry resolved to a prior step's `produces:` declaration. `substrate_resolution` summarizes how the cognitive-substrate contract (§8.2 — receiver fingerprint, trust profile, taint outcome, provenance chain, axis completeness) resolved at lock time.
 
 ### Layout
 
@@ -309,9 +312,9 @@ bin/
   spec_evaluator.py             /vision §6.4 review-bundle orchestrator
   spec_ast.py                   Tier 1 deterministic AST classifier
   coverage_gate.py              Tier 2 structural coverage gate
-  llm_judge.py                  Tier 3 DeepSeek deepseek-v4-flash adversarial reviewer — contradiction-tuple protocol (single API call, 10 kinds + unrecognized fallback) + CoT faithfulness cite-and-verify pass (v0.6.0)
+  llm_judge.py                  Tier 3 DeepSeek deepseek-v4-flash adversarial reviewer — contradiction-tuple protocol (single API call, 10 kinds + unrecognized fallback) + CoT faithfulness cite-and-verify pass + adversarial-pathway rubric
   findings.py                   Finding dataclass + stable fingerprint
-  eval_metadata.py              .eval.json sidecar + policy hash
+  eval_metadata.py              .eval.json sidecar + policy hash + substrate_resolution
   adr.py                        ADR writer + graph supersedes-edge update
   graph.py                      .graph.md manifest parser/serializer
   resources.py                  Resource node parser + heuristic extractor
@@ -319,14 +322,16 @@ bin/
   auditor.py                    /implement §5.5 PBT-lite State Auditor
   supervisor.py                 per-project UDS daemon for resource locks
   track.py                      supervisor client (acquire/release/heartbeat)
-  managed_venv.py               executor-owned Python venv (v0.5.2 Gap E; normalize_action rewriter)
-  observations.py               TIER GATE halt recorder + recurrence finder (v0.4.1)
-  personal_rules.py             per-user halt-override TOML store + sandbox-paradox brake (v0.4.1)
-  cdlc_ledger.py                per-project CDLC transition log (v0.4.2)
-  templates.py                  template store import/export + list CLI (v0.4.2)
-  walker.py                     interrogation-walk state machine + yield countdown + negative-path concerns (v0.4.0/v0.5.1/v0.6.0)
-  handoff_envelope.py           JSON-Schema-validated vision→implement handoff with bytewise integrity (v0.6.0)
-  handoff_validator.py          Tier 0 envelope check on implement start (v0.6.0)
+  managed_venv.py               executor-owned Python venv + normalize_action rewriter
+  observations.py               TIER GATE halt recorder + recurrence finder
+  personal_rules.py             per-user halt-override TOML store + sandbox-paradox brake
+  cdlc_ledger.py                per-project CDLC transition log
+  templates.py                  template store import/export + list CLI
+  walker.py                     interrogation-walk state machine + yield countdown + negative-path concerns
+  substrate_wizard.py           §8.2 cognitive-substrate wizard (auto-fires at /vision Step 0.5)
+  substrate_ast.py              Tier 1 substrate-completeness + per-step taint flow classifier
+  handoff_envelope.py           JSON-Schema-validated vision→implement handoff with bytewise integrity
+  handoff_validator.py          Tier 0 envelope check on implement start
 skills/
   vision/SKILL.md               /vision protocol (Steps 0–7, ~350 lines)
   implement/SKILL.md            /implement protocol (Steps 0.5–7, ~320 lines)
@@ -341,7 +346,7 @@ decisions/                      ADR landing zone (NNNN-<slug>.md)
 docs/
   ARCHITECTURE.md               internal architecture overview
   superpowers/                  design specs + implementation plans (archival)
-tests/                          1268 pytest tests, stdlib + pytest only
+tests/                          1343 pytest tests, stdlib + pytest only
 ```
 
 ## Architecture
@@ -351,7 +356,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full breakdown: hook 
 ## Tests
 
 ```bash
-pytest tests/                  # 1268 tests, all stdlib + pytest
+pytest tests/                  # 1343 tests, all stdlib + pytest
 pytest tests/ -v               # verbose
 pytest tests/test_spec_evaluator.py -v   # single module
 ```
