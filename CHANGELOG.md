@@ -2,6 +2,39 @@
 
 All notable changes to the Spectre plugin.
 
+## v0.7.3 — 2026-05-12
+
+**Added: drive-to-completeness contract — walker + Tier 1 detect scaffold gaps, stub-producer invocations, and unanchored verifications.**
+
+Real-world repros across two /implement runs surfaced two related authoring-time gaps. Both share the same root cause framing from `concepts/context-as-cognitive-substrate.md`: a spec can pass Tier 1+2 with 0 findings even when it's not actually executable, because the walker pruned branches biology lets humans skip. v0.7.3 stops pruning those branches.
+
+Three new contracts, all enforced before lock:
+
+- **Contract 1 — scaffold-precondition (#46/#48 — landed in v0.7.2 cycle).** Walker fires a concern when Step 1's action implicitly requires filesystem state (\`pyproject.toml\`, \`package.json\`, \`Cargo.toml\`, \`Makefile\`, \`go.mod\`, etc.) that no earlier step authors. Tier 1 safety net: \`implicit-precondition-missing\` block-severity finding when a step's \`negative-paths[].trigger\` flags an absent precondition with no producer. Walker concern wired in production at \`bin/walker.py:884–903\` inside the \`init-or-resume\` arm.
+
+- **Contract 2 — stub-producer-invoked (#49 → folded into #50).** Walker concern + Tier 1 \`stub-producer-invoked\` block-severity finding when a step invokes a module/binary produced by an earlier step whose body is a stub. Detection heuristics: heredoc bodies containing \`raise NotImplementedError\` / \`pass  # TODO\` / \`pass  # stub\` / \`# TODO: implement\`; producer-step \`why:\` text containing \`stub\` / \`placeholder\` / \`scaffold-only\`. Healing exemption: if an intermediate step authors the real body before invocation, no concern fires.
+
+- **Contract 3 — verification-anchored (#50).** Two Tier 1 warn-severity findings: \`verification-not-anchored-to-produces\` fires when a step's verification has no path token overlapping THIS step's produces; \`verification-upstream-only\` fires when verification ONLY references earlier steps' paths. Calibrated as warn (nudge, not block) — soft-verification gate preempts on tautologies (\`echo done\` / \`true\` / \`:\`) so the new checks don't double-emit.
+
+- **Walker termination: drive-to-completeness contract.** Yield-convergence stays as a soft signal but is no longer authoritative for blocking checks. The walker keeps yielding while any Contract-1/2 gap is unresolved. Specs with unsatisfied contracts cannot terminate the walk on convergence alone — the human must explicitly resolve or override.
+
+Other improvements:
+- 10 action-verb scaffold heuristics: pip install, cargo build, npm install, yarn, pnpm install, make, go build, python -m, systemctl start, docker compose up
+- \`_PRECOND_BARE_NAMES\` covers extension-less canonical files (Makefile, Dockerfile, go.mod, Gemfile, Rakefile, etc.)
+- Verb-first trigger phrasings (\`missing pyproject.toml\`, \`cannot find Makefile\`) now captured
+
+README clarity pass (#51): new \`## What it does\` block leading with concrete \`/vision\` example, Background split into shorter paragraphs, Usage section restructured (minimal 5-line sequence first, "Under the hood" detail second).
+
+Documentation hygiene (#47): slash-command syntax + numbered step references aligned across README/ARCHITECTURE/CONTRIBUTING/SKILL files. New `tests/test_arch_step_alignment.py` invariant guards bidirectional drift.
+
+Tests: 1364 → 1512 (+148 across PRs #47, #48, #51, #52). 0 regressions.
+
+**Issue closures:** #46, #47, #49 (superseded by #50), #50, #51, #52.
+
+**Known limitations carried forward (out of scope, follow-up):**
+- Run-3 Tier 3 hallucination: model misread \`never-touches:\` as also forbidding reads. System-prompt clarification needed.
+- Runs 4-5 Tier 3: injection false-positives despite Physics Guardrail §5. Adversarial-pathway rubric doesn't reference §5 as a mitigation the model must consult.
+
 ## v0.7.2 — 2026-05-12
 
 **Fixed: Tier 3 hallucinations contradicting Tier 1+2 ground truth (#45).**
