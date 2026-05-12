@@ -99,12 +99,12 @@ Rules:
 3. Do NOT emit anything outside the JSON array.
 4. Cap output at 20 tuples. Prefer high-signal tuples over exhaustive lists.
 5. If you find no contradictions, return an empty array: []
-6. CRITICAL — before emitting a "missing-producer" or "unowned-requirement" \
-finding, check the step entry's "produces" and "requires" lists in the \
-provided step table. If the required artifact already appears in any prior \
-step's "produces" list, the requirement IS resolved — do NOT emit a \
-missing-producer finding for it. The step table's "produces"/"requires" \
-fields are ground truth from deterministic Tier 1 analysis.
+6. CRITICAL — before emitting a "missing-producer" finding, check the step \
+entry's "produces" and "requires" lists in the provided step table. If the \
+required artifact already appears in any prior step's "produces" list, the \
+requirement IS resolved — do NOT emit a missing-producer finding for it. \
+The step table's "produces"/"requires" fields are ground truth from \
+deterministic Tier 1 analysis.
 
 ---
 v0.7 — adversarial-pathway rubric:
