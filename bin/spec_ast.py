@@ -1358,7 +1358,7 @@ def _check_self_cycle_produces(steps: list[dict]) -> list[_findings.Finding]:
 
 # Verb phrases in negative-paths trigger text that flag a precondition gap.
 _PRECOND_VERB_RE = re.compile(
-    r"\b(absent|missing|does\s+not\s+exist|not\s+found|malformed|not\s+writable)\b",
+    r"\b(absent|missing|does\s+not\s+exist|not\s+found|malformed|not\s+writable|cannot\s+find)\b",
     re.IGNORECASE,
 )
 
@@ -1379,18 +1379,32 @@ _PRECOND_BARE_NAMES: frozenset[str] = frozenset({
 })
 
 
+# Verb-first phrasings: "missing <path>", "cannot find <path>".
+# Capture group 1 is the path-shaped noun that follows the verb prefix.
+_PRECOND_VERB_FIRST_RE = re.compile(
+    r"^(?:missing|cannot\s+find)\s+(\S+)",
+    re.IGNORECASE,
+)
+
+
 def _extract_precond_path_token(trigger: str) -> str | None:
     """Extract the filesystem-path-shaped noun from a negative-paths trigger.
 
     Returns the token (without surrounding whitespace) if:
     1. The trigger contains one of the precondition verb-phrases (absent,
        missing, does not exist, not found, malformed, not writable).
-    2. The first whitespace-delimited token looks like a filesystem path:
+    2. The noun token looks like a filesystem path:
        - contains '/' (e.g. 'state/db.sqlite'), OR
        - has a known file suffix (e.g. 'pyproject.toml'), OR
-       - ends with '/' (directory shape, e.g. 'state/').
+       - ends with '/' (directory shape, e.g. 'state/'), OR
+       - exactly matches a known bare name (e.g. 'Makefile').
     3. The trigger does NOT look like an environmental trigger (port numbers,
        env-var names, WAL-mode, etc.) — these pass through without a finding.
+
+    Supported phrasings:
+    - <noun> <verb>  (e.g. "pyproject.toml absent")
+    - missing <noun> (verb-first)
+    - cannot find <noun> (verb-first)
 
     Returns None if no match, or if the trigger is environmental.
     """
@@ -1400,11 +1414,16 @@ def _extract_precond_path_token(trigger: str) -> str | None:
     if not _PRECOND_VERB_RE.search(trigger_stripped):
         return None
 
-    # Extract first token (the noun before the verb)
-    parts = trigger_stripped.split()
-    if not parts:
-        return None
-    noun = parts[0].rstrip(",:;")
+    # Verb-first: "missing <noun>" / "cannot find <noun>"
+    m = _PRECOND_VERB_FIRST_RE.match(trigger_stripped)
+    if m:
+        noun = m.group(1).rstrip(",:;")
+    else:
+        # Noun-first: extract first token (the noun before the verb)
+        parts = trigger_stripped.split()
+        if not parts:
+            return None
+        noun = parts[0].rstrip(",:;")
 
     # Reject environmental tokens:
     # - pure numeric (port number)

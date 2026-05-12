@@ -620,3 +620,46 @@ def test_bare_noun_not_in_list_no_ipm_returns_empty():
         assert not any(f.kind == IPM for f in fs)
     finally:
         p.unlink(missing_ok=True)
+
+
+# ── Verb-first trigger phrasings ──────────────────────────────────────────────
+
+_VERB_FIRST_MISSING_YAML = """\
+- step: 1
+  why: "Install the package."
+  action: "pip install -e ."
+  verification: "pip show myapp"
+  negative-paths:
+    - trigger: "missing pyproject.toml"
+      handler: "escalate"
+"""
+
+_VERB_FIRST_CANNOT_FIND_YAML = """\
+- step: 1
+  why: "Build the project."
+  action: "make all"
+  verification: "test -f bin/myapp"
+  negative-paths:
+    - trigger: "cannot find Makefile"
+      handler: "escalate"
+"""
+
+
+def test_verb_first_missing_pyproject_emits_ipm():
+    p = _write_spec(_VERB_FIRST_MISSING_YAML)
+    try:
+        fs = spec_ast.classify(p)
+        f = next((x for x in fs if x.kind == IPM), None)
+        assert f is not None
+    finally:
+        p.unlink(missing_ok=True)
+
+
+def test_verb_first_cannot_find_makefile_emits_ipm():
+    p = _write_spec(_VERB_FIRST_CANNOT_FIND_YAML)
+    try:
+        fs = spec_ast.classify(p)
+        f = next((x for x in fs if x.kind == IPM), None)
+        assert f is not None
+    finally:
+        p.unlink(missing_ok=True)
