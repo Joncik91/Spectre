@@ -6,7 +6,7 @@
 
 > Spectre — a deterministic spec-driven Claude Code plugin. Vision → Spec → Evaluate → Lock → Implement → Verify, with three-tier pre-lock review and per-project resource locking.
 
-[![tests](https://img.shields.io/badge/tests-1343%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![tests](https://img.shields.io/badge/tests-1364%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## Table of Contents
 
@@ -184,8 +184,9 @@ The hydrator re-injects the same active spec and the scratchpad's `step` (per tr
 | Skill | Trigger | Purpose |
 |---|---|---|
 | **vision** | `/vision <free-form text>` | Multi-turn inception. Codebase fingerprint → feasibility audit → First-Principles draft → 2–3 refinement Qs → step-by-step `why:/action:/verification:` triples → §8 Receiver Calibration → confirm → pre-lock evaluator (Tier 1+2 always, Tier 3 if configured) → ADR generation → atomic `.active` flip + scratchpad reset + `.eval.json` sidecar. Defined in `skills/vision/SKILL.md`. |
-| **implement** | `/implement [<track>]` | Run the active spec's next step on the named track (default `default`). Pre-flight re-verify → tier classifier → resource lock → WHY emit → execute → verify → State Auditor → drift checkpoint every 5 steps. One Option-B retry with diagnosis on verification fail. Halts on missing-binary errors, spec gaps, root-state desync, or Tier=host/network without consent. Defined in `skills/implement/SKILL.md`. |
-| **implement check** | `/implement check` | Re-run the current step's verification only. No execution, no advance. |
+| **implement** | `/implement [check \| auto] [<track>]` | Run the active spec's next step on the named track (default `default`). Tier 0 envelope check → pre-flight re-verify → tier classifier → resource lock → WHY emit → execute → verify → State Auditor → drift checkpoint every 5 steps. One Option-B retry with diagnosis on verification fail. Halts on missing-binary errors, spec gaps, root-state desync, or Tier=host/network without consent. Defined in `skills/implement/SKILL.md`. |
+| **implement check** | `/implement check [<track>]` | Re-run the current step's verification only. No execution, no advance. |
+| **implement auto** | `/implement auto [<track>]` | Walk consecutive silent/repo-tier steps without re-prompting. Halts at first host/network/never-autonomous step, queued lock, verification fail, or drift trigger. |
 
 ### Spec step schema (`specs/template.spec.md`)
 
@@ -333,8 +334,8 @@ bin/
   handoff_envelope.py           JSON-Schema-validated vision→implement handoff with bytewise integrity
   handoff_validator.py          Tier 0 envelope check on implement start
 skills/
-  vision/SKILL.md               /vision protocol (Steps 0–7, ~350 lines)
-  implement/SKILL.md            /implement protocol (Steps 0.5–7, ~320 lines)
+  vision/SKILL.md               /vision protocol (Steps 0–7, ~410 lines)
+  implement/SKILL.md            /implement protocol (Steps 0–7.5, ~520 lines)
 specs/
   template.spec.md              canonical spec structure (§1–§8.2)
   .active                       instruction pointer (atomic-flipped)
@@ -346,7 +347,7 @@ decisions/                      ADR landing zone (NNNN-<slug>.md)
 docs/
   ARCHITECTURE.md               internal architecture overview
   superpowers/                  design specs + implementation plans (archival)
-tests/                          1343 pytest tests, stdlib + pytest only
+tests/                          1364 pytest tests, stdlib + pytest only
 ```
 
 ## Architecture
@@ -356,7 +357,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full breakdown: hook 
 ## Tests
 
 ```bash
-pytest tests/                  # 1343 tests, all stdlib + pytest
+pytest tests/                  # 1364 tests, all stdlib + pytest
 pytest tests/ -v               # verbose
 pytest tests/test_spec_evaluator.py -v   # single module
 ```
