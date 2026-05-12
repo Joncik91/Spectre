@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import re
 import tempfile
 from dataclasses import dataclass, field
 from typing import Any
@@ -29,6 +30,7 @@ KNOWN_CONCERN_KINDS: tuple[str, ...] = (
     "assumption-surface",
     "branch-resolution",
     "negative-path",
+    "scaffold-precondition",
 )
 STOP_REASONS: tuple[str, ...] = (
     "author-arbitrated",
@@ -401,6 +403,314 @@ def generate_negative_path_concerns(
     return concerns
 
 
+# ── Scaffold-precondition concern ─────────────────────────────────────────────
+
+# Stdlib top-level modules for `python -m <pkg>` heuristic — these do NOT need
+# a scaffold step.  Mirrors the list in spec_ast._STDLIB_TOPS (kept in sync
+# manually; a single canonical location is out of scope for stdlib-only policy).
+_SCAFFOLD_STDLIB_TOPS: frozenset[str] = frozenset({
+    "abc", "ast", "asyncio", "base64", "binascii", "builtins",
+    "calendar", "cgi", "cgitb", "chunk", "cmath", "cmd", "code",
+    "codecs", "codeop", "collections", "colorsys", "compileall",
+    "concurrent", "configparser", "contextlib", "contextvars", "copy",
+    "copyreg", "cProfile", "csv", "ctypes", "curses", "dataclasses",
+    "datetime", "dbm", "decimal", "difflib", "dis", "doctest", "email",
+    "encodings", "enum", "errno", "faulthandler", "fcntl", "filecmp",
+    "fileinput", "fnmatch", "fractions", "ftplib", "functools", "gc",
+    "getopt", "getpass", "gettext", "glob", "grp", "gzip", "hashlib",
+    "heapq", "hmac", "html", "http", "idlelib", "imaplib", "importlib",
+    "inspect", "io", "ipaddress", "itertools", "json", "keyword",
+    "lib2to3", "linecache", "locale", "logging", "lzma", "mailbox",
+    "marshal", "math", "mimetypes", "mmap", "modulefinder",
+    "multiprocessing", "netrc", "nis", "nntplib", "numbers", "operator",
+    "optparse", "os", "pathlib", "pdb", "pkgutil", "platform",
+    "plistlib", "poplib", "posix", "posixpath", "pprint", "profile",
+    "pstats", "pty", "pwd", "py_compile", "pyclbr", "pydoc", "queue",
+    "quopri", "random", "re", "readline", "reprlib", "resource",
+    "rlcompleter", "runpy", "sched", "secrets", "select", "selectors",
+    "shelve", "shlex", "shutil", "signal", "site", "smtpd", "smtplib",
+    "sndhdr", "socket", "socketserver", "spwd", "sqlite3",
+    "sre_compile", "sre_constants", "sre_parse", "ssl", "stat",
+    "statistics", "string", "stringprep", "struct", "subprocess",
+    "sunau", "symtable", "sys", "sysconfig", "syslog", "tabnanny",
+    "tarfile", "telnetlib", "tempfile", "termios", "test", "textwrap",
+    "threading", "time", "timeit", "tkinter", "token", "tokenize",
+    "tomllib", "trace", "traceback", "tracemalloc", "tty", "turtle",
+    "turtledemo", "types", "typing", "unicodedata", "unittest", "urllib",
+    "uu", "uuid", "venv", "pip", "warnings", "wave", "weakref",
+    "webbrowser", "wsgiref", "xdrlib", "xml", "xmlrpc", "zipapp",
+    "zipfile", "zipimport", "zlib", "zoneinfo", "_thread",
+    "http.server", "venv", "ensurepip", "distutils",
+})
+
+# Pre-compiled patterns for _detect_scaffold_gap — compiled once at import time.
+_SCAFFOLD_PIP_INSTALL_RE = re.compile(
+    r"\bpip\s+install\s+(-e\s+\.|\.)(?:\s|$|&&|;)"
+)
+_SCAFFOLD_PIP_REQUIREMENTS_RE = re.compile(
+    r"\bpip\s+install\s+-r\s+(\S+)"
+)
+_SCAFFOLD_CARGO_RE = re.compile(
+    r"\bcargo\s+(build|run|test|install)\b"
+)
+_SCAFFOLD_NPM_RE = re.compile(
+    r"\bnpm\s+(install|ci|run)\b"
+)
+_SCAFFOLD_YARN_PNPM_RE = re.compile(
+    r"\b(yarn|pnpm)\s*(install)?\b"
+)
+_SCAFFOLD_MAKE_BARE_RE = re.compile(
+    r"^\s*make(\s+\S+)?\s*$"
+)
+_SCAFFOLD_MAKE_INLINE_RE = re.compile(
+    r"(?:^|&&|;|\s)\bmake\b(?:\s+\w+)?(?:\s|$|&&|;)"
+)
+_SCAFFOLD_GO_RE = re.compile(
+    r"\bgo\s+(build|test|run)\b"
+)
+_SCAFFOLD_PYTHON_M_RE = re.compile(
+    r"\bpython3?\s+-m\s+([\w.]+)"
+)
+_SCAFFOLD_SYSTEMCTL_RE = re.compile(
+    r"\bsystemctl\s+(start|enable)\s+([\w@.-]+)"
+)
+_SCAFFOLD_DOCKER_COMPOSE_RE = re.compile(
+    r"\bdocker[\s-]compose\s+up\b"
+)
+
+
+def _detect_scaffold_gap(
+    action: str,
+    all_produces: list[str],
+) -> tuple[str, str] | None:
+    """Detect whether *action* implies a precondition that no step produces.
+
+    Returns (implied_precondition_description, question_text) when a gap is
+    detected, or None when no gap is found.
+
+    ``all_produces`` is a flat list of every produces: entry across ALL steps,
+    used to check whether the implied precondition is covered anywhere in the
+    spec (the forgotten-scaffold pattern often omits the file entirely).
+    """
+    a = action.strip()
+
+    def _produces_contains(token: str) -> bool:
+        """True when any produces entry contains the token as a substring."""
+        return any(token in p for p in all_produces)
+
+    # ── pip install -e . / pip install . ─────────────────────────────────────
+    if _SCAFFOLD_PIP_INSTALL_RE.search(a):
+        if not (_produces_contains("pyproject.toml") or _produces_contains("setup.py")):
+            return (
+                "pyproject.toml (or setup.py)",
+                (
+                    "Step 1's action is `{action}` which requires `pyproject.toml` in the cwd. "
+                    "No step authors this file. Should there be a Step 0 that scaffolds the "
+                    "package skeleton (pyproject.toml + your package's __init__.py)? Or does "
+                    "some earlier process provide this file outside the spec?"
+                ),
+            )
+
+    # ── pip install -r <file> ─────────────────────────────────────────────────
+    m = _SCAFFOLD_PIP_REQUIREMENTS_RE.search(a)
+    if m:
+        req_file = m.group(1).split("&&")[0].split(";")[0].strip()
+        if not _produces_contains(req_file):
+            return (
+                req_file,
+                (
+                    "Step 1's action is `{action}` which requires `"
+                    + req_file
+                    + "` in the cwd. "
+                    "No step authors this file. Should there be a Step 0 that writes the "
+                    "requirements file? Or is it committed to the repo already?"
+                ),
+            )
+
+    # ── cargo build / cargo run / cargo test / cargo install --path . ────────
+    if _SCAFFOLD_CARGO_RE.search(a):
+        if not _produces_contains("Cargo.toml"):
+            return (
+                "Cargo.toml",
+                (
+                    "Step 1's action is `{action}` which requires `Cargo.toml` in the cwd. "
+                    "No step authors this file. Should there be a Step 0 that scaffolds the "
+                    "Rust package (Cargo.toml + src/main.rs or src/lib.rs)?"
+                ),
+            )
+
+    # ── npm install / npm ci / npm run ───────────────────────────────────────
+    if _SCAFFOLD_NPM_RE.search(a):
+        if not _produces_contains("package.json"):
+            return (
+                "package.json",
+                (
+                    "Step 1's action is `{action}` which requires `package.json` in the cwd. "
+                    "No step authors this file. Should there be a Step 0 that scaffolds the "
+                    "Node package (package.json)?"
+                ),
+            )
+
+    # ── yarn / yarn install / pnpm install ───────────────────────────────────
+    if _SCAFFOLD_YARN_PNPM_RE.search(a):
+        if not _produces_contains("package.json"):
+            return (
+                "package.json",
+                (
+                    "Step 1's action is `{action}` which requires `package.json` in the cwd. "
+                    "No step authors this file. Should there be a Step 0 that scaffolds the "
+                    "Node package (package.json)?"
+                ),
+            )
+
+    # ── make / make <target> ─────────────────────────────────────────────────
+    if _SCAFFOLD_MAKE_BARE_RE.search(a) or _SCAFFOLD_MAKE_INLINE_RE.search(a):
+        if not _produces_contains("Makefile"):
+            return (
+                "Makefile",
+                (
+                    "Step 1's action is `{action}` which requires a `Makefile` in the cwd. "
+                    "No step authors this file. Should there be a Step 0 that writes the Makefile?"
+                ),
+            )
+
+    # ── go build / go test / go run (bare cwd form) ──────────────────────────
+    if _SCAFFOLD_GO_RE.search(a):
+        if not _produces_contains("go.mod"):
+            return (
+                "go.mod",
+                (
+                    "Step 1's action is `{action}` which requires `go.mod` in the cwd. "
+                    "No step authors this file. Should there be a Step 0 that runs "
+                    "`go mod init` or scaffolds the module?"
+                ),
+            )
+
+    # ── python -m <pkg> / python3 -m <pkg> ───────────────────────────────────
+    m = _SCAFFOLD_PYTHON_M_RE.search(a)
+    if m:
+        pkg = m.group(1)
+        top = pkg.split(".")[0]
+        if top not in _SCAFFOLD_STDLIB_TOPS:
+            # Check if the package appears in produces anywhere
+            pkg_slash = pkg.replace(".", "/")
+            if not (_produces_contains(pkg) or _produces_contains(pkg_slash)):
+                return (
+                    pkg,
+                    (
+                        "Step 1's action is `{action}` which invokes `python -m "
+                        + pkg
+                        + "`. "
+                        "No step authors the `"
+                        + pkg
+                        + "` package. Should there be a Step 0 that "
+                        "installs or scaffolds it? Or does some earlier process provide it?"
+                    ),
+                )
+
+    # ── systemctl start/enable <unit> ────────────────────────────────────────
+    m = _SCAFFOLD_SYSTEMCTL_RE.search(a)
+    if m:
+        unit = m.group(2)
+        unit_file = unit if unit.endswith(".service") else unit + ".service"
+        if not (
+            _produces_contains(unit_file)
+            or _produces_contains(f"/etc/systemd/system/{unit_file}")
+        ):
+            return (
+                unit_file,
+                (
+                    "Step 1's action is `{action}` which requires `"
+                    + unit_file
+                    + "` to exist. "
+                    "No step authors this unit file. Should there be a Step 0 that writes "
+                    f"`/etc/systemd/system/{unit_file}`?"
+                ),
+            )
+
+    # ── docker compose up / docker-compose up ────────────────────────────────
+    if _SCAFFOLD_DOCKER_COMPOSE_RE.search(a):
+        if not (
+            _produces_contains("docker-compose.yml")
+            or _produces_contains("compose.yaml")
+            or _produces_contains("docker-compose.yaml")
+            or _produces_contains("compose.yml")
+        ):
+            return (
+                "docker-compose.yml (or compose.yaml)",
+                (
+                    "Step 1's action is `{action}` which requires a Compose file in the cwd. "
+                    "No step authors `docker-compose.yml` or `compose.yaml`. Should there be "
+                    "a Step 0 that writes the Compose file?"
+                ),
+            )
+
+    return None
+
+
+def generate_scaffold_precondition_concern(
+    state: WalkState,
+    steps: list[dict],
+) -> list[Concern]:
+    """Seed-pass: emit at most ONE ``scaffold-precondition`` concern.
+
+    Fires when Step 1's action implicitly requires filesystem state that no
+    step in the spec produces.  This is a one-shot concern (id ``seed-scaffold``)
+    so it is naturally idempotent via the existing_ids guard.
+
+    Parameters
+    ----------
+    state:
+        Current walk state; used for idempotency check.
+    steps:
+        List of step dicts as returned by spec_ast._parse_steps_section.
+    """
+    existing_ids: set[str] = (
+        {c.id for c in state.asked}
+        | {c.id for c in state.pending}
+        | set(state.answered)
+    )
+    concern_id = "seed-scaffold"
+    if concern_id in existing_ids:
+        return []
+
+    # Locate Step 1
+    step1 = next((s for s in steps if s.get("step") == 1), None)
+    if step1 is None:
+        return []
+
+    action: str = step1.get("action", "") or ""  # type: ignore[assignment]
+    if not action:
+        return []
+
+    # Collect all produces entries across ALL steps
+    all_produces: list[str] = []
+    for s in steps:
+        entries = s.get("produces", []) or []
+        all_produces.extend(str(e) for e in entries)
+
+    result = _detect_scaffold_gap(action, all_produces)
+    if result is None:
+        return []
+
+    _precondition_desc, question_template = result
+    question = question_template.format(action=action)
+    # Truncate to a reasonable summary length (walker summary has no hard cap but
+    # we stay consistent with the rest of the codebase's terse summaries).
+    if len(question) > 280:
+        question = question[:277] + "..."
+
+    return [
+        Concern(
+            id=concern_id,
+            kind="scaffold-precondition",
+            receivers=["human"],
+            depends_on=[],
+            summary=question,
+        )
+    ]
+
+
 # ── CLI entrypoint ────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -576,6 +886,19 @@ if __name__ == "__main__":
                 spec_intent=args.intent,
                 spec_draft_path=draft_path,
             )
+            # Extend seeds with scaffold-precondition concern if the draft
+            # already exists and Step 1 implies a missing scaffold.
+            if draft_path.exists():
+                try:
+                    draft_text = draft_path.read_text(encoding="utf-8")
+                except OSError:
+                    draft_text = ""
+                if draft_text:
+                    from bin import spec_ast as _spec_ast  # lazy — avoid circular import cost
+                    steps = _spec_ast._parse_steps_section(draft_text)
+                    state.pending.extend(
+                        generate_scaffold_precondition_concern(state, steps)
+                    )
             try:
                 persist(state, state_path)
             except OSError as exc:

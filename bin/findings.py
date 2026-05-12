@@ -71,6 +71,8 @@ KNOWN_KINDS = {
     "self-cycle-produces",
     # v0.8 — Tier 3 contract-filter audit (info sentinel when filter fires)
     "tier3-filter-applied",
+    # v0.9 — implicit precondition missing (§46)
+    "implicit-precondition-missing",
 }
 
 # Severity mapping for Tier 3 contradiction tuple kinds (v0.5.2).
