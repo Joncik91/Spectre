@@ -556,3 +556,99 @@ def test_filter_falls_back_when_missing_field_absent_in_tuple(mock_urlopen, monk
     assert len(missing_findings) == 1, (
         "Without artifact name, filter cannot match, finding must pass through"
     )
+
+
+# ---------------------------------------------------------------------------
+# Fix 3 — audit trail: tier3-filter-applied sentinel
+# ---------------------------------------------------------------------------
+
+
+@mock.patch("urllib.request.urlopen")
+def test_audit_finding_emitted_when_filter_drops_findings(mock_urlopen, monkeypatch):
+    """When the filter drops N findings, a tier3-filter-applied info Finding is appended."""
+    _env(monkeypatch)
+    # Two findings: X resolved (will be dropped), Y unresolved (will survive).
+    resolution = {
+        "steps": {
+            "1": {"produces": ["artifact:x"], "requires": [], "resolution": {}},
+            "2": {
+                "produces": [],
+                "requires": ["artifact:x", "artifact:y"],
+                "resolution": {
+                    "artifact:x": {"resolved_by_step": 1},
+                    "artifact:y": None,
+                },
+            },
+        }
+    }
+    tuples = [
+        {
+            "kind": "missing-producer",
+            "consumer_step": 2,
+            "missing": "artifact:x",
+            "rationale": "step 2 uses x but no prior step installs it",
+        },
+        {
+            "kind": "missing-producer",
+            "consumer_step": 2,
+            "missing": "artifact:y",
+            "rationale": "step 2 uses y but no prior step installs it",
+        },
+    ]
+    cite_resp = json.dumps([{"index": 0, "step": 2, "citation": "python app.py"}])
+    mock_urlopen.side_effect = [
+        _contradiction_resp(tuples),
+        _api_resp(cite_resp),
+    ]
+
+    result = llm_judge.evaluate(
+        _SPEC_WITH_CONTRACTS,
+        config=_CFG,
+        contract_resolution=resolution,
+    )
+
+    # artifact:y finding must survive.
+    surviving = [f for f in result if f.kind == "missing-producer"]
+    assert len(surviving) == 1
+    assert surviving[0].target_artifact == "artifact:y"
+
+    # Audit sentinel must be present.
+    audit = [f for f in result if f.kind == "tier3-filter-applied"]
+    assert len(audit) == 1
+    assert audit[0].severity == "info"
+    assert "1" in audit[0].message  # dropped count
+
+
+@mock.patch("urllib.request.urlopen")
+def test_no_audit_finding_when_filter_drops_nothing(mock_urlopen, monkeypatch):
+    """When no findings are dropped, NO tier3-filter-applied sentinel is emitted."""
+    _env(monkeypatch)
+    tuples = [
+        {
+            "kind": "missing-producer",
+            "consumer_step": 2,
+            "missing": "artifact:unresolved",
+            "rationale": "no step produces it",
+        }
+    ]
+    cite_resp = json.dumps([{"index": 0, "step": 2, "citation": "python app.py"}])
+    mock_urlopen.side_effect = [
+        _contradiction_resp(tuples),
+        _api_resp(cite_resp),
+    ]
+
+    # Use a resolution that does NOT resolve artifact:unresolved.
+    resolution = {
+        "steps": {
+            "1": {"produces": ["artifact:other"], "requires": [], "resolution": {}},
+        }
+    }
+
+    result = llm_judge.evaluate(
+        _SPEC_WITH_CONTRACTS,
+        config=_CFG,
+        contract_resolution=resolution,
+    )
+
+    audit = [f for f in result if f.kind == "tier3-filter-applied"]
+    assert audit == [], "No sentinel when filter fires but drops nothing"

@@ -69,6 +69,8 @@ KNOWN_KINDS = {
     "envelope-missing-substrate",
     # v0.8 — self-cycle produces (§42)
     "self-cycle-produces",
+    # v0.8 — Tier 3 contract-filter audit (info sentinel when filter fires)
+    "tier3-filter-applied",
 }
 
 # Severity mapping for Tier 3 contradiction tuple kinds (v0.5.2).
@@ -90,6 +92,8 @@ TIER3_CONTRADICTION_SEVERITY: dict[str, str] = {
     "tier3-faithfulness-malformed": "warn",
     # v0.7 — adversarial-pathway rubric
     "adversarial-pathway": "block",
+    # v0.8 — contract-filter audit sentinel
+    "tier3-filter-applied": "info",
 }
 
 SEVERITIES = {"block", "warn", "info"}

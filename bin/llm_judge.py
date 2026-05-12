@@ -1058,6 +1058,24 @@ def evaluate(
         primary_findings, contract_resolution
     )
 
+    # Audit trail: when the filter fired, emit an info-severity sentinel so the
+    # caller can see the drop count in normal sidecar dumps without consulting a
+    # separate data structure.  Zero dropped → no sentinel (no noise).
+    if _dropped:
+        _drop_count = len(_dropped)
+        _audit_msg = (
+            f"Dropped {_drop_count} missing-producer finding"
+            f"{'s' if _drop_count != 1 else ''} already resolved by Tier 1"
+        )[:findings.MAX_MESSAGE_LEN]
+        primary_findings.append(Finding(
+            tier=3,
+            kind="tier3-filter-applied",
+            severity="info",
+            location=_SPEC_WIDE,
+            message=_audit_msg,
+            dismissable=False,
+        ))
+
     # Second pass: cite-and-verify for block-severity tuples (v0.6 faithfulness check).
     # Zero extra cost when no block tuples; one batched call otherwise.
     return _verify_block_tuples_with_citations(primary_findings, step_table, config=config)
