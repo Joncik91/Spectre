@@ -2,6 +2,46 @@
 
 All notable changes to the Spectre plugin.
 
+## v0.9.0 — 2026-05-13
+
+The polish release. Five axes of UX/clarity improvements; no breaking changes; backwards-compatible state and sidecar formats.
+
+### Added — vocabulary layer (Axis A)
+- New `docs/glossary.md` — 95 status codes + 15 load-bearing terms, all with dev/pm/triggered_by/user_action/related fields.
+- New `bin/_glossary.py` — markdown parser + lookup API + CLI.
+- `spectre explain <code>` and `spectre glossary` subcommands.
+- `SPECTRE_AUDIENCE=pm` env var — dual-channel rendering: status lines get a 2nd indented PM sentence.
+- `SPECTRE_GLOSSARY=1` env var — JSON-mode opt-in for `pm` key without flipping audience.
+- Sync test: every `_status.emit` literal code must have a glossary entry; every glossary entry must map to a real emit.
+
+### Added — remediation discipline (Axis B)
+- Every `_status.emit("warn"|"halt"|"error", ...)` site now carries a `remediation=` field with an imperative recovery phrase.
+- Surjection test: AST-walks bin/ to enforce the invariant on future PRs.
+- 92 sites backfilled across 17 modules.
+
+### Added — first-run onboarding (Axis C)
+- `bin/hydrate.py` emits `is_first_run=true|false` on the SessionStart signal.
+- `skills/vision/SKILL.md` renders a welcome block + 3-choice prompt (start-fresh / use-template / skip) on first run.
+- `spectre templates list` now also surfaces the plugin's built-in `template.spec.md`.
+- `spectre templates import-builtin --name template --slug <slug>` copies the builtin into `specs/<slug>.spec.md.draft`.
+- `state/.spectre-welcomed` marker suppresses future welcomes.
+
+### Added — PROMPT-level standardization (Axis D)
+- `bin/walker.py peek-pending` now emits `PROMPT walker.concern ... options="..."` alongside its JSON output.
+- `bin/_status.py` new subcommand `_status emit <level> <code> [--field key=value ...]` for skill-driven one-shot emissions.
+- 4 new PROMPT codes documented in glossary: `walker.concern`, `vision.lock_confirm`, `vision.coverage_continue`, `vision.warn_proceed`.
+- Skill markdown updated to consume PROMPT lines uniformly (numbered choices).
+
+### Changed — README and docs (Axis E)
+- README rewritten for PM/non-engineer first impression. Engineer sections retained.
+- Added Quickstart, Vocabulary, Troubleshooting sections.
+- `docs/API.md` documents `SPECTRE_AUDIENCE` and `spectre explain`/`spectre glossary`.
+
+### Changed — versions
+- `marketplace.json` 0.8.3 → 0.9.0.
+- `EVALUATOR_VERSION` 0.8.3 → 0.9.0 (sidecar carries the new grammar vintage; same JSON shape).
+- `WALKER_VERSION` unchanged at 0.4.1 (state-file schema unchanged).
+
 ## v0.8.3 — 2026-05-13
 
 ### Fixed
