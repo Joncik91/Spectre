@@ -8,3 +8,16 @@ specs/*.spec.md
 !specs/template.spec.md
 .venv/
 docs/superpowers/
+
+# Claude Code working state (per-machine; never repo-relevant)
+.claude/
+
+# Per-machine local caches and lock files
+*.local.json
+*.lock
+
+# macOS Finder metadata
+.DS_Store
+
+# Python caches (defensive — __pycache__ already ignored)
+.pytest_cache/
