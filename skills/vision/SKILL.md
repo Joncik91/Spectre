@@ -47,20 +47,51 @@ If templates exist, surface them as candidate starting points during the Walker 
 
 ### Phase: Wizard
 
-Before §1 distillation, fire the substrate wizard. The wizard asks 4 mandatory questions to populate §8.2 (cognitive-substrate contract). Answers are cached at `~/.spectre/substrate-cache/<author-spec-hash>.json`; re-running /vision on an unchanged spec body skips re-prompting.
+Before §1 distillation, fire the substrate wizard to populate §8.2 (cognitive-substrate contract). Answers are cached at `~/.spectre/substrate-cache/<author-spec-hash>.json`; re-running /vision on an unchanged spec body skips re-prompting (cache hit exits 0 immediately, flags are ignored unless `--force` is passed).
+
+**Step 1 — compute the author-spec hash** (over the draft body MINUS any existing §8.2 block):
+
+```bash
+AUTHOR_SPEC_HASH="$(printf %s "$DRAFT_BODY_NO_82" | sha256sum | awk '{print $1}')"
+```
+
+**Step 2 — ask the user the 4 questions** (via the conversation, not via a TTY):
+
+Ask the user these four questions and capture their answers as shell variables:
+
+1. **Receiver fingerprint** — which execution context will implement this spec?
+   Accepted values: `claude-code+human` | `claude-code-autonomous` | `non-claude-ai` | `human-only`
+   Store as `$RECEIVER`.
+
+2. **Trust profile** — which risk categories apply? Comma-separated subset of:
+   `untrusted-input` | `handles-secrets` | `touches-network` | `executes-generated-code`
+   Or the literal `none` for no risk flags.
+   Store as `$TRUST_PROFILE`.
+
+3. **Contextual binding** — one-line description of what this spec is FOR (the evaluator refuses replay as something else). Must be non-empty.
+   Store as `$BINDING`.
+
+4. **Provenance** — is this a fresh spec or derived from an existing locked spec?
+   Accepted values: `none` (fresh spec) | `derived-from <slug> <parent-envelope-sha256>` (fork).
+   Store as `$PROVENANCE`.
+
+**Step 3 — invoke the wizard CLI with flags:**
 
 ```bash
 spectre substrate_wizard run \
-  --author-spec-hash "$(printf %s "$DRAFT_BODY_NO_82" | sha256sum | awk '{print $1}')"
+  --author-spec-hash "$AUTHOR_SPEC_HASH" \
+  --receiver "$RECEIVER" \
+  --trust-profile "$TRUST_PROFILE" \
+  --binding "$BINDING" \
+  --provenance "$PROVENANCE"
 ```
 
 Capture stdout — that's the §8.2 markdown block. Inject it after §8.1 in the spec template.
 
-The 4 questions:
-1. **Receiver fingerprint** — claude-code+human / claude-code-autonomous / non-claude-ai / human-only.
-2. **Trust profile** — comma-separated subset of {untrusted-input, handles-secrets, touches-network, executes-generated-code} or "none".
-3. **Contextual binding** — one-line description of what this spec is FOR (the evaluator refuses replay as something else).
-4. **Provenance** — "none" or "derived-from <slug> <parent-envelope-sha256>".
+**Failure modes:**
+- `error wizard.substrate reason=missing_flags missing=<list>` — Claude did not populate all four flags. Fix: ensure all four variables are set before invoking.
+- `error wizard.substrate reason=invalid_<which> ...` — a flag value failed validation. Fix: correct the value per the accepted-values list above and re-invoke.
+- Exit 0 with cached output — cache hit; `$BINDING`, `$RECEIVER`, etc. from this run are ignored (cached values win). Pass `--force` to override.
 
 If `trust-profile` includes `untrusted-input` or `handles-secrets`, every step that produces an artifact MUST declare `untrusted-input: yes/no` and (when relevant) `sanitizes:` covering its sanitized OUTPUT. The evaluator's Tier 1 will block on missing annotations.
 

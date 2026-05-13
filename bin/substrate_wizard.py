@@ -15,6 +15,8 @@ Public API:
     write_cache(author_spec_hash, answers) -> Path
     read_cache(author_spec_hash) -> dict | None
     run(author_spec_hash, *, prompt_fn) -> str  (Task 3)
+    run_with_flags(author_spec_hash, *, receiver, trust_profile, binding,
+                   provenance, force=False) -> str
 """
 from __future__ import annotations
 
@@ -28,6 +30,9 @@ import tempfile
 SUBSTRATE_WIZARD_VERSION = "0.7"
 
 _82_BLOCK_RE = re.compile(r"\n\n?###\s+8\.2\b.*?(?=\n##\s|\n\Z|\Z)", re.DOTALL)
+
+# Must match hashlib.sha256().hexdigest() output — 64 lowercase hex chars.
+_AUTHOR_SPEC_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def cache_dir_default() -> pathlib.Path:
@@ -49,8 +54,26 @@ def compute_author_spec_hash(spec_body: str) -> str:
     return hashlib.sha256(stripped.encode("utf-8")).hexdigest()
 
 
+class WizardValidationError(ValueError):
+    """Raised by _validate_* functions when input is invalid.
+
+    ``field`` is the canonical field name (receiver, trust_profile, binding,
+    provenance, author_spec_hash).  ``message`` is a human-readable explanation
+    that ends up in the ``detail=`` field of the error emission.
+    """
+
+    def __init__(self, field: str, message: str) -> None:
+        super().__init__(message)
+        self.field = field
+        self.message = message
+
+
 def write_cache(author_spec_hash: str, answers: dict) -> pathlib.Path:
     """Atomically write the cache JSON at mode 0600. Returns the cache path."""
+    if not _AUTHOR_SPEC_HASH_RE.match(author_spec_hash):
+        raise ValueError(
+            "invalid author-spec hash (must be 64-char lowercase hex)"
+        )
     target = cache_path_for_hash(author_spec_hash)
     target.parent.mkdir(parents=True, exist_ok=True)
     body = json.dumps(
@@ -77,6 +100,10 @@ def write_cache(author_spec_hash: str, answers: dict) -> pathlib.Path:
 
 def read_cache(author_spec_hash: str) -> dict | None:
     """Return cached answers if schema matches; None otherwise."""
+    if not _AUTHOR_SPEC_HASH_RE.match(author_spec_hash):
+        raise ValueError(
+            "invalid author-spec hash (must be 64-char lowercase hex)"
+        )
     target = cache_path_for_hash(author_spec_hash)
     if not target.exists():
         return None
@@ -96,6 +123,8 @@ _RECEIVER_TIERS = {
     "4": "human-only",
 }
 
+_RECEIVER_VALUES = frozenset(_RECEIVER_TIERS.values())
+
 _VALID_TRUST_TOKENS = frozenset({
     "untrusted-input",
     "handles-secrets",
@@ -104,6 +133,84 @@ _VALID_TRUST_TOKENS = frozenset({
     "none",
 })
 
+
+# ---------------------------------------------------------------------------
+# Pure validators — shared by interactive and flag paths
+# ---------------------------------------------------------------------------
+
+def _validate_receiver(raw: str) -> str:
+    """Validate a receiver value (tier digit or canonical name). Returns canonical string."""
+    stripped = raw.strip()
+    if stripped in _RECEIVER_TIERS:
+        return _RECEIVER_TIERS[stripped]
+    if stripped in _RECEIVER_VALUES:
+        return stripped
+    raise WizardValidationError(
+        "receiver",
+        f"invalid receiver: {raw!r}. Must be one of: "
+        + ", ".join(sorted(_RECEIVER_VALUES))
+        + " (or digit 1-4)",
+    )
+
+
+def _validate_trust_profile(raw: str) -> list[str]:
+    """Validate and parse a trust-profile string. Returns list of tokens (empty = none).
+
+    The bare string "none" (or empty) collapses to [].  Mixed lists like
+    "untrusted-input,none" keep the "none" token as-is (v0.8.0 semantics).
+    """
+    stripped = raw.strip()
+    if not stripped or stripped == "none":
+        return []
+    tokens = [t.strip() for t in stripped.split(",") if t.strip()]
+    for t in tokens:
+        if t not in _VALID_TRUST_TOKENS:
+            raise WizardValidationError(
+                "trust_profile",
+                f"unknown trust token: {t!r}. Valid tokens: "
+                + ", ".join(sorted(_VALID_TRUST_TOKENS)),
+            )
+    return tokens
+
+
+def _validate_contextual_binding(raw: str) -> str:
+    """Validate contextual-binding. Must be non-empty."""
+    stripped = raw.strip()
+    if not stripped:
+        raise WizardValidationError(
+            "binding", "contextual-binding must not be empty"
+        )
+    return stripped
+
+
+def _validate_provenance(raw: str) -> dict:
+    """Validate provenance string. Returns parsed dict."""
+    stripped = raw.strip()
+    if not stripped or stripped == "none":
+        return {"kind": "none"}
+    parts = stripped.split()
+    if len(parts) != 3 or parts[0] != "derived-from":
+        raise WizardValidationError(
+            "provenance",
+            "provenance must be 'none' or 'derived-from <slug> <hex64-sha256>'",
+        )
+    _, slug, sha = parts
+    sha_lower = sha.lower()
+    if len(sha_lower) != 64 or not all(c in "0123456789abcdef" for c in sha_lower):
+        raise WizardValidationError(
+            "provenance",
+            f"invalid parent envelope sha256: {sha!r}",
+        )
+    return {
+        "kind": "derived-from",
+        "parent-slug": slug,
+        "parent-envelope-sha256": sha_lower,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Interactive ask helpers — thin wrappers around validators
+# ---------------------------------------------------------------------------
 
 def _ask_receiver(prompt_fn) -> str:
     """Q1: receiver fingerprint. Returns canonical string."""
@@ -115,9 +222,7 @@ def _ask_receiver(prompt_fn) -> str:
         "  4) human-only (no AI implementer)\n"
         "Choice [1]: "
     ).strip() or "1"
-    if raw not in _RECEIVER_TIERS:
-        raise ValueError(f"invalid receiver tier: {raw!r}")
-    return _RECEIVER_TIERS[raw]
+    return _validate_receiver(raw)
 
 
 def _ask_trust_profile(prompt_fn) -> list[str]:
@@ -127,13 +232,7 @@ def _ask_trust_profile(prompt_fn) -> list[str]:
         "  untrusted-input | handles-secrets | touches-network | executes-generated-code\n"
         "Choice: "
     ).strip()
-    if not raw or raw == "none":
-        return []
-    tokens = [t.strip() for t in raw.split(",") if t.strip()]
-    for t in tokens:
-        if t not in _VALID_TRUST_TOKENS:
-            raise ValueError(f"unknown trust token: {t!r}")
-    return tokens
+    return _validate_trust_profile(raw)
 
 
 def _ask_contextual_binding(prompt_fn) -> str:
@@ -142,9 +241,7 @@ def _ask_contextual_binding(prompt_fn) -> str:
         "Contextual binding (one-line description of what this spec is FOR;\n"
         "the evaluator will refuse to replay it as something else):\n"
     ).strip()
-    if not raw:
-        raise ValueError("contextual-binding must not be empty")
-    return raw
+    return _validate_contextual_binding(raw)
 
 
 def _ask_provenance(prompt_fn) -> dict:
@@ -155,21 +252,7 @@ def _ask_provenance(prompt_fn) -> dict:
         "  derived-from <slug> <parent-envelope-sha256> — fork of an existing locked spec\n"
         "Choice: "
     ).strip()
-    if not raw or raw == "none":
-        return {"kind": "none"}
-    parts = raw.split()
-    if len(parts) != 3 or parts[0] != "derived-from":
-        raise ValueError(
-            "provenance must be 'none' or 'derived-from <slug> <hex64-sha256>'"
-        )
-    _, slug, sha = parts
-    if len(sha) != 64 or not all(c in "0123456789abcdef" for c in sha.lower()):
-        raise ValueError(f"invalid parent envelope sha256: {sha!r}")
-    return {
-        "kind": "derived-from",
-        "parent-slug": slug,
-        "parent-envelope-sha256": sha.lower(),
-    }
+    return _validate_provenance(raw)
 
 
 def _format_82_block(answers: dict) -> str:
@@ -228,6 +311,37 @@ def run(author_spec_hash: str, *, prompt_fn) -> str:
     return _format_82_block(answers)
 
 
+def run_with_flags(
+    author_spec_hash: str,
+    *,
+    receiver: str,
+    trust_profile: str,
+    binding: str,
+    provenance: str,
+    force: bool = False,
+) -> str:
+    """Non-interactive run using flag values.
+
+    Cache hit takes precedence unless force=True.
+    Validates all four inputs via the _validate_* helpers.
+    Raises WizardValidationError on invalid input.
+    Returns the §8.2 markdown block.
+    """
+    if not force:
+        cached = read_cache(author_spec_hash)
+        if cached is not None:
+            return _format_82_block(cached)
+
+    answers = {
+        "receiver-fingerprint": _validate_receiver(receiver),
+        "trust-profile": _validate_trust_profile(trust_profile),
+        "contextual-binding": _validate_contextual_binding(binding),
+        "provenance": _validate_provenance(provenance),
+    }
+    write_cache(author_spec_hash, answers)
+    return _format_82_block(answers)
+
+
 def _stdin_prompt(question: str) -> str:
     """Default prompt_fn for the CLI: print question to stderr, read stdin."""
     import sys
@@ -243,20 +357,124 @@ def _main() -> int:
     import argparse
     import sys
     from bin import _status
+
     parser = argparse.ArgumentParser(prog="substrate_wizard")
     sub = parser.add_subparsers(dest="cmd", required=True)
-    p_run = sub.add_parser("run", help="Run the wizard interactively.")
+    p_run = sub.add_parser("run", help="Run the wizard (interactive or via flags).")
     p_run.add_argument("--author-spec-hash", required=True)
+    p_run.add_argument(
+        "--receiver",
+        default=None,
+        help="Receiver fingerprint (non-interactive).",
+    )
+    p_run.add_argument(
+        "--trust-profile",
+        default=None,
+        dest="trust_profile",
+        help=(
+            "Comma-separated trust tokens or 'none' or empty string. "
+            "Valid tokens: untrusted-input, handles-secrets, touches-network, "
+            "executes-generated-code."
+        ),
+    )
+    p_run.add_argument(
+        "--binding",
+        default=None,
+        help="Contextual binding — one-line description of what this spec is FOR.",
+    )
+    p_run.add_argument(
+        "--provenance",
+        default=None,
+        help="'none' or 'derived-from <slug> <hex64-sha256>'.",
+    )
+    p_run.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="Bypass cache even if a fresh entry exists.",
+    )
+
     args = parser.parse_args()
+
     if args.cmd == "run":
-        try:
-            block = run(args.author_spec_hash, prompt_fn=_stdin_prompt)
-        except RuntimeError as exc:
-            _status.emit("error", "wizard.substrate", dest="stderr", reason=str(exc))
+        # Validate --author-spec-hash before anything else.
+        if not _AUTHOR_SPEC_HASH_RE.match(args.author_spec_hash):
+            _status.emit(
+                "error",
+                "wizard.substrate",
+                dest="stderr",
+                reason="invalid_author_spec_hash",
+                value=args.author_spec_hash[:16],
+            )
             return 1
-        sys.stdout.write(block)
-        sys.stdout.flush()
-        return 0
+
+        flags = {
+            "--receiver": args.receiver,
+            "--trust-profile": args.trust_profile,
+            "--binding": args.binding,
+            "--provenance": args.provenance,
+        }
+        provided = {k for k, v in flags.items() if v is not None}
+        missing = sorted(set(flags) - provided)
+
+        if len(provided) == 4:
+            # All flags supplied — non-interactive path.
+            try:
+                block = run_with_flags(
+                    args.author_spec_hash,
+                    receiver=args.receiver,
+                    trust_profile=args.trust_profile,
+                    binding=args.binding,
+                    provenance=args.provenance,
+                    force=args.force,
+                )
+            except WizardValidationError as exc:
+                _status.emit(
+                    "error",
+                    "wizard.substrate",
+                    dest="stderr",
+                    reason=f"invalid_{exc.field}",
+                    detail=exc.message,
+                )
+                return 1
+            sys.stdout.write(block)
+            sys.stdout.flush()
+            return 0
+
+        elif provided:
+            # Partial flags — always error, never fall through to interactive.
+            _status.emit(
+                "error",
+                "wizard.substrate",
+                dest="stderr",
+                reason="missing_flags",
+                missing=",".join(f.lstrip("-") for f in missing),
+            )
+            return 1
+
+        else:
+            # Zero flags — interactive only if TTY available.
+            if not sys.stdin.isatty():
+                all_flags = sorted(flags.keys())
+                _status.emit(
+                    "error",
+                    "wizard.substrate",
+                    dest="stderr",
+                    reason="missing_flags",
+                    missing=",".join(f.lstrip("-") for f in all_flags),
+                )
+                return 1
+            try:
+                block = run(args.author_spec_hash, prompt_fn=_stdin_prompt)
+            except RuntimeError as exc:
+                _status.emit(
+                    "error", "wizard.substrate", dest="stderr", reason=str(exc)
+                )
+                return 1
+            sys.stdout.write(block)
+            sys.stdout.flush()
+            return 0
+
     return 2
 
 

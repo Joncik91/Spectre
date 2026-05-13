@@ -2,6 +2,21 @@
 
 All notable changes to the Spectre plugin.
 
+## v0.8.1 — 2026-05-13
+
+### Fixed
+
+- **substrate wizard now runs non-interactively.** `bin/substrate_wizard.py run` accepts four new flags (`--receiver`, `--trust-profile`, `--binding`, `--provenance`) so `/vision`'s Wizard phase can populate §8.2 without TTY. Closes the EOF-on-first-call regression that blocked /vision in Claude Code sessions.
+
+### Added
+
+- `bin/substrate_wizard.py`: `--receiver`, `--trust-profile`, `--binding`, `--provenance`, `--force` flags on the `run` subcommand. All four flags non-`None` skips prompts; partial flags in non-TTY emit `error wizard.substrate reason=missing_flags`. Cache hit takes precedence unless `--force`. Same `answers` schema; no migration needed.
+- `skills/vision/SKILL.md`: Wizard phase now captures the 4 answers from the user via the conversation and passes them as flags to the wizard CLI.
+
+### Changed
+
+- `_ask_*` helpers refactored to `_validate_*` + thin wrappers so flag and interactive paths share validation.
+
 ## v0.8.0 — 2026-05-13
 
 **Output discipline: skill phase names + CLI level/code grammar.**
