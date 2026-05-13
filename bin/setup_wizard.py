@@ -239,11 +239,9 @@ def maybe_provision(
         is_stale, preserved = _detect_stale_config(target)
         if is_stale:
             backup = _migrate_stale_config(target, preserved)
-            print(
-                f"reviewer.toml migrated to v0.6.2 schema (deepseek-v4-flash + "
-                f"split timeouts); backup at {backup}",
-                file=sys.stderr,
-            )
+            from bin import _status as _s
+            _s.emit("info", "wizard.config_migrated", dest="stderr",
+                    backup="~/.spectre/" + backup.name)
             return "migrated"
         return "exists"
 
@@ -254,12 +252,10 @@ def maybe_provision(
 
     # No key. Silent skip + visible placeholder + stderr breadcrumb.
     write_config(target, enabled=False, api_key_env=api_key_env)
-    secrets_path = _resolve_secrets_file_path(secrets_file_path)
-    print(
-        f"Tier 3 adversarial review skipped — no {api_key_env} found. "
-        f"Configure {secrets_path} (mode 0600) and re-run /vision to enable.",
-        file=sys.stderr,
-    )
+    from bin import _status as _s
+    _s.emit("info", "wizard.tier3_skipped", dest="stderr",
+            reason=f"no-{api_key_env}",
+            remediation=str(secrets_path_default()))
     return "setup-skipped"
 
 
@@ -369,6 +365,7 @@ def maybe_provision_template_patches_dir() -> None:
 
 if __name__ == "__main__":
     import argparse
+    from bin import _status
 
     parser = argparse.ArgumentParser(
         prog="setup_wizard",
@@ -419,6 +416,8 @@ if __name__ == "__main__":
                 api_key_env=args.api_key_env,
             )
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "wizard.setup", dest="stderr", reason=str(exc))
             sys.exit(1)
-        print(f"WIZARD: {result} ({target})")
+        _status.emit("ok", "wizard.setup",
+                     result=result,
+                     target=str(target))

@@ -181,6 +181,7 @@ def validate_on_implement_start(project_path: pathlib.Path) -> list[str]:
 
 if __name__ == "__main__":
     import argparse
+    from bin import _status
 
     parser = argparse.ArgumentParser(
         prog="handoff_validator",
@@ -202,9 +203,16 @@ if __name__ == "__main__":
 
     if args.cmd == "check":
         violations = validate_on_implement_start(pathlib.Path(args.project_path))
-        for v in violations:
-            print(v)
+        block = [v for v in violations if not v.startswith("envelope-missing:")]
+        warn_only = [v for v in violations if v.startswith("envelope-missing:")]
+        if not violations:
+            _status.emit("result", "envelope.check", status="ok")
+        else:
+            for v in warn_only:
+                _status.emit("warn", "envelope.check", status="missing", detail=v)
+            for v in block:
+                _status.emit("halt", "envelope.check", status="tampered",
+                             detail=v, remediation="re-lock spec via /vision")
         # Exit 0 if no violations OR only warn-level (envelope-missing).
         # Exit 1 for any block-level violation.
-        block = [v for v in violations if not v.startswith("envelope-missing:")]
         sys.exit(1 if block else 0)

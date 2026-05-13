@@ -242,6 +242,7 @@ def _stdin_prompt(question: str) -> str:
 def _main() -> int:
     import argparse
     import sys
+    from bin import _status
     parser = argparse.ArgumentParser(prog="substrate_wizard")
     sub = parser.add_subparsers(dest="cmd", required=True)
     p_run = sub.add_parser("run", help="Run the wizard interactively.")
@@ -251,7 +252,7 @@ def _main() -> int:
         try:
             block = run(args.author_spec_hash, prompt_fn=_stdin_prompt)
         except RuntimeError as exc:
-            sys.stderr.write(f"ERROR: {exc}\n")
+            _status.emit("error", "wizard.substrate", dest="stderr", reason=str(exc))
             return 1
         sys.stdout.write(block)
         sys.stdout.flush()
