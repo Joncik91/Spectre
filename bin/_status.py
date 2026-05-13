@@ -195,3 +195,70 @@ def result(code: str, **fields: Any) -> None:
 
 def prompt(code: str, **fields: Any) -> None:
     emit("prompt", code, **fields)
+
+
+# ---------------------------------------------------------------------------
+# Skill-driven PROMPT registrations — never called at runtime, present so the
+# AST-based glossary completeness test can verify these codes are documented.
+# Emitted by the skill via: spectre _status emit prompt <code> --field ...
+# ---------------------------------------------------------------------------
+
+if False:  # pragma: no cover — static registration only
+    emit("prompt", "vision.lock_confirm")      # lock-confirm moment in /vision Draft phase
+    emit("prompt", "vision.coverage_continue") # lock-attempt when recommended_stop=no
+    emit("prompt", "vision.warn_proceed")      # evaluator gate when max_severity==warn
+
+
+# ---------------------------------------------------------------------------
+# CLI entrypoint — `python3 -m bin._status emit <level> <code> [--field k=v]`
+# Invoked by the skill as: spectre _status emit <level> <code> --field k=v ...
+# ---------------------------------------------------------------------------
+
+def _cli_emit(argv: list[str] | None = None) -> int:  # noqa: E302
+    """One-shot emit subcommand: `emit <level> <code> [--field key=value ...]`."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="spectre _status",
+        description="Spectre status emitter CLI.",
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    p_emit = sub.add_parser("emit", help="Emit a single status line.")
+    p_emit.add_argument(
+        "level",
+        choices=list(LEVELS),
+        help=f"Status level. One of: {', '.join(LEVELS)}.",
+    )
+    p_emit.add_argument("code", help="Dotted status code, e.g. vision.lock_confirm.")
+    p_emit.add_argument(
+        "--field",
+        action="append",
+        dest="fields",
+        metavar="key=value",
+        default=[],
+        help="Structured field to include. Repeat for multiple fields.",
+    )
+
+    args = parser.parse_args(argv)
+
+    # Parse --field key=value pairs
+    fields: dict[str, Any] = {}
+    for kv in args.fields:
+        if "=" not in kv:
+            print(f"error: --field must be key=value, got: {kv!r}", file=sys.stderr)
+            return 1
+        k, v = kv.split("=", 1)
+        fields[k] = v
+
+    try:
+        emit(args.level, args.code, **fields)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(_cli_emit())

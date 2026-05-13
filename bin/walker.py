@@ -1835,6 +1835,16 @@ if __name__ == "__main__":
 
         if args.json_mode:
             print(json.dumps(_serialize_concern(concern), indent=2, sort_keys=True))
+            # In JSON mode, PROMPT goes to stderr to keep stdout pure-JSON
+            _prompt_kwargs: dict = dict(
+                id=concern.id,
+                round=state.round_count,
+                prompt=concern.summary,
+                dest="stderr",
+            )
+            if concern.prefab_options:
+                _prompt_kwargs["options"] = ",".join(concern.prefab_options)
+            _status.emit("prompt", "walker.concern", **_prompt_kwargs)
         else:
             _status.emit("result", "walker.peek",
                          id=concern.id,
@@ -1842,6 +1852,15 @@ if __name__ == "__main__":
                          receiver=", ".join(concern.receivers),
                          depends_on=", ".join(concern.depends_on) if concern.depends_on else "none",
                          summary=concern.summary)
+            # Also emit PROMPT so skill can render structured numbered choices
+            _prompt_kwargs = dict(
+                id=concern.id,
+                round=state.round_count,
+                prompt=concern.summary,
+            )
+            if concern.prefab_options:
+                _prompt_kwargs["options"] = ",".join(concern.prefab_options)
+            _status.emit("prompt", "walker.concern", **_prompt_kwargs)
 
     elif args.cmd == "yield-check":
         from bin import spec_evaluator as _se  # lazy import — avoid cost on init-or-resume

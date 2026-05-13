@@ -663,6 +663,15 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - related: walker.open-question-deferred
 - since: v0.6.0
 
+## walker.concern
+- kind: status
+- dev: PROMPT emitted by peek-pending for each pending concern; id=, round=, prompt= (concern summary), options= (comma-separated prefab choices, omitted when empty). In --json mode routed to stderr; in text mode emitted to stdout after the RESULT walker.peek line.
+- pm: Spectre is asking you a question about your spec. Answer with the number of your choice or type a free-form answer.
+- triggered_by: `walker peek-pending` whenever a pending concern exists.
+- user_action: Answer the question shown in the prompt= field. If options= is present, pick a numbered choice or type the option token.
+- related: walker.peek, walker.concern_appended, term:concern
+- since: v0.9.0
+
 ## walker.concern_appended
 - kind: status
 - dev: New concern appended to the pending list; id= is the new concern's identifier.
@@ -833,6 +842,33 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - user_action: Answer each question or run `spectre walker defer-open-question --id <oq-id> --adr <slug>` to defer to an ADR.
 - related: walker.open-questions-detected, walker.open-question-deferred
 - since: v0.6.0
+
+## vision.coverage_continue
+- kind: status
+- dev: Emitted at lock-attempt when walker coverage reports recommended_stop=no; prompts operator to confirm continuing to lock despite incomplete coverage. options=yes,refine.
+- pm: The interview may not have covered all areas of your spec. You can continue to lock or refine more answers first.
+- triggered_by: `spectre _status emit prompt vision.coverage_continue` in the /vision Lock phase when coverage is incomplete.
+- user_action: Pick 1 (yes) to proceed to lock anyway, or 2 (refine) to continue the interview.
+- related: walker.coverage, vision.lock_confirm
+- since: v0.9.0
+
+## vision.lock_confirm
+- kind: status
+- dev: Emitted at the draft-confirmation moment to request operator approval before locking the spec. draft= path, summary= one-line, options=yes,refine,cancel.
+- pm: Your spec draft is ready. Confirm to lock it, request changes, or cancel.
+- triggered_by: `spectre _status emit prompt vision.lock_confirm` in the /vision Draft phase after the draft is written.
+- user_action: Pick 1 (yes) to lock, 2 (refine "<change>") to request a change, or 3 (cancel) to discard.
+- related: vision.coverage_continue, vision.warn_proceed
+- since: v0.9.0
+
+## vision.warn_proceed
+- kind: status
+- dev: Emitted at the evaluator gate when max_severity==warn; prompts operator whether to proceed to lock despite warn-severity findings. warn_count=N, options=yes,refine,cancel.
+- pm: The spec review found {warn_count} warning(s). You can lock now, request changes, or cancel.
+- triggered_by: `spectre _status emit prompt vision.warn_proceed` in the /vision Evaluator gate when max_severity==warn.
+- user_action: Pick 1 (yes) to lock with warnings, 2 (refine "<change>") to address them, or 3 (cancel) to discard.
+- related: vision.lock_confirm, eval.summary
+- since: v0.9.0
 
 ## wizard.config_migrated
 - kind: status

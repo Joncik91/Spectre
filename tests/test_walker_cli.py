@@ -557,3 +557,30 @@ class TestDeferOpenQuestion:
         )
         assert r.returncode == 1
         assert "walker.bad_oq_id" in r.stderr
+
+
+# ── peek-pending PROMPT emission ───────────────────────────────────────────────
+
+class TestPeekPendingPromptEmission:
+    def test_peek_pending_emits_prompt_line(self, tmp_path):
+        """peek-pending with pending concerns emits a PROMPT walker.concern line."""
+        state = tmp_path / ".walk.json"
+        draft = tmp_path / "foo.spec.md.draft"
+        draft.write_text("# draft\n", encoding="utf-8")
+        _run("init-or-resume", "--intent", "build a thing",
+             "--draft", str(draft), "--state-path", str(state))
+        r = _run("peek-pending", "--state-path", str(state))
+        assert r.returncode == 0
+        assert "PROMPT walker.concern" in r.stdout
+
+    def test_peek_pending_json_prompt_goes_to_stderr(self, tmp_path):
+        """In --json mode, PROMPT walker.concern appears on stderr, not stdout."""
+        state = tmp_path / ".walk.json"
+        draft = tmp_path / "foo.spec.md.draft"
+        draft.write_text("# draft\n", encoding="utf-8")
+        _run("init-or-resume", "--intent", "build a thing",
+             "--draft", str(draft), "--state-path", str(state))
+        r = _run("peek-pending", "--json", "--state-path", str(state))
+        assert r.returncode == 0
+        assert "PROMPT walker.concern" not in r.stdout
+        assert "PROMPT walker.concern" in r.stderr

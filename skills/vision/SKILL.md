@@ -195,12 +195,23 @@ Repeat until the walker reports stop:
 
    Stdout: a JSON object with `id`, `kind`, `receiver`, `summary`, and `round` fields, or `null` when the walk is exhausted. If `null`, jump to the Draft phase.
 
-2. **Render the structured concern as a natural-language question.** The concern's `summary` field is canonical structured text. The skill phrases it so the user understands. The structured concern is the data; the question text is presentation. If the user says "this question makes no sense," the debug surface is `state/.walk.json` (inspect via `get-state` below), not the rendered prose.
+2. **Render the concern to the operator.** `peek-pending` emits a `PROMPT walker.concern` line with `id=`, `round=`, `prompt=` (the concern summary), and optionally `options=` (comma-separated prefab choices). Read the `RESULT walker.peek` line for `kind` and `receiver`. Then render:
 
-   Render format:
    ```
    ROUND <N> · id: <concern_id> · receiver: <receivers> · kind: <kind>
-   <natural-language question derived from concern.summary>
+   <prompt= text from PROMPT walker.concern line>
+   ```
+
+   If `options=` is present, render numbered choices below the question text:
+   ```
+   1) <option_1>
+   2) <option_2>
+   ...
+   ```
+   The operator may answer with the digit (e.g. `1`) or the option token (e.g. `yes`), or type a free-form answer. If `options=` is absent, accept free-form text only.
+
+   Append on the same turn:
+   ```
    (answer, or `revise <concern_id>` to amend an earlier answer, or `stop` to lock the walk)
    ```
 
@@ -282,14 +293,28 @@ The walk has stopped. Render the draft from accumulated `state.answered` plus `s
 
 1. **Slugify the title** (lowercase, `[^a-z0-9]+ → -`, trim).
 2. **Write the draft file** atomically at `$PROJECT/specs/<slug>.spec.md.draft` using the answers as Steps + First Principles + §8 Receiver Calibration content. The exact mapping from concerns to spec sections lives in your judgment of what the answers tell you; the skill does not impose a 1:1 mapping. Standard `## 1. Hard Problem` through `## 8. Receiver Calibration` structure per `specs/template.spec.md`.
-3. **Print the one-line confirmation:**
+3. **Emit the lock-confirm prompt and render it to the operator.** After printing the draft summary line, emit:
+
+   ```bash
+   spectre _status emit prompt vision.lock_confirm \
+     --field draft="specs/<slug>.spec.md.draft" \
+     --field summary="<N steps; walked R rounds; stop=<stop_reason>>" \
+     --field options="yes,refine,cancel"
    ```
-   DRAFT: specs/<slug>.spec.md.draft (N steps; walked R rounds; stop=<stop_reason>). Reply: yes / refine "<change>" / cancel
+
+   Then render:
+
    ```
+   DRAFT: specs/<slug>.spec.md.draft (<summary>)
+     1) yes — lock and proceed to /implement
+     2) refine "<change>" — apply a refinement and re-evaluate
+     3) cancel — discard the draft
+   ```
+
 4. **Wait for the user.**
-   - `yes` → continue to the Wizard phase (setup wizard) → Evaluator gate.
-   - `refine "<change>"` — if the change implies revising a prior concern, call `answer-concern` with the updated answer first (same CLI as Walker loop phase), then re-render the draft. Otherwise, edit the draft directly and re-run the evaluator.
-   - `cancel` → delete the draft AND `state/.walk.json` AND `state/.eval-bundle.json`. Halt.
+   - `yes` (or `1`) → continue to the Wizard phase (setup wizard) → Evaluator gate.
+   - `refine "<change>"` (or `2`) — if the change implies revising a prior concern, call `answer-concern` with the updated answer first (same CLI as Walker loop phase), then re-render the draft. Otherwise, edit the draft directly and re-run the evaluator.
+   - `cancel` (or `3`) → delete the draft AND `state/.walk.json` AND `state/.eval-bundle.json`. Halt.
 
 The walker's invalidation set + dependency graph are never re-rendered for the user post-confirmation; they exist only to drive interrogation cycles. After the user says `yes` and the evaluator passes, `state/.walk.json` may be retained as audit trail or cleared.
 
@@ -300,15 +325,27 @@ The walker's invalidation set + dependency graph are never re-rendered for the u
 3. Slugify the title: lowercase, replace non-alphanumerics with `-`, collapse repeats, strip leading/trailing `-`.
 4. Set frontmatter `Generated:` to today's ISO date and `Slug:` to the computed slug.
 5. **Write the draft file at `$PROJECT/specs/<slug>.spec.md.draft`.** Use atomic write: write to `<draft>.tmp` then `mv` to `<draft>`.
-6. Print exactly one line:
+6. Emit the lock-confirm prompt and render it:
+
+```bash
+spectre _status emit prompt vision.lock_confirm \
+  --field draft="specs/<slug>.spec.md.draft" \
+  --field summary="<N steps>" \
+  --field options="yes,refine,cancel"
+```
+
+Then render to the operator:
 
 ```
-DRAFT: specs/<slug>.spec.md.draft (N steps). Reply: yes / refine "<change>" / cancel
+Lock specs/<slug>.spec.md.draft (N steps).
+  1) yes — lock and proceed to /implement
+  2) refine "<change>" — apply a refinement and re-evaluate
+  3) cancel — discard the draft
 ```
 
 7. **Wait for the user.**
-   - `yes` → continue to the Evaluator gate.
-   - `refine "<change>"` → reopen the draft file, apply the requested change, atomically rewrite the .draft file, re-run the evaluator, re-emit the one-line confirmation. Repeat until `yes`.
+   - `yes` (or `1`) → continue to the Evaluator gate.
+   - `refine "<change>"` (or `2`) → reopen the draft file, apply the requested change, atomically rewrite the .draft file, re-run the evaluator, re-emit the lock-confirm prompt. Repeat until `yes`.
    - `cancel` → delete the .draft file AND clear `state/.eval-bundle.json`, halt, write nothing else.
 
 ### Phase: Evaluator gate — setup wizard
@@ -377,7 +414,24 @@ Interpret the result (read `max_severity` from the JSON):
 
   Do NOT proceed to Lock. The bundle stays persisted at `state/.eval-bundle.json` keyed by the current draft hash; on `refine`, the rewritten draft will produce a new bundle automatically.
 
-- **`max_severity == "warn"`** — surface warnings to the user, ask once: `Proceed to lock with N warn findings? (yes / refine / cancel)`. On `yes`, continue to Lock.
+- **`max_severity == "warn"`** — surface warnings to the user, then emit the warn-proceed prompt and render it:
+
+  ```bash
+  spectre _status emit prompt vision.warn_proceed \
+    --field warn_count=N \
+    --field options="yes,refine,cancel"
+  ```
+
+  Render to the operator:
+
+  ```
+  Spec has N warn-severity finding(s).
+    1) yes — proceed to lock with warnings
+    2) refine "<change>" — address the warnings first
+    3) cancel — discard the draft
+  ```
+
+  On `yes` (or `1`), continue to Lock.
 
 - **`max_severity == "info"` or `"none"`** — surface findings briefly (≤3 lines) and proceed to Lock silently.
 
@@ -435,11 +489,24 @@ spectre walker coverage \
     --draft "$DRAFT_PATH"
 ```
 
-Stdout: `RESULT walker.coverage answered=N pending=M deferred=K undefined-invariants=L recommended-stop=yes|no rounds=R`. Surface this line to the operator. If `recommended-stop=no`, ask:
+Stdout: `RESULT walker.coverage answered=N pending=M deferred=K undefined-invariants=L recommended-stop=yes|no rounds=R`. Surface this line to the operator. If `recommended-stop=no`, emit the coverage-continue prompt then render it:
 
-> Coverage incomplete. Continue to lock anyway? (yes / refine)
+```bash
+spectre _status emit prompt vision.coverage_continue \
+  --field missing="<pending+deferred count>" \
+  --field options="yes,refine"
+```
 
-On `refine`, re-enter the Walker loop. On `yes`, proceed.
+Then render to the operator:
+
+```
+Coverage incomplete (pending/deferred questions remain).
+  1) yes — proceed to lock anyway
+  2) refine — continue the interview
+
+```
+
+On `yes` (or `1`), proceed. On `refine` (or `2`), re-enter the Walker loop.
 
 Now that the user confirmed and ADRs are written:
 
