@@ -16,6 +16,7 @@ _IMPLEMENT_SKILL = _REPO / "skills" / "implement" / "SKILL.md"
 # Expected phase names (order-insensitive; each must appear exactly once as a
 # "### Phase: <name>" heading).
 _VISION_PHASES = {
+    "First-run welcome",
     "Fingerprint (silent, internal)",
     "Wizard",
     "Intent",

@@ -14,6 +14,35 @@ from bin import _status  # noqa: E402
 SPECS = Path("specs")
 ACTIVE = SPECS / ".active"
 SCRATCH = Path("state") / "scratchpad.json"
+STATE = Path("state")
+WELCOMED = STATE / ".spectre-welcomed"
+
+
+def _is_first_run() -> bool:
+    """Return True iff this looks like a genuinely fresh project.
+
+    Conditions (all must hold for first-run to be True):
+    - specs/.active does NOT exist
+    - state/scratchpad.json does NOT exist
+    - state/.spectre-welcomed does NOT exist
+    - state/ does NOT exist OR exists but contains no *.json files AND
+      no files starting with .spec- or .envelope
+    """
+    if ACTIVE.exists():
+        return False
+    if SCRATCH.exists():
+        return False
+    if WELCOMED.exists():
+        return False
+    if STATE.is_dir():
+        # Any .json file in state/ (walk, eval-result, eval-bundle, envelope, etc.)
+        if any(STATE.glob("*.json")):
+            return False
+        # Any hidden marker starting with .spec- or .envelope
+        for p in STATE.iterdir():
+            if p.name.startswith(".spec-") or p.name.startswith(".envelope"):
+                return False
+    return True
 
 
 def list_specs() -> str:
@@ -38,6 +67,9 @@ def _state_fields() -> dict:
 
 
 def main() -> int:
+    # Capture first-run state BEFORE migration (migrate creates scratchpad.json).
+    first_run = _is_first_run()
+
     # Auto-migrate v1 scratchpad on SessionStart, regardless of .active state.
     _result = _mig.migrate(SCRATCH)
     if _result == "migrated":
@@ -46,7 +78,8 @@ def main() -> int:
 
     if not ACTIVE.exists():
         _status.emit("result", "hydrate.signal", reason="no-active-spec",
-                     hint="run /vision to begin")
+                     hint="run /vision to begin",
+                     is_first_run=first_run)
         detect_and_propose_patches()
         surface_pending_template_patches()
         return 0
@@ -55,7 +88,8 @@ def main() -> int:
     target_path = Path(target)
     if not target_path.exists():
         from bin import _path_display
-        _status.emit("warn", "hydrate.stale_active", path=_path_display.display(target))
+        _status.emit("warn", "hydrate.stale_active", path=_path_display.display(target),
+                     remediation="run /vision to start a new spec or 'spectre _scratchpad reset'")
         detect_and_propose_patches()
         surface_pending_template_patches()
         return 0
@@ -109,5 +143,6 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception as exc:
-        _status.emit("error", "hydrate.error", reason=f"{type(exc).__name__}: {exc}")
+        _status.emit("error", "hydrate.error", reason=f"{type(exc).__name__}: {exc}",
+                     remediation="check that state/scratchpad.json and specs/.active are intact")
         sys.exit(0)

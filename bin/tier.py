@@ -354,7 +354,8 @@ if __name__ == "__main__":
         try:
             t, reasons, na = classify(args.action)
         except Exception as exc:  # noqa: BLE001
-            _status.emit("error", "tier.classify", dest="stderr", reason=str(exc))
+            _status.emit("error", "tier.classify", dest="stderr", reason=str(exc),
+                         remediation="add the step's action to the spec and retry")
             sys.exit(1)
         _status.emit("result", "tier.classify",
                      tier=t,
@@ -373,7 +374,8 @@ if __name__ == "__main__":
                 spec_locked_paths=locked,
             )
         except Exception as exc:  # noqa: BLE001
-            _status.emit("error", "tier.should_halt", dest="stderr", reason=str(exc))
+            _status.emit("error", "tier.should_halt", dest="stderr", reason=str(exc),
+                         remediation="open an issue at https://github.com/Joncik91/Spectre/issues with this halt's full output")
             sys.exit(1)
         _status.emit("result", "tier.gate",
                      halt="true" if halt else "false")
@@ -390,7 +392,8 @@ if __name__ == "__main__":
                 spec_locked_paths=locked,
             )
         except Exception as exc:  # noqa: BLE001
-            _status.emit("error", "tier.evaluate", dest="stderr", reason=str(exc))
+            _status.emit("error", "tier.evaluate", dest="stderr", reason=str(exc),
+                         remediation="open an issue with the full halt output")
             sys.exit(1)
 
         if args.json:

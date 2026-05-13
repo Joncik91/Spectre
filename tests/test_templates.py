@@ -15,9 +15,12 @@ def test_templates_dir_default_returns_dotspectre_templates(tmp_path, monkeypatc
     assert p == tmp_path / ".spectre" / "templates"
 
 
-def test_list_templates_returns_empty_when_dir_missing(tmp_path, monkeypatch):
+def test_list_templates_returns_builtins_when_dir_missing(tmp_path, monkeypatch):
+    """With no user template dir, list_templates() still returns built-in templates."""
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
-    assert templates.list_templates() == []
+    result = templates.list_templates()
+    kinds = {t["kind"] for t in result}
+    assert "builtin" in kinds
 
 
 def test_list_templates_returns_specs_in_specs_subdir(tmp_path, monkeypatch):

@@ -201,7 +201,8 @@ if __name__ == "__main__":
                 classifier_label=args.label,
             )
         except Exception as exc:  # noqa: BLE001
-            _status.emit("error", "observation.record", dest="stderr", reason=str(exc))
+            _status.emit("error", "observation.record", dest="stderr", reason=str(exc),
+                         remediation="verify filesystem permissions on the observations store")
             sys.exit(1)
         _status.emit("ok", "observation.record", fingerprint=fp[:12])
 
@@ -209,6 +210,7 @@ if __name__ == "__main__":
         try:
             recs = find_recurrences(kind=args.kind, threshold=args.threshold)
         except Exception as exc:  # noqa: BLE001
-            _status.emit("error", "observation.find_recurrences", dest="stderr", reason=str(exc))
+            _status.emit("error", "observation.find_recurrences", dest="stderr", reason=str(exc),
+                         remediation="verify the observations store is intact; try deleting state/.observations.json and retrying")
             sys.exit(1)
         print(json.dumps(recs, indent=2))

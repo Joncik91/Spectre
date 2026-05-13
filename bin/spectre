@@ -27,11 +27,18 @@ if [[ $# -eq 0 ]]; then
     echo "Available subcommands: walker, tier, hydrate, spec_evaluator, eval_metadata," >&2
     echo "  auditor, fingerprint, adr, templates, track, observations, personal_rules," >&2
     echo "  managed_venv, handoff_validator, compact, cdlc_ledger, setup_wizard," >&2
-    echo "  substrate_wizard" >&2
+    echo "  substrate_wizard, glossary, explain" >&2
     exit 1
 fi
 
 SUBCOMMAND="$1"
 shift
 
-exec python3 -m "bin.${SUBCOMMAND}" "$@"
+case "$SUBCOMMAND" in
+    glossary|explain)
+        exec python3 -m bin._glossary "$SUBCOMMAND" "$@"
+        ;;
+    *)
+        exec python3 -m "bin.${SUBCOMMAND}" "$@"
+        ;;
+esac

@@ -41,7 +41,7 @@ from bin import eval_metadata as _eval_metadata
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-EVALUATOR_VERSION = "0.8.3"
+EVALUATOR_VERSION = "0.9.0"
 TIER1_TIMEOUT_MS = 100
 TIER2_TIMEOUT_S = 2
 TIER3_TIMEOUT_S = 180  # legacy default — now used as chunk_timeout_s fallback
@@ -660,7 +660,8 @@ if __name__ == "__main__":
         try:
             result = evaluate(spec_path, config_path=config_path, bundle_persist_dir=bundle_dir)
         except Exception as exc:  # noqa: BLE001
-            _status.emit("error", "eval.run", dest="stderr", reason=str(exc))
+            _status.emit("error", "eval.run", dest="stderr", reason=str(exc),
+                         remediation="check spec syntax then run 'spectre walker get-state' to inspect walk state")
             sys.exit(1)
 
         out_data = {
@@ -695,7 +696,8 @@ if __name__ == "__main__":
         slugified = _adr.slugify(slug)
         if slugified != slug:
             _status.emit("error", "eval.bad_slug", dest="stderr",
-                         slug=slug, suggestion=slugified)
+                         slug=slug, suggestion=slugified,
+                         remediation="list specs/ and pass a valid slug or use the suggested value")
             sys.exit(1)
         canonical = pathlib.Path("specs") / f"{slug}.spec.md"
         print(str(canonical))
@@ -705,5 +707,6 @@ if __name__ == "__main__":
         try:
             clear_bundle(bundle_path)
         except Exception as exc:  # noqa: BLE001
-            _status.emit("error", "eval.clear_bundle", dest="stderr", reason=str(exc))
+            _status.emit("error", "eval.clear_bundle", dest="stderr", reason=str(exc),
+                         remediation="remove state/.eval-bundle.json manually and retry")
             sys.exit(1)

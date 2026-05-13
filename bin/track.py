@@ -190,25 +190,29 @@ if __name__ == "__main__":
     rids = _split_resources(args.resources)
     if not rids:
         _status.emit("error", "track.bad_resources", dest="stderr",
-                     reason="--resources is empty")
+                     reason="--resources is empty",
+                     remediation="pass a comma-separated list of resource IDs to --resources")
         sys.exit(1)
 
     if args.cmd == "acquire":
         try:
             ensure_supervisor_running(project)
         except Exception as exc:  # noqa: BLE001
-            _status.emit("error", "track.supervisor_spawn", dest="stderr", reason=str(exc))
+            _status.emit("error", "track.supervisor_spawn", dest="stderr", reason=str(exc),
+                         remediation="retry /implement; if it recurs open an issue with the full halt output")
             sys.exit(1)
         for rid in rids:
             try:
                 resp = acquire(project, track_name=args.track, resource_id=rid)
             except Exception as exc:  # noqa: BLE001
                 _status.emit("error", "track.acquire", dest="stderr",
-                             resource=rid, reason=str(exc))
+                             resource=rid, reason=str(exc),
+                             remediation="retry /implement; if it recurs open an issue with the full halt output")
                 sys.exit(1)
             if not resp.get("granted"):
                 pos = resp.get("queued_position", "?")
-                _status.emit("halt", "track.queue", resource=rid, position=pos)
+                _status.emit("halt", "track.queue", resource=rid, position=pos,
+                         remediation="wait for the holding track to release or pass --skip-queue to bypass")
                 sys.exit(1)
             _status.emit("ok", "track.acquire", resource=rid)
 
@@ -218,6 +222,7 @@ if __name__ == "__main__":
                 release(project, track_name=args.track, resource_id=rid)
             except Exception as exc:  # noqa: BLE001
                 _status.emit("error", "track.release", dest="stderr",
-                             resource=rid, reason=str(exc))
+                             resource=rid, reason=str(exc),
+                             remediation="retry /implement; if it recurs open an issue at https://github.com/Joncik91/Spectre/issues with this halt's full output")
                 sys.exit(1)
             _status.emit("ok", "track.release", resource=rid)

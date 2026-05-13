@@ -1727,7 +1727,8 @@ if __name__ == "__main__":
         try:
             state = load(state_path)
         except ValueError as exc:
-            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc))
+            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc),
+                         remediation="run /vision to initialize a new walk")
             sys.exit(1)
 
         if state is None:
@@ -1755,7 +1756,8 @@ if __name__ == "__main__":
             try:
                 persist(state, state_path)
             except OSError as exc:
-                _status.emit("error", "walker.persist", dest="stderr", reason=str(exc))
+                _status.emit("error", "walker.persist", dest="stderr", reason=str(exc),
+                             remediation="verify write permissions on state/ then retry")
                 sys.exit(1)
 
         if args.json_mode:
@@ -1796,12 +1798,14 @@ if __name__ == "__main__":
         try:
             state = load(state_path)
         except ValueError as exc:
-            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc))
+            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc),
+                         remediation="run /vision to initialize a new walk")
             sys.exit(1)
         if state is None:
             from bin import _path_display
             _status.emit("error", "walker.state_missing", dest="stderr",
-                         path=_path_display.display(state_path))
+                         path=_path_display.display(state_path),
+                         remediation="run /vision to start")
             sys.exit(1)
 
         # Read draft for dynamic generator refresh
@@ -1817,7 +1821,8 @@ if __name__ == "__main__":
         try:
             persist(state, state_path)
         except OSError as exc:
-            _status.emit("error", "walker.persist", dest="stderr", reason=str(exc))
+            _status.emit("error", "walker.persist", dest="stderr", reason=str(exc),
+                         remediation="verify write permissions on state/ then retry")
             sys.exit(1)
 
         concern = next_concern(state)
@@ -1830,6 +1835,16 @@ if __name__ == "__main__":
 
         if args.json_mode:
             print(json.dumps(_serialize_concern(concern), indent=2, sort_keys=True))
+            # In JSON mode, PROMPT goes to stderr to keep stdout pure-JSON
+            _prompt_kwargs: dict = dict(
+                id=concern.id,
+                round=state.round_count,
+                prompt=concern.summary,
+                dest="stderr",
+            )
+            if concern.prefab_options:
+                _prompt_kwargs["options"] = ",".join(concern.prefab_options)
+            _status.emit("prompt", "walker.concern", **_prompt_kwargs)
         else:
             _status.emit("result", "walker.peek",
                          id=concern.id,
@@ -1837,6 +1852,15 @@ if __name__ == "__main__":
                          receiver=", ".join(concern.receivers),
                          depends_on=", ".join(concern.depends_on) if concern.depends_on else "none",
                          summary=concern.summary)
+            # Also emit PROMPT so skill can render structured numbered choices
+            _prompt_kwargs = dict(
+                id=concern.id,
+                round=state.round_count,
+                prompt=concern.summary,
+            )
+            if concern.prefab_options:
+                _prompt_kwargs["options"] = ",".join(concern.prefab_options)
+            _status.emit("prompt", "walker.concern", **_prompt_kwargs)
 
     elif args.cmd == "yield-check":
         from bin import spec_evaluator as _se  # lazy import — avoid cost on init-or-resume
@@ -1846,7 +1870,8 @@ if __name__ == "__main__":
         try:
             state = load(state_path)
         except ValueError as exc:
-            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc))
+            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc),
+                         remediation="run /vision to initialize a new walk")
             sys.exit(1)
         if state is None:
             _status.emit("ok", "walker.yield_skipped", reason="no-walk-state")
@@ -1871,7 +1896,8 @@ if __name__ == "__main__":
                 bundle_persist_dir=bundle_dir,
             )
         except Exception as exc:  # noqa: BLE001
-            _status.emit("error", "walker.evaluator_failed", dest="stderr", reason=str(exc))
+            _status.emit("error", "walker.evaluator_failed", dest="stderr", reason=str(exc),
+                         remediation="check spec syntax then run /vision to re-initialize")
             sys.exit(1)
 
         new_t3 = sum(
@@ -1881,7 +1907,8 @@ if __name__ == "__main__":
         try:
             persist(state, state_path)
         except OSError as exc:
-            _status.emit("error", "walker.persist", dest="stderr", reason=str(exc))
+            _status.emit("error", "walker.persist", dest="stderr", reason=str(exc),
+                         remediation="verify write permissions on state/ then retry")
             sys.exit(1)
         _status.emit("ok", "walker.yield",
                      new_t3=new_t3,
@@ -1892,11 +1919,13 @@ if __name__ == "__main__":
         try:
             state = load(state_path)
         except ValueError as exc:
-            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc))
+            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc),
+                         remediation="run /vision to initialize a new walk")
             sys.exit(1)
         if state is None:
             _status.emit("error", "walker.state_missing", dest="stderr",
-                         path=str(state_path))
+                         path=str(state_path),
+                         remediation="run /vision to start")
             sys.exit(1)
 
         if args.json:
@@ -1933,23 +1962,27 @@ if __name__ == "__main__":
         try:
             state = load(state_path)
         except ValueError as exc:
-            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc))
+            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc),
+                         remediation="run /vision to initialize a new walk")
             sys.exit(1)
         if state is None:
             _status.emit("error", "walker.state_missing", dest="stderr",
-                         path=str(state_path))
+                         path=str(state_path),
+                         remediation="run /vision to start")
             sys.exit(1)
 
         # Validate kind (argparse choices already enforces this, but guard explicitly
         # in case the function is reused programmatically)
         if args.kind not in KNOWN_CONCERN_KINDS:
-            _status.emit("error", "walker.unknown_kind", dest="stderr", kind=args.kind)
+            _status.emit("error", "walker.unknown_kind", dest="stderr", kind=args.kind,
+                         remediation="open an issue at https://github.com/Joncik91/Spectre/issues with this halt's full output")
             sys.exit(1)
 
         # Reject duplicate id (in pending OR answered)
         existing_ids = {c.id for c in state.pending} | {c.id for c in state.asked} | set(state.answered)
         if args.id in existing_ids:
-            _status.emit("error", "walker.duplicate_id", dest="stderr", id=args.id)
+            _status.emit("error", "walker.duplicate_id", dest="stderr", id=args.id,
+                         remediation="open an issue at https://github.com/Joncik91/Spectre/issues with this halt's full output")
             sys.exit(1)
 
         receiver = args.receiver  # already validated by argparse choices
@@ -1964,7 +1997,8 @@ if __name__ == "__main__":
         try:
             persist(state, state_path)
         except OSError as exc:
-            _status.emit("error", "walker.persist", dest="stderr", reason=str(exc))
+            _status.emit("error", "walker.persist", dest="stderr", reason=str(exc),
+                         remediation="verify write permissions on state/ then retry")
             sys.exit(1)
         _status.emit("ok", "walker.concern_appended", id=args.id)
 
@@ -1973,17 +2007,20 @@ if __name__ == "__main__":
         try:
             state = load(state_path)
         except ValueError as exc:
-            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc))
+            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc),
+                         remediation="run /vision to initialize a new walk")
             sys.exit(1)
         if state is None:
             _status.emit("error", "walker.state_missing", dest="stderr",
-                         path=str(state_path))
+                         path=str(state_path),
+                         remediation="run /vision to start")
             sys.exit(1)
 
         try:
             record_answer(state, concern_id=args.id, answer=args.answer)
         except KeyError as exc:
-            _status.emit("error", "walker.answer_failed", dest="stderr", reason=str(exc))
+            _status.emit("error", "walker.answer_failed", dest="stderr", reason=str(exc),
+                         remediation="run 'spectre walker get-state --json' to list valid concern IDs")
             sys.exit(1)
 
         # Read draft for generator refresh + coverage computation
@@ -2019,7 +2056,8 @@ if __name__ == "__main__":
         try:
             persist(state, state_path)
         except OSError as exc:
-            _status.emit("error", "walker.persist", dest="stderr", reason=str(exc))
+            _status.emit("error", "walker.persist", dest="stderr", reason=str(exc),
+                         remediation="verify write permissions on state/ then retry")
             sys.exit(1)
         _status.emit("ok", "walker.answer", id=args.id, round_count=state.round_count)
 
@@ -2028,11 +2066,13 @@ if __name__ == "__main__":
         try:
             state = load(state_path)
         except ValueError as exc:
-            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc))
+            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc),
+                         remediation="run /vision to initialize a new walk")
             sys.exit(1)
         if state is None:
             _status.emit("error", "walker.state_missing", dest="stderr",
-                         path=str(state_path))
+                         path=str(state_path),
+                         remediation="run /vision to start")
             sys.exit(1)
 
         # Open-question gate for author-arbitrated stop
@@ -2047,6 +2087,7 @@ if __name__ == "__main__":
                     "warn", "walker.open-questions-unresolved",
                     count=len(unresolved_oqs),
                     ids=oq_ids,
+                    remediation="answer each question or run 'spectre walker defer-open-question --id <oq-id> --adr <slug>'",
                 )
                 sys.exit(1)
 
@@ -2073,7 +2114,8 @@ if __name__ == "__main__":
         try:
             persist(state, state_path)
         except OSError as exc:
-            _status.emit("error", "walker.persist", dest="stderr", reason=str(exc))
+            _status.emit("error", "walker.persist", dest="stderr", reason=str(exc),
+                         remediation="verify write permissions on state/ then retry")
             sys.exit(1)
         _status.emit("ok", "walker.stop", reason=args.reason)
 
@@ -2082,11 +2124,13 @@ if __name__ == "__main__":
         try:
             state = load(state_path)
         except ValueError as exc:
-            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc))
+            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc),
+                         remediation="run /vision to initialize a new walk")
             sys.exit(1)
         if state is None:
             _status.emit("error", "walker.state_missing", dest="stderr",
-                         path=str(state_path))
+                         path=str(state_path),
+                         remediation="run /vision to start")
             sys.exit(1)
 
         draft_text = ""
@@ -2117,11 +2161,13 @@ if __name__ == "__main__":
         try:
             state = load(state_path)
         except ValueError as exc:
-            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc))
+            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc),
+                         remediation="run /vision to initialize a new walk")
             sys.exit(1)
         if state is None:
             _status.emit("error", "walker.state_missing", dest="stderr",
-                         path=str(state_path))
+                         path=str(state_path),
+                         remediation="run /vision to start")
             sys.exit(1)
 
         # Find the open question by id
@@ -2132,13 +2178,15 @@ if __name__ == "__main__":
                 break
 
         if target_oq is None:
-            _status.emit("error", "walker.bad_oq_id", dest="stderr", id=args.id)
+            _status.emit("error", "walker.bad_oq_id", dest="stderr", id=args.id,
+                         remediation="run 'spectre walker get-state --json' to list valid IDs")
             sys.exit(1)
 
         target_oq["deferred_by_adr"] = args.adr
         try:
             persist(state, state_path)
         except OSError as exc:
-            _status.emit("error", "walker.persist", dest="stderr", reason=str(exc))
+            _status.emit("error", "walker.persist", dest="stderr", reason=str(exc),
+                         remediation="verify write permissions on state/ then retry")
             sys.exit(1)
         _status.emit("ok", "walker.open-question-deferred", id=args.id, adr=args.adr)

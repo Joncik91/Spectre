@@ -416,7 +416,8 @@ if __name__ == "__main__":
                 api_key_env=args.api_key_env,
             )
         except Exception as exc:  # noqa: BLE001
-            _status.emit("error", "wizard.setup", dest="stderr", reason=str(exc))
+            _status.emit("error", "wizard.setup", dest="stderr", reason=str(exc),
+                         remediation="verify DEEPSEEK_API_KEY is set (or --secrets-file path is readable) and retry")
             sys.exit(1)
         _status.emit("ok", "wizard.setup",
                      result=result,
