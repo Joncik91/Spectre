@@ -77,6 +77,18 @@ KNOWN_KINDS = {
     "stub-producer-invoked",
     "verification-not-anchored-to-produces",
     "verification-upstream-only",
+    # v1.0 — six-view spec model + metis catalog
+    "unsupported-spec-version",
+    "missing-view-section",
+    "missing-substrate-block",
+    "excessive-not-applicable",
+    "malformed-view-contract",
+    "cross-view-string-unresolved",
+    "exemplar-not-found",
+    "exemplar-taxonomy-mismatch",
+    "view-fingerprint-contradicts-hard-contract",
+    "view-coverage-overlap",
+    "taxonomy-version-stale",
 }
 
 # Severity mapping for Tier 3 contradiction tuple kinds (v0.5.2).

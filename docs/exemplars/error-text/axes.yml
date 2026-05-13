@@ -1,0 +1,11 @@
+taxonomy-version: 1
+axes:
+  tone:
+    values: [terse, conversational, didactic]
+    description: How the error message addresses the reader. Terse = imperative facts only; conversational = brief explanation in plain prose; didactic = teaches what went wrong and why with surrounding context.
+  structure:
+    values: [single-line, what-why-how, annotated-source]
+    description: How the error is laid out. Single-line = `<level>: <msg>`; what-why-how = three labeled segments (what failed, why it failed, what to do); annotated-source = compiler-style with file:line and caret pointing at the offending token.
+  link-to-docs:
+    values: [none, error-code-only, full-url, contextual-anchor]
+    description: Whether and how docs are referenced. None = error stands alone; error-code-only = `E0501` for grep; full-url = explicit https link in the message; contextual-anchor = URL with fragment identifier targeting the exact remediation section.

@@ -198,8 +198,9 @@ class TestAnswerConcern:
         assert r.returncode == 0
         r2 = _run("get-state", "--state-path", str(state))
         # After answering seed-1 (1 of 5 initial seeds), _refresh_pending fires
-        # and adds seed-semantic-criteria → net pending = 4+1 = 5
-        assert "pending=5" in r2.stdout
+        # and adds seed-semantic-criteria + 5 v1.0 scope-check concerns
+        # → net pending = 4 remaining seeds + 1 semantic + 5 scope-checks = 10
+        assert "pending=10" in r2.stdout
         assert "answered=1" in r2.stdout
         assert "rounds=1" in r2.stdout
 

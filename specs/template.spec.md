@@ -2,6 +2,9 @@
 
 **Generated:** <ISO date>
 **Slug:** <slug>
+**Spec-version:** 1.0
+
+> **Six-view spec model (v1.0+):** §§1-7 below are calibrated to the **implementing-agent** receiver — the executor that will run the steps. The product the steps build propagates to five other receivers (product-input, product-output, human-user, integrator, operator). §8 carries one substrate-calibration block per view (§§8.1-8.7); §§9-13 declare each non-agent view's contracts. Views not applicable to a given product are marked `not-applicable: <reason>` in their §8.x block and omit their §9-13 section body. More than two N/A views emits an `excessive-not-applicable` warn finding.
 
 ## 1. Hard Problem
 <One paragraph. The non-obvious thing that makes this hard.>
@@ -158,3 +161,202 @@ Every spec MUST declare the following four fields. The evaluator blocks lock if 
 - shell-eval: `bash -c "$(cat …)"`, `python -c`, `node -e`, eval-equivalent
 - SQL/template: INSERT/UPDATE/REPLACE/DELETE FROM, jinja2/template_render
 - network-egress: `curl|wget POST|PUT|--data|-T|--post-file=` with body from a tainted produces
+
+### 8.3 Product-input substrate (v1.0+)
+
+Same schema as §8.2 but calibrated to the product's **input receiver**: what feeds the product. Fingerprint vocabulary differs.
+
+```markdown
+### 8.3 Product-input substrate
+
+- receiver-fingerprint: <human-typed | programmatic-trusted | programmatic-untrusted | streamed-event | not-applicable>
+- trust-profile: <comma-separated subset of {validated-schema, signed-payload, rate-limited, untrusted} or "none">
+- contextual-binding: <what input this product accepts and from where>
+- ux-contract:
+    on-success: <one-line acknowledgement the product emits when input is accepted>
+    on-failure: <one-line rejection message + cause>
+    log-target: <where input-handling logs go>
+- assumptions-killed: <considered-and-ruled-out input shapes>
+```
+
+When `receiver-fingerprint: not-applicable`, §9 body is omitted (declare a single `not-applicable: <reason>` field in place of the §9 contracts).
+
+### 8.4 Product-output substrate (v1.0+)
+
+Same schema as §8.2 but calibrated to the product's **output receiver**: what reads the product's output.
+
+```markdown
+### 8.4 Product-output substrate
+
+- receiver-fingerprint: <human-reader | programmatic-consumer | streaming-sink | log-aggregator | not-applicable>
+- trust-profile: <comma-separated subset of {schema-stable, versioned, deprecation-policy} or "none">
+- contextual-binding: <what output this product emits and who consumes it>
+- ux-contract:
+    on-success: <one-line success-output shape>
+    on-failure: <one-line failure-output shape + how the consumer detects failure>
+    log-target: <where output is written>
+- assumptions-killed: <considered-and-ruled-out output shapes>
+```
+
+### 8.5 Human-user substrate (v1.0+)
+
+Calibrated to the **direct human user** of the product (CLI invoker, dashboard user, anyone who reads the product's user-facing surface).
+
+```markdown
+### 8.5 Human-user substrate
+
+- receiver-fingerprint: <cli-power-user | cli-novice | gui-only | no-human-user | not-applicable>
+- trust-profile: <comma-separated subset of {accessibility-required, i18n-required, screen-reader-compatible} or "none">
+- contextual-binding: <who uses this product and in what context>
+- ux-contract:
+    on-success: <one-line user-visible success message>
+    on-failure: <one-line user-visible failure message + recovery hint>
+    log-target: <where user-readable logs go, if any>
+- assumptions-killed: <considered-and-ruled-out user-experience choices>
+```
+
+### 8.6 Integrator substrate (v1.0+)
+
+Calibrated to the **integrator receiver**: another system or developer who programmatically integrates against this product.
+
+```markdown
+### 8.6 Integrator substrate
+
+- receiver-fingerprint: <library-consumer | api-consumer | webhook-subscriber | sdk-author | no-integrator | not-applicable>
+- trust-profile: <comma-separated subset of {semver-stable, breaking-change-policy, deprecation-window} or "none">
+- contextual-binding: <what programmatic surface this product exposes and to whom>
+- ux-contract:
+    on-success: <one-line integration-success shape (e.g. "2xx with stable schema")>
+    on-failure: <one-line integration-failure shape (e.g. "4xx with error-code field")>
+    log-target: <where integration logs go>
+- assumptions-killed: <considered-and-ruled-out integration shapes>
+```
+
+### 8.7 Operator substrate (v1.0+)
+
+Calibrated to the **operator receiver**: whoever runs the product in production, watches its observability, gets paged when it breaks.
+
+```markdown
+### 8.7 Operator substrate
+
+- receiver-fingerprint: <on-call-engineer | sre-team | self-operated | no-operator | not-applicable>
+- trust-profile: <comma-separated subset of {paging-required, slo-defined, runbook-required} or "none">
+- contextual-binding: <how this product is run in production and by whom>
+- ux-contract:
+    on-success: <one-line healthy-state observability signature>
+    on-failure: <one-line unhealthy-state signature + paging trigger>
+    log-target: <where operational logs go>
+- assumptions-killed: <considered-and-ruled-out operational choices>
+```
+
+## 9. Product-Input View (v1.0+)
+
+Declares contracts the product's input surface must satisfy. Three contract types may be combined; views may declare any subset.
+
+```markdown
+## 9. Product-Input View
+
+### Mechanical contracts
+- input-source: <stdin | file:<path> | network:<protocol> | env-var:<name>>
+- encoding: <utf-8 | binary | mime-type>
+- validation-schema: <inline JSON Schema | url:<schema-url> | none>
+- retry-budget: <count | none>
+
+### Coverage contracts
+- input-must-include: <comma-separated required field categories>
+
+### Exemplar bindings
+- input-shape-style: exemplar:<slug>
+- taxonomy-version: <view-type>:<int>
+```
+
+Cross-view references resolve through §8.x: e.g. `on-failure: <on-failure from §8.3 ux-contract>` resolves to whatever §8.3 declares. Broken references = `cross-view-string-unresolved` block finding at lock time.
+
+When §8.3 declares `not-applicable`, replace this section's body with `not-applicable: <reason>`.
+
+## 10. Product-Output View (v1.0+)
+
+```markdown
+## 10. Product-Output View
+
+### Mechanical contracts
+- output-sink: <stdout | file:<path> | network:<protocol>>
+- encoding: <utf-8 | binary | mime-type>
+- schema: <inline JSON Schema | url:<schema-url> | none>
+- exit-code-on-success: <int>
+- exit-code-on-failure: <int>
+
+### Coverage contracts
+- output-must-include: <comma-separated required field categories>
+
+### Exemplar bindings
+- output-shape-style: exemplar:<slug>
+- taxonomy-version: <view-type>:<int>
+```
+
+When §8.4 declares `not-applicable`, replace this section's body with `not-applicable: <reason>`.
+
+## 11. Human-User View (v1.0+)
+
+```markdown
+## 11. Human-User View
+
+### Mechanical contracts
+- help-flag: <comma-separated flags, e.g. `--help, -h`>
+- usage-on-stderr: <required | none>
+- exit-code-on-error: <int | nonzero>
+
+### Coverage contracts
+- help-text-must-include: <comma-separated: usage, flags, examples, link-to-docs, version>
+- error-text-must-include: <comma-separated: what-failed, why, recovery>
+
+### Exemplar bindings
+- help-text-style: exemplar:<slug>
+- error-text-style: exemplar:<slug>
+- taxonomy-version: help-text:<int>, error-text:<int>
+```
+
+When §8.5 declares `not-applicable`, replace this section's body with `not-applicable: <reason>`.
+
+## 12. Integrator View (v1.0+)
+
+```markdown
+## 12. Integrator View
+
+### Mechanical contracts
+- interface-style: <rest | graphql | grpc | library | webhook>
+- versioning: <semver | url-path | header | none>
+- breaking-change-policy: <one-line policy or `not-applicable`>
+- spec-document: <openapi:<url> | sdl:<url> | inline | none>
+
+### Coverage contracts
+- error-response-must-include: <comma-separated: code, message, request-id>
+
+### Exemplar bindings
+- api-shape-style: exemplar:<slug>
+- taxonomy-version: api-shape:<int>
+```
+
+When §8.6 declares `not-applicable`, replace this section's body with `not-applicable: <reason>`.
+
+## 13. Operator View (v1.0+)
+
+```markdown
+## 13. Operator View
+
+### Mechanical contracts
+- log-format: <plaintext | json-lines | logfmt>
+- log-keys: <comma-separated required keys, e.g. `timestamp, level, op, duration_ms`>
+- metric-names: <comma-separated metric identifiers>
+- health-endpoint: <path | none>
+
+### Coverage contracts
+- runbook-must-include: <comma-separated: symptoms, paging-trigger, recovery-steps>
+
+### Exemplar bindings
+- log-format-style: exemplar:<slug>
+- observability-style: exemplar:<slug>
+- taxonomy-version: log-format:<int>, observability:<int>
+```
+
+When §8.7 declares `not-applicable`, replace this section's body with `not-applicable: <reason>`.

@@ -1,0 +1,11 @@
+taxonomy-version: 1
+axes:
+  style:
+    values: [rest-resource, rest-rpc, graphql, grpc, webhook]
+    description: The interaction model. Rest-resource = nouns + standard verbs (GET /users/123); rest-rpc = verbs in path (POST /users/123/activate); graphql = single endpoint with query language; grpc = protobuf RPC; webhook = receiver-defined inbound HTTP endpoint.
+  error-model:
+    values: [http-status-only, status-plus-body, problem-details-rfc7807, error-code-taxonomy]
+    description: How errors are communicated. Http-status-only = response code carries the meaning; status-plus-body = code + ad-hoc JSON body; problem-details-rfc7807 = RFC 7807 `{type, title, status, detail, instance}`; error-code-taxonomy = enumerated string codes with stable identifiers (e.g. `RATE_LIMITED`).
+  versioning:
+    values: [unversioned, url-path, header, content-negotiation, breaking-only-on-major]
+    description: How API evolution is handled. Unversioned = no explicit versioning; url-path = `/v1/`, `/v2/`; header = `X-API-Version: 2`; content-negotiation = `Accept: application/vnd.example.v2+json`; breaking-only-on-major = SemVer + deprecation window before breaking changes.

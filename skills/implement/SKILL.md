@@ -271,6 +271,8 @@ If `never-ask-again`: treat as `once-only` for now. Print "Note: never-ask-again
 
 **Sandbox-paradox brake.** The CLI consults the persistent counter against `DEFAULT_BRAKE_THRESHOLD` (default 3) BEFORE writing the TOML; if the counter is already at threshold, the CLI prints the BRAKE message and exits 0 without bumping anything. The brake is session-scoped via `state/scratchpad.json`'s `tracks.<track>.session_adoption_count` field — restarting Claude Code (or starting a new spec/track) resets it on the next `/vision`. The threshold is read dynamically from `DEFAULT_BRAKE_THRESHOLD` rather than hardcoded.
 
+**Exemplar context injection.** When a spec declares `**Spec-version:** 1.0` AND binds exemplars in any of §§9-13, Tier-3 (if enabled) automatically loads the bound exemplars' conventions list into its contradiction prompt's user message. The injection is view-level — every step in the spec is reviewed against the bound exemplars' conventions for that view. No skill action is required; the mechanism fires from `bin/llm_judge._build_exemplar_context`. Per-step `satisfies:` routing (where individual steps name which view contracts they fulfill) is deferred to v1.1 once dogfooding reveals how view-bound implementations fail.
+
 ### Phase: Resource acquire
 
 If `current_resources` is non-empty, acquire each Resource via the supervisor before executing. Run:

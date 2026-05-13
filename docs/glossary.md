@@ -997,3 +997,150 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - dev: Content-Driven Lifecycle Cycle — the generate→halt→implement transition model. Spectre records every transition to the ledger for auditability.
 - pm: The project lifecycle model Spectre follows: write a plan, review it, then implement it step by step. Each phase transition is logged.
 - related: term:ledger, term:spec
+
+## term:view
+- kind: term
+- dev: One of six receiver-calibrated perspectives a v1.0 spec carries — implementing-agent, product-input, product-output, human-user, integrator, operator. Each view declares its own substrate block (§8.x) and may declare contracts (§§9-13).
+- pm: A perspective on the product. v1.0 covers six perspectives: the AI that builds it, who feeds it, who reads it, who uses it, who integrates with it, and who runs it. Each gets its own section in the spec.
+- related: term:receiver, term:exemplar, term:contract-type
+
+## term:receiver
+- kind: term
+- dev: An entity that receives output or contract obligations from the product the spec describes. v0.9 modeled one receiver (the implementing agent); v1.0 names six.
+- pm: Anyone or anything that interacts with the product — the AI building it, the user typing into it, the system reading its output. Spectre's v1.0 spec captures the obligations toward each.
+- related: term:view, term:propagation
+
+## term:exemplar
+- kind: term
+- dev: A curated catalog entry naming a real tool whose conventions for a given view-type (help-text, error-text, log-format, api-shape, observability) have been documented. The frontmatter conventions list becomes Tier-3's machine contract; the body explains operationally what the conventions mean.
+- pm: A worked example from a well-known tool. Picking `curl` for help-text style means the AI builds help text that follows curl's conventions. The catalog has 17 exemplars across 5 view-types as of v1.0.
+- related: term:axis, term:taxonomy-version, term:contract-type
+
+## term:axis
+- kind: term
+- dev: One dimension of variation within a view-type's design space (e.g. help-text has verbosity, structure, example-density). Each exemplar declares its axis values in frontmatter so operators see what they're choosing between, not just from.
+- pm: A design choice within a view-type. When picking between exemplars, the axes show what differs (terse vs verbose, flat vs sectioned, etc.) so you can compare meaningfully.
+- related: term:exemplar, term:taxonomy-version
+
+## term:taxonomy-version
+- kind: term
+- dev: A versioned axis taxonomy per view-type, declared in docs/exemplars/<view-type>/axes.yml. Specs pin the taxonomy version at lock time so post-v1.0 axis additions don't silently invalidate older specs.
+- pm: The version of the catalog's design-choice list. Pinning prevents future catalog updates from quietly changing what an existing spec means.
+- related: term:axis, term:exemplar
+
+## term:contract-type
+- kind: term
+- dev: One of three contract families a v1.0 view section may declare — mechanical (schemas, exact strings, structural shapes; Tier-1 AST check), coverage (must-include lists; Tier-1 presence check), exemplar-bindings (style adherence; Tier-3 LLM review).
+- pm: How a spec section commits to its receiver. Spec sections can name schemas (Tier-1 checks), required content categories (Tier-1 checks), or pick exemplars (Tier-3 LLM checks). Mix and match.
+- related: term:view, term:exemplar
+
+## term:metis
+- kind: term
+- dev: Accumulated practical know-how (per the framework Spectre is built on) that has solved a recurring problem in production tooling. The metis catalog (`docs/exemplars/`) curates which existing tools encode useful metis for each receiver class. Spectre does not extract metis — it specifies which existing metis applies to the spec at hand.
+- pm: The practical wisdom baked into tools that have been used at scale. Spectre's v1.0 catalog points your spec at existing best-of-breed examples instead of asking you to invent conventions.
+- related: term:exemplar, term:propagation
+
+## term:propagation
+- kind: term
+- dev: A context-transfer event between two receivers in the framework Spectre is built on. Each propagation event is where context can be lost (the implementing agent assumes one thing, the human user expects another). v1.0's six-view model exists to surface and constrain each propagation event.
+- pm: Any point where information about the product travels from one party to another (AI to user, product to operator, etc.). The six-view spec makes sure each of these transitions is documented.
+- related: term:view, term:receiver
+
+## unsupported-spec-version
+- kind: finding
+- dev: Spec frontmatter is missing or carries a non-1.0 version. Tier-1 block. Hard cutover from v0.9 — no version-dispatch logic, no migration tool.
+- pm: This spec uses a version Spectre no longer supports. Re-run /vision to regenerate it as a v1.0 spec.
+- triggered_by: Tier-1 spec_ast classify; spec frontmatter check.
+- user_action: Re-run /vision to regenerate the spec at v1.0.
+- related: term:view
+- since: v1.0
+
+## missing-view-section
+- kind: finding
+- dev: One of §§9-13 is absent from a v1.0 spec. Tier-1 block. Each view must be present (with content) or explicitly marked `not-applicable`.
+- pm: A required perspective section is missing from this spec. Either fill it in or declare it not applicable.
+- triggered_by: Tier-1 spec_ast classify when scanning §§9-13.
+- user_action: Add the missing section per the v1.0 template, or mark the view not-applicable in its §8.x substrate block.
+- related: missing-substrate-block, malformed-view-contract
+- since: v1.0
+
+## missing-substrate-block
+- kind: finding
+- dev: One of §§8.3-8.7 is absent from a v1.0 spec. Tier-1 block. Each receiver-calibration block must be present.
+- pm: A required receiver-calibration block is missing. Add it (or mark the view not-applicable).
+- triggered_by: Tier-1 spec_ast classify when scanning §§8.3-8.7.
+- user_action: Add the missing ### 8.x substrate block per the v1.0 template.
+- related: missing-view-section
+- since: v1.0
+
+## excessive-not-applicable
+- kind: finding
+- dev: More than two of the five non-agent views are marked not-applicable. Tier-1 warn. Likely the spec is under-specified rather than legitimately narrow-scope.
+- pm: This spec marks three or more views as not-applicable. That usually means something was overlooked rather than legitimately out of scope.
+- triggered_by: Tier-1 v1.0 structural check.
+- user_action: Review each N/A view — is it legitimately out of scope, or have you skipped a propagation event the spec should address?
+- related: term:view
+- since: v1.0
+
+## malformed-view-contract
+- kind: finding
+- dev: A view section (§§9-13) declares neither Mechanical contracts, Coverage contracts, nor Exemplar bindings subsections. Tier-1 block.
+- pm: A view section is empty — no contracts declared. Either add contracts or mark the view not-applicable.
+- triggered_by: Tier-1 v1.0 structural check.
+- user_action: Add at least one of `### Mechanical contracts`, `### Coverage contracts`, or `### Exemplar bindings` to the view, or mark the view not-applicable in its §8.x block.
+- related: missing-view-section
+- since: v1.0
+
+## cross-view-string-unresolved
+- kind: finding
+- dev: A §§9-13 reference like `<halt-hint from §8.2 ux-contract>` names a field that doesn't exist in the referenced substrate block. Tier-2 block.
+- pm: A view section references a field from another section that isn't there. Fix the reference or add the missing field.
+- triggered_by: Tier-2 cross_view_gate.
+- user_action: Add the named field to the referenced §8.x block, or change the reference to a field that exists.
+- related: term:view
+- since: v1.0
+
+## exemplar-not-found
+- kind: finding
+- dev: A spec binds to `exemplar:<key>` but no entry by that key exists in the plugin catalog (`docs/exemplars/`) or user overlay (`~/.spectre/exemplars/`). Tier-2 block.
+- pm: This spec names an exemplar that isn't in the catalog. Run `spectre exemplars list` to see valid options.
+- triggered_by: Tier-2 cross_view_gate.
+- user_action: Run `spectre exemplars list` to find valid slugs, or author a new exemplar at `~/.spectre/exemplars/<view-type>/<slug>.md`.
+- related: term:exemplar, exemplar-taxonomy-mismatch
+- since: v1.0
+
+## exemplar-taxonomy-mismatch
+- kind: finding
+- dev: A spec binds to an exemplar whose taxonomy-version differs from the version pinned in the spec. Tier-2 block.
+- pm: This spec was locked against an older version of the design-choice list than the exemplar uses. Re-run /vision for the affected view, or pick an exemplar at the pinned version.
+- triggered_by: Tier-2 cross_view_gate.
+- user_action: Run `spectre catalog upgrade-taxonomy --spec <slug> --to <version>` to re-bind (re-runs the walker for the affected view), or pick a different exemplar.
+- related: term:taxonomy-version, term:exemplar
+- since: v1.0
+
+## view-fingerprint-contradicts-hard-contract
+- kind: finding
+- dev: A §8.x receiver-fingerprint is inconsistent with §8.1 hard contract (e.g. §8.5 declares gui-only human-user but §8.1 mutates includes stdout/stderr/tty). Tier-2 block.
+- pm: This spec's hard contract contradicts what one of its views claims. For example, declaring a graphical UI but allowing terminal-only output. Fix the contradiction in either section.
+- triggered_by: Tier-2 cross_view_gate.
+- user_action: Either change the §8.x receiver-fingerprint to match what §8.1 allows, or change §8.1 mutates/never-touches to match the view's fingerprint.
+- related: term:view
+- since: v1.0
+
+## view-coverage-overlap
+- kind: finding
+- dev: Two views' coverage contracts redundantly name the same content category. Tier-2 info — not a bug, but a hint the operator may want to consolidate.
+- pm: Two of this spec's views ask for the same content category. Not wrong, but you may want to consolidate.
+- triggered_by: Tier-2 cross_view_gate.
+- user_action: Optionally consolidate the overlapping coverage requirement into one view, or leave as-is.
+- related: term:view
+- since: v1.0
+
+## taxonomy-version-stale
+- kind: finding
+- dev: A spec pins a taxonomy version older than the catalog's current taxonomy for that view-type. Tier-1 warn. The spec can still evaluate against the pinned version, but new axes added post-lock are invisible to this spec.
+- pm: This spec uses an older version of a design-choice list. It still works, but newer design choices added since you locked the spec won't apply unless you upgrade.
+- triggered_by: Tier-1 v1.0 structural check.
+- user_action: Run `spectre catalog upgrade-taxonomy --spec <slug> --to <version>` when you want to consider the newer axes, or ignore.
+- related: term:taxonomy-version
+- since: v1.0

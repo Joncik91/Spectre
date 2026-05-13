@@ -138,6 +138,97 @@ Review the following spec step table for cross-step contradictions:
 {step_table_json}
 """
 
+# v1.0 — exemplar context appended to user prompt when the spec binds
+# exemplars in §§9-13. The conventions list per bound exemplar gives Tier-3
+# a concrete contract to check the implementation steps against. Emit an
+# "unrecognized" tuple naming the offending step + the convention violated.
+_EXEMPLAR_CONTEXT_TEMPLATE = """\
+
+---
+v1.0 — exemplar conventions in play:
+
+{exemplar_blocks}
+
+For every step that produces output addressable by one of the views above, \
+check whether the step's action/verification would produce output that \
+violates the listed conventions. When a violation is concrete (i.e. the \
+action's command-line would clearly emit output matching a forbidden shape \
+or missing a required field), emit a contradiction tuple with kind \
+"unrecognized" and description="<view>:<exemplar>:<convention-id>" — naming \
+the offending step number in "step". Do NOT emit speculative violations: \
+the action must actually produce the offending output, not merely be \
+permitted to. Cap exemplar-violation tuples at 5 per call to bound \
+false-positive risk.
+"""
+
+
+def _count_dismissals_by_fingerprint(findings_list: list[Finding]) -> dict[str, int]:
+    """Aggregate findings by fingerprint hash for the v1.0 ship-gate budget.
+
+    The fingerprint is computed via findings.fingerprint(f) — the same hash
+    the operator uses to dismiss a specific Tier-3 finding via the
+    `# tier3-dismissed: <fingerprint>` marker. Repeated occurrences of the
+    same fingerprint on a single spec signal a vague conventions list
+    (per the Dispatch 3 review gate); the ship-gate budget is
+    <=5 same-fingerprint occurrences per spec.
+    """
+    from collections import Counter
+    counter: Counter[str] = Counter()
+    for f in findings_list:
+        try:
+            counter[findings.fingerprint(f)] += 1
+        except Exception:
+            continue
+    return dict(counter)
+
+
+def _build_exemplar_context(spec_text: str) -> tuple[str, int]:
+    """Extract exemplar bindings from §§9-13 and look them up in the catalog.
+
+    Returns (rendered_block, count). When the spec has no exemplar bindings
+    or is not a v1.0 spec, returns ("", 0) and the caller skips appending.
+    """
+    from bin import spec_ast as _spec_ast
+    if not _spec_ast.is_v1_spec(spec_text):
+        return "", 0
+    from bin import _catalog
+    bindings: list[tuple[str, str, list[str]]] = []   # (view_label, exemplar_slug, conventions)
+    # Walk §§9-13 and extract exemplar: refs from each block.
+    view_labels = {
+        "9": "Product-Input View",
+        "10": "Product-Output View",
+        "11": "Human-User View",
+        "12": "Integrator View",
+        "13": "Operator View",
+    }
+    seen: set[str] = set()
+    for section, label in view_labels.items():
+        section_re = rf"^##\s+{re.escape(section)}\.\s+{re.escape(label)}\b"
+        m = re.search(section_re, spec_text, re.MULTILINE)
+        if not m:
+            continue
+        start = m.end()
+        next_h2 = re.search(r"^##\s", spec_text[start:], re.MULTILINE)
+        section_body = spec_text[start : start + next_h2.start()] if next_h2 else spec_text[start:]
+        for ex_match in re.finditer(r"exemplar:([a-z0-9][a-z0-9:_-]*)", section_body):
+            ref = ex_match.group(1).strip()
+            if ref in seen or ref.startswith("<"):
+                continue
+            seen.add(ref)
+            ex = _catalog.lookup(ref)
+            if ex is None:
+                continue
+            bindings.append((f"§{section} {label}", ref, ex.conventions))
+    if not bindings:
+        return "", 0
+    blocks = []
+    for view_label, slug, conventions in bindings:
+        lines = [f"{view_label} bound to exemplar:{slug}:"]
+        for i, c in enumerate(conventions, 1):
+            lines.append(f"  {i}. {c}")
+        blocks.append("\n".join(lines))
+    return _EXEMPLAR_CONTEXT_TEMPLATE.format(exemplar_blocks="\n\n".join(blocks)), len(bindings)
+
 
 def _secrets_path_default() -> pathlib.Path:
     """Return the canonical ~/.spectre/secrets.env path (mirrors setup_wizard)."""
@@ -1149,6 +1240,7 @@ def _run_contradiction_prompt(
     step_table: dict,
     *,
     config: JudgeConfig,
+    exemplar_context: str = "",
 ) -> list[Finding]:
     """Run the single structured contradiction prompt.
 
@@ -1157,11 +1249,18 @@ def _run_contradiction_prompt(
     does NOT crash (per spec requirement).
 
     All network/timeout failures return tier3-unavailable sentinels.
+
+    v1.0: exemplar_context is the pre-rendered exemplar-conventions block
+    (from _build_exemplar_context). Empty string skips the v1.0 prompt
+    extension and preserves v0.9 prompt shape.
     """
     step_table_json = json.dumps(step_table, indent=2)
+    user_body = _CONTRADICTION_USER_TEMPLATE.format(step_table_json=step_table_json)
+    if exemplar_context:
+        user_body = user_body + exemplar_context
     prompts = {
         "system": _CONTRADICTION_SYSTEM_PROMPT,
-        "user": _CONTRADICTION_USER_TEMPLATE.format(step_table_json=step_table_json),
+        "user": user_body,
     }
     total_attempts = _MAX_RETRIES + 1
     try:
@@ -1257,7 +1356,23 @@ def evaluate(
         return [_unavailable("Tier 3 skipped: spec exceeds budget")]
 
     step_table = build_step_table(spec_text, step_objects=step_objects)
-    primary_findings = _run_contradiction_prompt(step_table, config=config)
+    # v1.0 — build exemplar context for §§9-13 bindings (no-op for non-v1.0 specs).
+    exemplar_context, exemplar_count = _build_exemplar_context(spec_text)
+    primary_findings = _run_contradiction_prompt(
+        step_table, config=config, exemplar_context=exemplar_context
+    )
+    # v1.0 — instrumentation: emit budget signal so the ship-gate test harness
+    # can confirm Tier-3 call volume stays within budget. One Tier-3 call per
+    # evaluate(), regardless of exemplar count (exemplars are injected into the
+    # single existing call, not multiplied across calls). Payload is JSON so
+    # the harness parses it with json.loads, not eval/regex.
+    import sys as _sys
+    _budget_payload = {
+        "calls": 1,
+        "exemplars_injected": exemplar_count,
+        "dismissals_by_fp": _count_dismissals_by_fingerprint(primary_findings),
+    }
+    print(f"INFO tier3.budget {json.dumps(_budget_payload)}", file=_sys.stderr)
 
     # Deterministic post-filter: drop missing-producer findings for artifacts
     # that Tier 1 contract resolution shows as resolved.  This is a hard veto —

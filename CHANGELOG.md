@@ -2,6 +2,61 @@
 
 All notable changes to the Spectre plugin.
 
+## v1.0.0 — 2026-05-13
+
+The six-view spec family release. Structural completion of what a "spec" means in Spectre: a family of six receiver-calibrated views (implementing-agent, product-input, product-output, human-user, integrator, operator), locked together, cross-consistent, calibrated to the metis catalog. **Hard cutover from v0.9** — no migration tool, no version dispatch. Pre-v1.0 specs must be regenerated via `/vision`.
+
+### Added — six-view spec template (Dispatch 1)
+- `specs/template.spec.md` gains §§8.3-8.7 (five new substrate-calibration blocks, one per non-agent view) and §§9-13 (five new view sections each declaring contracts from a three-type taxonomy: mechanical / coverage / exemplar-bindings).
+- Frontmatter requires `**Spec-version:** 1.0`. Views can be marked `not-applicable: <reason>` to degenerate to a single-field block.
+- Cross-view string references (e.g. `<halt-hint from §8.2 ux-contract>`) resolve through §8.x at lock time.
+
+### Added — metis catalog (Dispatch 2 + 3)
+- `bin/_catalog.py` — stdlib-only YAML-frontmatter loader for exemplar markdown files. Plugin catalog at `docs/exemplars/<view-type>/` merges with user overlay at `~/.spectre/exemplars/<view-type>/`. Exemplars keyed by `<view-type>:<slug>` to allow same slug under multiple views.
+- `bin/exemplars.py` — `spectre exemplars list | show | axes | validate` CLI.
+- `docs/exemplars/<view-type>/axes.yml` — versioned axis taxonomies per view-type (5 files).
+- 17 seed exemplars (curl, gh, rustc, git for help-text; git, rust-compiler, gh, postgres for error-text; systemd-journal, nginx, structlog-json for log-format; stripe-rest, github-graphql, kubernetes-api for api-shape; prometheus, tmux-status, htop for observability). Each entry's conventions list passed the per-entry operational-specificity review gate.
+
+### Added — walker view-concern families (Dispatch 4)
+- Five new `generate_*_concerns()` functions in `bin/walker.py`, one per non-agent receiver. Each emits a scope-check concern first; in-scope views surface 3-5 follow-up concerns.
+- `WalkState.view_scope: dict[str, str]` tracks in-scope/N/A per view; five per-view `*_asked` flags.
+- N/A scope short-circuits follow-ups; in-scope answers cascade into the relevant concern set.
+- `WALKER_VERSION` bumped 0.4.1 → 1.0.0. Pre-v1.0 state files rejected on load.
+
+### Added — per-view substrate wizard (Dispatch 5)
+- `bin.substrate_wizard.run_per_view()` renders one §8.x block from validated flag values.
+- Per-view receiver-fingerprint vocabularies (`_VIEW_FINGERPRINTS`) and per-view trust-profile vocabularies (`_VIEW_TRUST_TOKENS`) — cross-pollination rejected.
+- N/A receiver-fingerprint degenerates the block to a single `not-applicable: <reason>` field.
+
+### Added — Tier-1 structural checks (Dispatch 6)
+- 11 new finding kinds in `bin/findings.py`: `unsupported-spec-version`, `missing-view-section`, `missing-substrate-block`, `excessive-not-applicable`, `malformed-view-contract`, `cross-view-string-unresolved`, `exemplar-not-found`, `exemplar-taxonomy-mismatch`, `view-fingerprint-contradicts-hard-contract`, `view-coverage-overlap`, `taxonomy-version-stale`.
+- `bin/spec_ast._v1_structural_checks()` — verifies §§8.3-8.7 + §§9-13 are present (or N/A), validates contract subsections exist, warns on more-than-two N/A views.
+- Pre-v1.0 specs (no `Spec-version:` frontmatter) skip the v1.0 Tier-1 checks; only specs explicitly opting into v1.0 are subject to the new structural invariants.
+
+### Added — Tier-2 cross-view + Tier-3 exemplar injection (Dispatch 7)
+- `bin/cross_view_gate.py` — Tier-2 cross-view consistency tier. Resolves §§9-13 references against §8.x fields, validates exemplar bindings against the catalog, enforces taxonomy-version match, flags fingerprint↔hard-contract contradictions.
+- `bin/llm_judge._build_exemplar_context()` — when a v1.0 spec binds exemplars in §§9-13, the conventions lists are appended to the Tier-3 prompt's user message. DeepSeek is asked to identify steps whose output would violate a bound exemplar's conventions (capped at 5 tuples per call).
+- Instrumentation: every Tier-3 `evaluate()` emits `INFO tier3.budget calls=N exemplars_injected=M dismissals_by_fp={...}` to stderr for the v1.0 ship-gate harness.
+
+### Added — skills + glossary (Dispatch 8)
+- `skills/vision/SKILL.md` — Wizard phase Step 4 covers per-view substrate calibration. Walker-loop phase documents exemplar-selection rendering (`spectre exemplars list --view-type <type>`). Draft phase requires v1.0 frontmatter + §§8.3-8.7 + §§9-13 with at least one contract subsection.
+- `skills/implement/SKILL.md` — Tier classifier phase notes the optional `satisfies:` step field (Tier-3 injects exemplar conventions automatically when bound; tier classifier routing deferred to v1.1).
+- `docs/glossary.md` — 19 new entries (8 terms + 11 findings): view, receiver, exemplar, axis, taxonomy-version, contract-type, metis, propagation + the 11 new v1.0 finding kinds.
+
+### Breaking changes (intentional — hard cutover)
+- Pre-v1.0 walker state files (`walker_version != "1.0.0"`) raise on load. Operators must remove `state/.walk.json` and re-run `/vision`.
+- The single pre-existing v0.9 spec (Vidence Layer 2 V1) was deleted ahead of the v1.0 work per the pre-flight checklist.
+
+### Total LOC churn
+- ~1,400 added across `bin/_catalog.py` (310), `bin/exemplars.py` (130), `bin/cross_view_gate.py` (260), `bin/spec_ast.py` v1.0 checks (155), `bin/llm_judge.py` v1.0 prompt extension (90), `bin/walker.py` view concerns (280), `bin/substrate_wizard.py` per-view (240).
+- ~1,800 added across `docs/exemplars/**/*.md` (17 exemplars + 5 axes.yml).
+- ~210 added across `specs/template.spec.md` (sections §§8.3-8.7 + §§9-13).
+- ~150 added to `docs/glossary.md` (19 entries).
+- ~180 added across the two SKILL.md files.
+- 1760 tests passing; +6 net (1754 v0.9.0 baseline, ~10 tests removed for hard-cutover obsoletes).
+
+---
+
 ## v0.9.0 — 2026-05-13
 
 The polish release. Five axes of UX/clarity improvements; no breaking changes; backwards-compatible state and sidecar formats.

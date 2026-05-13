@@ -16,7 +16,7 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Any
 
-WALKER_VERSION = "0.4.1"
+WALKER_VERSION = "1.0.0"
 
 DEFAULT_MAX_ROUNDS = 30
 DEFAULT_YIELD_THRESHOLD = 2
@@ -76,6 +76,13 @@ class WalkState:
     prompt_design_asked: bool = False
     semantic_criteria_asked: bool = False
     last_recommend_stop_emitted: bool = False
+    # v1.0 — six-view scope tracking + per-view family flags
+    view_scope: dict[str, str] = field(default_factory=dict)   # view -> "in-scope" | "not-applicable"
+    product_input_asked: bool = False
+    product_output_asked: bool = False
+    human_user_asked: bool = False
+    integrator_asked: bool = False
+    operator_asked: bool = False
 
 
 _OQ_INLINE_RE = re.compile(
@@ -304,6 +311,37 @@ def record_answer(state: WalkState, *, concern_id: str, answer: str) -> WalkStat
                 state.prompt_design_asked = True
             elif concern_id == "seed-semantic-criteria":
                 state.semantic_criteria_asked = True
+            # v1.0 — record view scope when a scope-check concern is answered.
+            # The scope-* concern IDs map 1:1 to view names; the answer is
+            # treated as "not-applicable" only when it contains that exact
+            # token (case-insensitive) — anything else flips the view in-scope.
+            scope_view = _VIEW_SCOPE_CONCERN_IDS.get(concern_id)
+            if scope_view is not None:
+                if "not-applicable" in answer.lower():
+                    state.view_scope[scope_view] = "not-applicable"
+                else:
+                    state.view_scope[scope_view] = "in-scope"
+            # v1.0 — flip per-view family flags when the last follow-up answered.
+            # The family is "asked" once its scope-check is answered AND all
+            # in-scope follow-ups have been answered. For N/A scope, the family
+            # is asked immediately (no follow-ups will surface).
+            for view, family_attr, follow_up_ids in (
+                ("product-input", "product_input_asked",
+                 {"input-source-pi", "input-schema-pi", "input-retry-pi", "input-exemplar-pi"}),
+                ("product-output", "product_output_asked",
+                 {"output-sink-po", "output-schema-po", "output-on-failure-po"}),
+                ("human-user", "human_user_asked",
+                 {"help-text-hu", "help-text-style-hu", "error-text-style-hu", "error-text-shape-hu", "examples-hu"}),
+                ("integrator", "integrator_asked",
+                 {"api-style-int", "api-versioning-int", "api-error-model-int", "api-exemplar-int"}),
+                ("operator", "operator_asked",
+                 {"log-format-op", "log-format-style-op", "metrics-op", "observability-style-op", "paging-op"}),
+            ):
+                scoped = state.view_scope.get(view)
+                if scoped == "not-applicable":
+                    setattr(state, family_attr, True)
+                elif scoped == "in-scope" and follow_up_ids.issubset(set(state.answered)):
+                    setattr(state, family_attr, True)
             # Attempt open-question resolution
             _resolve_open_questions(state, answer)
             return state
@@ -445,6 +483,13 @@ def persist(state: WalkState, path: pathlib.Path) -> None:
         "prompt_design_asked": state.prompt_design_asked,
         "semantic_criteria_asked": state.semantic_criteria_asked,
         "last_recommend_stop_emitted": state.last_recommend_stop_emitted,
+        # v1.0 — six-view scope + per-view family flags
+        "view_scope": dict(state.view_scope),
+        "product_input_asked": state.product_input_asked,
+        "product_output_asked": state.product_output_asked,
+        "human_user_asked": state.human_user_asked,
+        "integrator_asked": state.integrator_asked,
+        "operator_asked": state.operator_asked,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name, suffix=".tmp")
@@ -466,10 +511,22 @@ def load(path: pathlib.Path) -> WalkState | None:
     """
     if not path.is_file():
         return None
-    data = json.loads(path.read_text(encoding="utf-8"))
+    raw = path.read_text(encoding="utf-8")
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        # Empty file, partial write, or hand-edit corruption all land here.
+        # Surface the same recovery hint as the version-mismatch path so
+        # operators don't have to read a stack trace to know what to do.
+        raise ValueError(
+            f"state file corrupt at {path}: {exc.msg} at line {exc.lineno}; "
+            f"rm {path} to restart the walk"
+        ) from exc
     ver = data.get("walker_version")
-    # Accept v0.4.0 state files for backwards-compat (additive fields get defaults).
-    if ver not in (WALKER_VERSION, "0.4.0"):
+    # v1.0 — hard cutover. Pre-1.0 state files are rejected (no v0.9 specs
+    # remain in the wild per the pre-flight checklist; first external users
+    # define the backwards-compat story when they exist).
+    if ver != WALKER_VERSION:
         raise ValueError(
             f"walker_version mismatch: file has {ver!r}, walker is {WALKER_VERSION!r}; "
             f"rm state/.walk.json to restart"
@@ -489,6 +546,12 @@ def load(path: pathlib.Path) -> WalkState | None:
         prompt_design_asked=data.get("prompt_design_asked", False),
         semantic_criteria_asked=data.get("semantic_criteria_asked", False),
         last_recommend_stop_emitted=data.get("last_recommend_stop_emitted", False),
+        view_scope=dict(data.get("view_scope", {})),
+        product_input_asked=data.get("product_input_asked", False),
+        product_output_asked=data.get("product_output_asked", False),
+        human_user_asked=data.get("human_user_asked", False),
+        integrator_asked=data.get("integrator_asked", False),
+        operator_asked=data.get("operator_asked", False),
     )
 
 
@@ -730,6 +793,237 @@ def generate_semantic_criteria_concern(
     )]
 
 
+_VIEW_SCOPE_CONCERN_IDS = {
+    "scope-product-input": "product-input",
+    "scope-product-output": "product-output",
+    "scope-human-user": "human-user",
+    "scope-integrator": "integrator",
+    "scope-operator": "operator",
+}
+
+
+def _view_in_scope(state: WalkState, view: str) -> bool:
+    """A view is in-scope when the scope-check concern has been answered
+    with anything other than 'not-applicable' (or no answer means we haven't
+    asked yet — also out-of-scope for follow-up purposes)."""
+    return state.view_scope.get(view) == "in-scope"
+
+
+def generate_product_input_concerns(
+    state: WalkState,
+    draft_text: str,
+) -> list[Concern]:
+    """Emit the product-input scope check + follow-ups when in-scope."""
+    if state.product_input_asked:
+        return []
+    existing = _existing_concern_ids(state)
+    new: list[Concern] = []
+    if "scope-product-input" not in existing:
+        new.append(Concern(
+            id="scope-product-input",
+            kind="receiver-clarification",
+            receivers=["human"],
+            depends_on=[],
+            summary=(
+                "Product-input view scope: what feeds this product? Choose from "
+                "[human-typed, programmatic-trusted, programmatic-untrusted, "
+                "streamed-event, not-applicable]. If not-applicable, the input "
+                "view body will be replaced with a single 'not-applicable: <reason>' "
+                "field and follow-up concerns will be skipped."
+            ),
+            prefab_options=[
+                "human-typed",
+                "programmatic-trusted",
+                "programmatic-untrusted",
+                "streamed-event",
+                "not-applicable",
+            ],
+        ))
+    if _view_in_scope(state, "product-input"):
+        for cid, summary in (
+            ("input-source-pi", "Input source — stdin, file path, network protocol, env var? Name the wire format."),
+            ("input-schema-pi", "Input validation schema — JSON Schema URL or inline, or 'none' if input is opaque bytes. Include the strictness level (strict | lenient | tolerant)."),
+            ("input-retry-pi", "Retry budget — how many retries on malformed input before the product rejects? '0' (fail fast) | '<int>' | 'unlimited'."),
+            ("input-exemplar-pi", "Exemplar binding — pick a catalog entry whose input-handling conventions match your product (run `spectre exemplars list --view-type help-text` for now; an input-shape view will surface in v1.1) or 'none' to skip exemplar-binding for this view."),
+        ):
+            if cid not in existing:
+                new.append(Concern(
+                    id=cid, kind="receiver-clarification", receivers=["human"],
+                    depends_on=["scope-product-input"], summary=summary,
+                ))
+    return new
+
+
+def generate_product_output_concerns(
+    state: WalkState,
+    draft_text: str,
+) -> list[Concern]:
+    if state.product_output_asked:
+        return []
+    existing = _existing_concern_ids(state)
+    new: list[Concern] = []
+    if "scope-product-output" not in existing:
+        new.append(Concern(
+            id="scope-product-output",
+            kind="receiver-clarification",
+            receivers=["human"],
+            depends_on=[],
+            summary=(
+                "Product-output view scope: who reads what this product emits? Choose from "
+                "[human-reader, programmatic-consumer, streaming-sink, log-aggregator, "
+                "not-applicable]."
+            ),
+            prefab_options=[
+                "human-reader",
+                "programmatic-consumer",
+                "streaming-sink",
+                "log-aggregator",
+                "not-applicable",
+            ],
+        ))
+    if _view_in_scope(state, "product-output"):
+        for cid, summary in (
+            ("output-sink-po", "Output sink — stdout, file path, network protocol? Name the wire format."),
+            ("output-schema-po", "Output schema — JSON Schema URL or inline, or 'none' if output is opaque text. Include exit-code-on-success and exit-code-on-failure."),
+            ("output-on-failure-po", "Failure shape — what does the consumer see when this product fails? Reference §8.4 ux-contract.on-failure if you want the same string in both places."),
+        ):
+            if cid not in existing:
+                new.append(Concern(
+                    id=cid, kind="receiver-clarification", receivers=["human"],
+                    depends_on=["scope-product-output"], summary=summary,
+                ))
+    return new
+
+
+def generate_human_user_concerns(
+    state: WalkState,
+    draft_text: str,
+) -> list[Concern]:
+    if state.human_user_asked:
+        return []
+    existing = _existing_concern_ids(state)
+    new: list[Concern] = []
+    if "scope-human-user" not in existing:
+        new.append(Concern(
+            id="scope-human-user",
+            kind="receiver-clarification",
+            receivers=["human"],
+            depends_on=[],
+            summary=(
+                "Human-user view scope: who interacts with this product directly? Choose from "
+                "[cli-power-user, cli-novice, gui-only, no-human-user, not-applicable]. "
+                "no-human-user covers libraries/services with no direct human UI."
+            ),
+            prefab_options=[
+                "cli-power-user",
+                "cli-novice",
+                "gui-only",
+                "no-human-user",
+                "not-applicable",
+            ],
+        ))
+    if _view_in_scope(state, "human-user"):
+        for cid, summary in (
+            ("help-text-hu", "Help text — what flags trigger help (`--help, -h`)? What categories must it include (usage, flags, examples, link-to-docs, version)?"),
+            ("help-text-style-hu", "Help text exemplar — bind to a `help-text` catalog entry (e.g. `curl`, `gh`, `rustc`, `git`). Run `spectre exemplars list --view-type help-text` to see options + their axis values. Or 'none' to skip exemplar binding."),
+            ("error-text-style-hu", "Error text exemplar — bind to an `error-text` catalog entry (e.g. `git`, `rust-compiler`, `gh`, `postgres`). Run `spectre exemplars list --view-type error-text`."),
+            ("error-text-shape-hu", "Error text shape — what categories must each error include (what-failed, why, recovery)? What exit code on error (nonzero | specific int)?"),
+            ("examples-hu", "Examples — does the help text include runnable examples? If yes, where (inline per-flag, separate EXAMPLES section, runnable code blocks)?"),
+        ):
+            if cid not in existing:
+                new.append(Concern(
+                    id=cid, kind="receiver-clarification", receivers=["human"],
+                    depends_on=["scope-human-user"], summary=summary,
+                ))
+    return new
+
+
+def generate_integrator_concerns(
+    state: WalkState,
+    draft_text: str,
+) -> list[Concern]:
+    if state.integrator_asked:
+        return []
+    existing = _existing_concern_ids(state)
+    new: list[Concern] = []
+    if "scope-integrator" not in existing:
+        new.append(Concern(
+            id="scope-integrator",
+            kind="receiver-clarification",
+            receivers=["human"],
+            depends_on=[],
+            summary=(
+                "Integrator view scope: who programmatically integrates against this product? Choose from "
+                "[library-consumer, api-consumer, webhook-subscriber, sdk-author, "
+                "no-integrator, not-applicable]. no-integrator covers products with no "
+                "external programmatic surface (e.g. local CLI scripts)."
+            ),
+            prefab_options=[
+                "library-consumer",
+                "api-consumer",
+                "webhook-subscriber",
+                "sdk-author",
+                "no-integrator",
+                "not-applicable",
+            ],
+        ))
+    if _view_in_scope(state, "integrator"):
+        for cid, summary in (
+            ("api-style-int", "Interface style — rest-resource, rest-rpc, graphql, grpc, library, webhook? Name the wire protocol and authentication mechanism."),
+            ("api-versioning-int", "Versioning — semver, url-path (/v1/), header, content-negotiation, or none? Include the breaking-change policy in one line."),
+            ("api-error-model-int", "Error model — http-status-only, status-plus-body, problem-details-rfc7807, error-code-taxonomy? List required fields in error responses (code, message, request-id)."),
+            ("api-exemplar-int", "API shape exemplar — bind to an `api-shape` catalog entry (e.g. `stripe-rest`, `github-graphql`, `kubernetes-api`). Run `spectre exemplars list --view-type api-shape`."),
+        ):
+            if cid not in existing:
+                new.append(Concern(
+                    id=cid, kind="receiver-clarification", receivers=["human"],
+                    depends_on=["scope-integrator"], summary=summary,
+                ))
+    return new
+
+
+def generate_operator_concerns(
+    state: WalkState,
+    draft_text: str,
+) -> list[Concern]:
+    if state.operator_asked:
+        return []
+    existing = _existing_concern_ids(state)
+    new: list[Concern] = []
+    if "scope-operator" not in existing:
+        new.append(Concern(
+            id="scope-operator",
+            kind="receiver-clarification",
+            receivers=["human"],
+            depends_on=[],
+            summary=(
+                "Operator view scope: who runs this product in production and watches its observability? Choose from "
+                "[on-call-engineer, sre-team, self-operated, no-operator, not-applicable]."
+            ),
+            prefab_options=[
+                "on-call-engineer",
+                "sre-team",
+                "self-operated",
+                "no-operator",
+                "not-applicable",
+            ],
+        ))
+    if _view_in_scope(state, "operator"):
+        for cid, summary in (
+            ("log-format-op", "Log format — plaintext, key-value (logfmt), or json-lines? List required log keys (timestamp, level, source, op, duration_ms, request_id, ...)."),
+            ("log-format-style-op", "Log format exemplar — bind to a `log-format` catalog entry (e.g. `systemd-journal`, `nginx`, `structlog-json`). Run `spectre exemplars list --view-type log-format`."),
+            ("metrics-op", "Metrics — what metric names does this product emit? Counter-only, counters+gauges, full Prometheus four-types, or OpenTelemetry? List 3-5 metric names."),
+            ("observability-style-op", "Observability exemplar — bind to an `observability` catalog entry (e.g. `prometheus`, `tmux-status`, `htop`). Run `spectre exemplars list --view-type observability`."),
+            ("paging-op", "Paging trigger — under what conditions does this product page its operator? Reference §8.7 ux-contract.on-failure for the failure signature."),
+        ):
+            if cid not in existing:
+                new.append(Concern(
+                    id=cid, kind="receiver-clarification", receivers=["human"],
+                    depends_on=["scope-operator"], summary=summary,
+                ))
+    return new
+
+
 def _check_prefab_contradiction(state: WalkState, prefab_text: str) -> bool:
     """Return True if prefab_text contradicts a prior answered concern.
 
@@ -783,6 +1077,12 @@ def _refresh_pending(state: WalkState, draft_text: str) -> None:
     state.pending.extend(generate_lifecycle_concerns(state, draft_text))
     state.pending.extend(generate_prompt_design_concerns(state, draft_text))
     state.pending.extend(generate_semantic_criteria_concern(state))
+    # v1.0 — six-view concern families
+    state.pending.extend(generate_product_input_concerns(state, draft_text))
+    state.pending.extend(generate_product_output_concerns(state, draft_text))
+    state.pending.extend(generate_human_user_concerns(state, draft_text))
+    state.pending.extend(generate_integrator_concerns(state, draft_text))
+    state.pending.extend(generate_operator_concerns(state, draft_text))
 
 
 def _compute_coverage(state: WalkState, draft_text: str) -> dict:
@@ -844,12 +1144,26 @@ def _compute_coverage(state: WalkState, draft_text: str) -> dict:
     # when seed-semantic-criteria is answered. No need to also check state.answered.
     semantic_satisfied = state.semantic_criteria_asked
 
+    # v1.0 — six-view family flags participate in recommended_stop. When all
+    # five views' scope-check + follow-ups are answered (or marked N/A), the
+    # corresponding *_asked flag flips. Convention: every family flag must be
+    # part of the stop predicate — future v1.1 families that emit concerns
+    # conditionally would otherwise let recommended_stop fire prematurely.
+    views_satisfied = (
+        state.product_input_asked
+        and state.product_output_asked
+        and state.human_user_asked
+        and state.integrator_asked
+        and state.operator_asked
+    )
+
     recommended_stop = (
         oq_all_resolved
         and undefined_invariants == 0
         and lifecycle_satisfied
         and prompt_design_satisfied
         and semantic_satisfied
+        and views_satisfied
         and pending_count == 0
     )
     recommended_stop_reason = "coverage-complete" if recommended_stop else None
@@ -1777,6 +2091,13 @@ if __name__ == "__main__":
                 "prompt_design_asked": state.prompt_design_asked,
                 "semantic_criteria_asked": state.semantic_criteria_asked,
                 "last_recommend_stop_emitted": state.last_recommend_stop_emitted,
+                # v1.0 — six-view scope + per-view family flags
+                "view_scope": dict(state.view_scope),
+                "product_input_asked": state.product_input_asked,
+                "product_output_asked": state.product_output_asked,
+                "human_user_asked": state.human_user_asked,
+                "integrator_asked": state.integrator_asked,
+                "operator_asked": state.operator_asked,
             }
             print(json.dumps(payload, indent=2, sort_keys=True))
         else:
@@ -1945,6 +2266,13 @@ if __name__ == "__main__":
                 "prompt_design_asked": state.prompt_design_asked,
                 "semantic_criteria_asked": state.semantic_criteria_asked,
                 "last_recommend_stop_emitted": state.last_recommend_stop_emitted,
+                # v1.0 — six-view scope + per-view family flags
+                "view_scope": dict(state.view_scope),
+                "product_input_asked": state.product_input_asked,
+                "product_output_asked": state.product_output_asked,
+                "human_user_asked": state.human_user_asked,
+                "integrator_asked": state.integrator_asked,
+                "operator_asked": state.operator_asked,
             }
             print(json.dumps(payload, indent=2, sort_keys=True))
         else:

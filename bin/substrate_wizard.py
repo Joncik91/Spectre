@@ -255,6 +255,253 @@ def _ask_provenance(prompt_fn) -> dict:
     return _validate_provenance(raw)
 
 
+# v1.0 — per-view trust-profile vocabularies. Each view has its own
+# semantic space; the implementing-agent trust tokens (untrusted-input,
+# handles-secrets, …) are about taint propagation through the spec, while
+# the human-user tokens (accessibility-required, …) are about UX
+# obligations the product must satisfy. Cross-pollination would mislead
+# the evaluator.
+_VIEW_TRUST_TOKENS: dict[str, frozenset[str]] = {
+    "implementing-agent": frozenset({
+        "untrusted-input",
+        "handles-secrets",
+        "touches-network",
+        "executes-generated-code",
+    }),
+    "product-input": frozenset({
+        "validated-schema",
+        "signed-payload",
+        "rate-limited",
+        "untrusted",
+    }),
+    "product-output": frozenset({
+        "schema-stable",
+        "versioned",
+        "deprecation-policy",
+    }),
+    "human-user": frozenset({
+        "accessibility-required",
+        "i18n-required",
+        "screen-reader-compatible",
+    }),
+    "integrator": frozenset({
+        "semver-stable",
+        "breaking-change-policy",
+        "deprecation-window",
+    }),
+    "operator": frozenset({
+        "paging-required",
+        "slo-defined",
+        "runbook-required",
+    }),
+}
+
+
+def _validate_view_trust_profile(view: str, raw: str) -> list[str]:
+    """Per-view trust-profile validator. Tokens must come from the view's
+    own vocabulary in _VIEW_TRUST_TOKENS — view A's tokens are not valid
+    under view B's profile."""
+    stripped = (raw or "").strip()
+    if not stripped or stripped == "none":
+        return []
+    allowed = _VIEW_TRUST_TOKENS.get(view)
+    if allowed is None:
+        raise WizardValidationError("view", f"unknown view {view!r}")
+    tokens = [t.strip() for t in stripped.split(",") if t.strip()]
+    for t in tokens:
+        if t not in allowed:
+            # Disambiguation hint: when the token IS valid in another view,
+            # tell the operator instead of just listing the current view's
+            # allowed set. Saves an "is it misspelled?" detour.
+            other_views = sorted(
+                v for v, vocab in _VIEW_TRUST_TOKENS.items() if t in vocab
+            )
+            hint = (
+                f" (Note: {t!r} is valid in view {other_views[0]!r}, not {view!r}.)"
+                if other_views
+                else ""
+            )
+            raise WizardValidationError(
+                "trust_profile",
+                f"unknown trust token for view {view!r}: {t!r}. Valid tokens: "
+                + ", ".join(sorted(allowed)) + hint,
+            )
+    return tokens
+
+
+# v1.0 — per-view fingerprint vocabularies
+_VIEW_FINGERPRINTS: dict[str, list[str]] = {
+    # §8.2 implementing-agent — existing 4-value vocabulary (unchanged).
+    "implementing-agent": [
+        "claude-code+human",
+        "claude-code-autonomous",
+        "non-claude-ai",
+        "human-only",
+    ],
+    "product-input": [
+        "human-typed",
+        "programmatic-trusted",
+        "programmatic-untrusted",
+        "streamed-event",
+        "not-applicable",
+    ],
+    "product-output": [
+        "human-reader",
+        "programmatic-consumer",
+        "streaming-sink",
+        "log-aggregator",
+        "not-applicable",
+    ],
+    "human-user": [
+        "cli-power-user",
+        "cli-novice",
+        "gui-only",
+        "no-human-user",
+        "not-applicable",
+    ],
+    "integrator": [
+        "library-consumer",
+        "api-consumer",
+        "webhook-subscriber",
+        "sdk-author",
+        "no-integrator",
+        "not-applicable",
+    ],
+    "operator": [
+        "on-call-engineer",
+        "sre-team",
+        "self-operated",
+        "no-operator",
+        "not-applicable",
+    ],
+}
+
+# View -> §8.x section number
+_VIEW_SECTION = {
+    "implementing-agent": "8.2",
+    "product-input": "8.3",
+    "product-output": "8.4",
+    "human-user": "8.5",
+    "integrator": "8.6",
+    "operator": "8.7",
+}
+
+
+def _format_view_block(view: str, answers: dict) -> str:
+    """Render answers into a §8.x markdown block for the given view.
+
+    `view` is one of the keys in _VIEW_FINGERPRINTS. `answers` carries
+    the same field shape as §8.2 (receiver-fingerprint, trust-profile,
+    contextual-binding, provenance optional, ux-contract placeholders).
+
+    When receiver-fingerprint == 'not-applicable', the block degenerates
+    to a single not-applicable: <reason> field and the rest of the
+    schema is omitted.
+    """
+    section = _VIEW_SECTION[view]
+    receiver = answers["receiver-fingerprint"]
+    heading_suffix = {
+        "implementing-agent": "Cognitive-substrate contract",
+        "product-input": "Product-input substrate",
+        "product-output": "Product-output substrate",
+        "human-user": "Human-user substrate",
+        "integrator": "Integrator substrate",
+        "operator": "Operator substrate",
+    }[view]
+
+    if receiver == "not-applicable":
+        reason = answers.get("not-applicable-reason", "declared out-of-scope by spec author").strip() or "declared out-of-scope by spec author"
+        return (
+            f"\n### {section} {heading_suffix}\n\n"
+            f"- not-applicable: {reason}\n"
+        )
+
+    trust = answers["trust-profile"]
+    trust_str = ", ".join(trust) if trust else "none"
+    binding = answers["contextual-binding"]
+
+    body = [
+        f"\n### {section} {heading_suffix}\n",
+        "",
+        f"- receiver-fingerprint: {receiver}",
+        f"- trust-profile: {trust_str}",
+        f"- contextual-binding: {binding}",
+    ]
+    # Provenance is only meaningful for the implementing-agent view (it tracks
+    # spec lineage, not per-view metadata). Skip for the other five views.
+    if view == "implementing-agent":
+        prov = answers["provenance"]
+        if prov["kind"] == "none":
+            prov_str = "{ kind: none }"
+        else:
+            prov_str = (
+                "{ kind: derived-from, "
+                f"parent-slug: {prov['parent-slug']}, "
+                f"parent-envelope-sha256: {prov['parent-envelope-sha256']} }}"
+            )
+        body.append(f"- provenance: {prov_str}")
+    body.extend([
+        "- ux-contract:",
+        "    on-success: <one-line receiver-visible message>",
+        "    on-failure: <one-line receiver-visible message + remediation hint>",
+        "    log-target: <path or stream>",
+        "- assumptions-killed: <considered-and-ruled-out alternatives for this view>",
+    ])
+    if view == "implementing-agent":
+        body.extend([
+            "- requires-situated-judgment: <list of step IDs>",
+            "- roi-budget: <yield-curve slope target / scaffolding cost ceiling>",
+        ])
+    return "\n".join(body) + "\n"
+
+
+def _validate_view_receiver(view: str, raw: str) -> str:
+    """Validate a receiver-fingerprint against the view's vocabulary."""
+    cleaned = (raw or "").strip()
+    allowed = _VIEW_FINGERPRINTS.get(view)
+    if allowed is None:
+        raise WizardValidationError("view", f"unknown view {view!r}")
+    if cleaned not in allowed:
+        raise WizardValidationError(
+            "receiver-fingerprint",
+            f"for view {view!r} must be one of {allowed}, got {cleaned!r}",
+        )
+    return cleaned
+
+
+def run_per_view(
+    *,
+    view: str,
+    receiver: str,
+    trust_profile: str = "none",
+    binding: str = "",
+    not_applicable_reason: str = "",
+) -> str:
+    """Render one §8.x block from validated flag values.
+
+    Caller (the /vision skill) walks the view_scope dict from WalkState
+    and invokes run_per_view once per view. Cache lives outside this
+    function — caller is responsible for caching when the receiver
+    fingerprint should round-trip across walks (see run_with_flags for
+    the §8.2 cache pattern).
+
+    `receiver` must be 'not-applicable' OR a value from the view's
+    vocabulary in _VIEW_FINGERPRINTS.
+    """
+    cleaned_receiver = _validate_view_receiver(view, receiver)
+    if cleaned_receiver == "not-applicable":
+        return _format_view_block(view, {
+            "receiver-fingerprint": cleaned_receiver,
+            "not-applicable-reason": not_applicable_reason,
+        })
+    answers = {
+        "receiver-fingerprint": cleaned_receiver,
+        "trust-profile": _validate_view_trust_profile(view, trust_profile),
+        "contextual-binding": _validate_contextual_binding(binding) if binding else "<one-line description for this view>",
+    }
+    return _format_view_block(view, answers)
+
+
 def _format_82_block(answers: dict) -> str:
     """Render answers into a §8.2 markdown block (canonical schema)."""
     receiver = answers["receiver-fingerprint"]

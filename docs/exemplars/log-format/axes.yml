@@ -1,0 +1,11 @@
+taxonomy-version: 1
+axes:
+  structure:
+    values: [plaintext, key-value, json-lines]
+    description: Wire format of each log record. Plaintext = free-form prose; key-value = `k1=v1 k2=v2` (logfmt-style); json-lines = one JSON object per line, machine-parseable.
+  identification:
+    values: [timestamp-only, timestamp-level, timestamp-level-source, full-correlation]
+    description: What identifies each record. Timestamp-only = `2026-01-01T00:00:00Z msg`; timestamp-level = adds severity; timestamp-level-source = adds component/module name; full-correlation = adds request-id/trace-id for distributed tracing.
+  verbosity-gradient:
+    values: [single-level, debug-warn-error, six-syslog-levels, dynamic-runtime]
+    description: How log verbosity is controlled. Single-level = always-on; debug-warn-error = three levels filterable at startup; six-syslog-levels = full syslog severity (debug/info/notice/warn/err/crit/alert/emerg); dynamic-runtime = level changeable at runtime per-component.
