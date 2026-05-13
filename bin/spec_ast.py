@@ -519,6 +519,153 @@ def _check_receiver_calibration(body: str) -> list[_findings.Finding]:
     return results
 
 
+# v1.0 — six-view spec model structural checks
+_V1_SUBSTRATE_BLOCKS = {
+    "8.3": "Product-input substrate",
+    "8.4": "Product-output substrate",
+    "8.5": "Human-user substrate",
+    "8.6": "Integrator substrate",
+    "8.7": "Operator substrate",
+}
+_V1_VIEW_SECTIONS = {
+    "9": "Product-Input View",
+    "10": "Product-Output View",
+    "11": "Human-User View",
+    "12": "Integrator View",
+    "13": "Operator View",
+}
+_V1_CONTRACT_TYPES = ("Mechanical contracts", "Coverage contracts", "Exemplar bindings")
+
+
+def _extract_section_body(body: str, heading_pattern: str) -> str | None:
+    """Find a section by its heading regex and return its body up to the next
+    top-level h2 heading. Returns None if heading not present."""
+    m = re.search(heading_pattern, body, re.MULTILINE)
+    if not m:
+        return None
+    start = m.end()
+    next_h2 = re.search(r"^##\s", body[start:], re.MULTILINE)
+    return body[start : start + next_h2.start()] if next_h2 else body[start:]
+
+
+def _extract_subsection_body(parent_body: str, subheading_pattern: str) -> str | None:
+    """Find a sub-section within an already-extracted parent body."""
+    m = re.search(subheading_pattern, parent_body, re.MULTILINE)
+    if not m:
+        return None
+    start = m.end()
+    next_h = re.search(r"^#{2,4}\s", parent_body[start:], re.MULTILINE)
+    return parent_body[start : start + next_h.start()] if next_h else parent_body[start:]
+
+
+_SPEC_VERSION_RE = re.compile(r"^\*\*Spec-version:\*\*\s*(\S+)", re.MULTILINE)
+_NOT_APPLICABLE_RE = re.compile(r"^\s*-?\s*not-applicable\s*:", re.MULTILINE)
+_CROSS_VIEW_REF_RE = re.compile(r"<([a-z][a-z0-9_-]*)\s+from\s+§(8\.\d)(?:\s+([a-z][a-z0-9_-]*))?>")
+_EXEMPLAR_REF_RE = re.compile(r"exemplar:([a-z0-9][a-z0-9:_-]*)")
+
+
+def _check_v1_spec_version(body: str) -> list[_findings.Finding]:
+    """Reject specs whose Spec-version frontmatter is absent or non-1.0."""
+    m = _SPEC_VERSION_RE.search(body)
+    if m is None:
+        return [_findings.Finding(
+            tier=1,
+            kind="unsupported-spec-version",
+            severity="block",
+            location=_findings.FindingLocation(scope="spec-wide", ref="frontmatter"),
+            message="Spec-version frontmatter is absent. v1.0 requires `**Spec-version:** 1.0`.",
+            suggested_fix="Add `**Spec-version:** 1.0` to the frontmatter (after Slug:).",
+        )]
+    version = m.group(1).strip()
+    if version != "1.0":
+        return [_findings.Finding(
+            tier=1,
+            kind="unsupported-spec-version",
+            severity="block",
+            location=_findings.FindingLocation(scope="spec-wide", ref="frontmatter"),
+            message=f"Spec-version {version!r} is not supported. v1.0 only accepts spec-version 1.0.",
+            suggested_fix="Re-run /vision to regenerate the spec as v1.0.",
+        )]
+    return []
+
+
+def _check_v1_substrate_family(body: str) -> list[_findings.Finding]:
+    """Verify §§8.3-8.7 are each present (with either content or not-applicable)."""
+    results: list[_findings.Finding] = []
+    for section, label in _V1_SUBSTRATE_BLOCKS.items():
+        pattern = rf"^#{{2,3}}\s+{re.escape(section)}\b"
+        if not re.search(pattern, body, re.MULTILINE):
+            results.append(_findings.Finding(
+                tier=1,
+                kind="missing-substrate-block",
+                severity="block",
+                location=_findings.FindingLocation(scope="spec-wide", ref=f"section-{section}"),
+                message=f"§{section} {label} is absent from spec.",
+                suggested_fix=f"Add ### {section} {label} (or mark not-applicable per the v1.0 template).",
+            ))
+    return results
+
+
+def _check_v1_view_sections(body: str) -> list[_findings.Finding]:
+    """Verify §§9-13 are each present, parse contract subsections, count N/A."""
+    results: list[_findings.Finding] = []
+    na_views: list[str] = []
+    for section, label in _V1_VIEW_SECTIONS.items():
+        section_body = _extract_section_body(
+            body, rf"^##\s+{re.escape(section)}\.\s+{re.escape(label)}\b"
+        )
+        if section_body is None:
+            results.append(_findings.Finding(
+                tier=1,
+                kind="missing-view-section",
+                severity="block",
+                location=_findings.FindingLocation(scope="spec-wide", ref=f"section-{section}"),
+                message=f"§{section} {label} is absent from spec.",
+                suggested_fix=f"Add ## {section}. {label} (or mark not-applicable per the v1.0 template).",
+            ))
+            continue
+        # Skip contract-shape checks when view is marked not-applicable
+        if _NOT_APPLICABLE_RE.search(section_body):
+            na_views.append(section)
+            continue
+        # Verify at least one contract-type subsection exists (Mechanical, Coverage, or Exemplar)
+        has_any_contract = any(
+            re.search(rf"^#{{3,4}}\s+{re.escape(ct)}\b", section_body, re.MULTILINE)
+            for ct in _V1_CONTRACT_TYPES
+        )
+        if not has_any_contract:
+            results.append(_findings.Finding(
+                tier=1,
+                kind="malformed-view-contract",
+                severity="block",
+                location=_findings.FindingLocation(scope="spec-wide", ref=f"section-{section}"),
+                message=f"§{section} {label} declares no contracts. Add at least one of: {', '.join(_V1_CONTRACT_TYPES)}.",
+                suggested_fix=f"Add a `### Mechanical contracts`, `### Coverage contracts`, or `### Exemplar bindings` subsection to §{section}, or mark the view `not-applicable`.",
+            ))
+    if len(na_views) > 2:
+        results.append(_findings.Finding(
+            tier=1,
+            kind="excessive-not-applicable",
+            severity="warn",
+            location=_findings.FindingLocation(scope="spec-wide", ref="v1-views"),
+            message=f"{len(na_views)} of 5 v1.0 views marked not-applicable (§§{', '.join(na_views)}). Spec may be under-specified.",
+            suggested_fix="Review whether each N/A is legitimate scope-narrowing or under-specification. Maximum two N/A views is the recommended ceiling.",
+        ))
+    return results
+
+
+def _v1_structural_checks(body: str) -> list[_findings.Finding]:
+    """Run all v1.0 structural checks. Aggregate entry point called from classify()."""
+    results: list[_findings.Finding] = []
+    results.extend(_check_v1_spec_version(body))
+    # If spec-version check fails, the rest of v1.0 checks are noise
+    if any(r.kind == "unsupported-spec-version" for r in results):
+        return results
+    results.extend(_check_v1_substrate_family(body))
+    results.extend(_check_v1_view_sections(body))
+    return results
+
+
 def _extract_python_c_bodies(text: str) -> list[str]:
     """Return all bodies from `python3 -c <body>` invocations in *text*.
 
@@ -1968,6 +2115,9 @@ def classify(spec_path: pathlib.Path) -> list[_findings.Finding]:
 
     # ── Check 4: missing-receiver-calibration ────────────────────────────────
     results.extend(_check_receiver_calibration(body))
+
+    # ── v1.0 — six-view spec model structural checks ─────────────────────────
+    results.extend(_v1_structural_checks(body))
 
     # ── Check 5: step contracts (produces/requires) ───────────────────────────
     results.extend(_check_step_contracts(steps))
