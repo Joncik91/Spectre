@@ -188,7 +188,8 @@ def _build_exemplar_context(spec_text: str) -> tuple[str, int]:
     Returns (rendered_block, count). When the spec has no exemplar bindings
     or is not a v1.0 spec, returns ("", 0) and the caller skips appending.
     """
-    if not re.search(r"^\*\*Spec-version:\*\*\s*1\.0", spec_text, re.MULTILINE):
+    from bin import spec_ast as _spec_ast
+    if not _spec_ast.is_v1_spec(spec_text):
         return "", 0
     from bin import _catalog
     bindings: list[tuple[str, str, list[str]]] = []   # (view_label, exemplar_slug, conventions)

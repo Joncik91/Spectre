@@ -31,7 +31,10 @@ from bin import findings as _findings
 # ---------------------------------------------------------------------------
 
 _CROSS_VIEW_REF_RE = re.compile(
-    r"<([a-z][a-z0-9_-]*)\s+from\s+§(8\.\d)(?:\s+([a-z][a-z0-9_-]*))?>",
+    # Loose section match catches typos like §8.20, §9.2, §8.99 — validated
+    # against _SUBSTRATE_SECTIONS in _check_cross_view_references so out-of-
+    # range refs emit a finding instead of silently passing through.
+    r"<([a-z][a-z0-9_-]*)\s+from\s+§\s*(\d+(?:\.\d+)*)(?:\s+([a-z][a-z0-9_-]*))?>",
     re.IGNORECASE,
 )
 _EXEMPLAR_REF_RE = re.compile(r"exemplar:([a-z0-9][a-z0-9:_-]*)")
@@ -282,11 +285,10 @@ def _check_fingerprint_vs_hard_contract(
             severity="block",
             location=_findings.FindingLocation(scope="spec-wide", ref="section-8.5"),
             message=(
-                "§8.5 human-user fingerprint is `gui-only` but §8.1 mutates includes "
-                "a terminal-stream path. The implementation cannot satisfy a gui-only "
-                "receiver while writing to stdout/stderr/tty."
+                "§8.5 fingerprint 'gui-only' contradicts §8.1 mutates "
+                "(terminal-stream path); a gui-only receiver cannot read stdout/stderr/tty."
             ),
-            suggested_fix="Change §8.5 fingerprint to cli-power-user/cli-novice/no-human-user, OR remove the terminal-stream path from §8.1 mutates.",
+            suggested_fix="Change §8.5 fingerprint to cli-power-user/cli-novice/no-human-user, OR drop the terminal-stream path from §8.1 mutates.",
         ))
     return results
 
@@ -301,8 +303,10 @@ def classify(spec_path: pathlib.Path) -> list[_findings.Finding]:
         body = spec_path.read_text(encoding="utf-8")
     except OSError:
         return []
-    # Only fire v1.0 cross-view checks for v1.0 specs (spec-version: 1.0)
-    if not re.search(r"^\*\*Spec-version:\*\*\s*1\.0", body, re.MULTILINE):
+    # Only fire v1.0 cross-view checks for v1.0 specs. Shared with spec_ast
+    # Tier-1 and llm_judge Tier-3 so all three checkers agree.
+    from bin import spec_ast as _spec_ast
+    if not _spec_ast.is_v1_spec(body):
         return []
     substrate_blocks = _extract_substrate_blocks(body)
     view_blocks = _extract_view_blocks(body)

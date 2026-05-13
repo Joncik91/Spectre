@@ -559,6 +559,20 @@ def _extract_subsection_body(parent_body: str, subheading_pattern: str) -> str |
 
 
 _SPEC_VERSION_RE = re.compile(r"^\*\*Spec-version:\*\*\s*(\S+)", re.MULTILINE)
+
+
+def is_v1_spec(body: str) -> bool:
+    """Return True iff `body` declares `**Spec-version:** 1.0` exactly.
+
+    Shared by spec_ast Tier-1, cross_view_gate Tier-2, and llm_judge Tier-3
+    so all three checkers agree on what "is a v1.0 spec" means. Token
+    `1.0.1` / `1.0-rc` / `latest` all return False — the value must be
+    exactly `1.0` after stripping.
+    """
+    m = _SPEC_VERSION_RE.search(body)
+    if m is None:
+        return False
+    return m.group(1).strip() == "1.0"
 _NOT_APPLICABLE_RE = re.compile(r"^\s*-?\s*not-applicable\s*:", re.MULTILINE)
 _CROSS_VIEW_REF_RE = re.compile(r"<([a-z][a-z0-9_-]*)\s+from\s+§(8\.\d)(?:\s+([a-z][a-z0-9_-]*))?>")
 _EXEMPLAR_REF_RE = re.compile(r"exemplar:([a-z0-9][a-z0-9:_-]*)")
