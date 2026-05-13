@@ -105,6 +105,19 @@ required artifact already appears in any prior step's "produces" list, the \
 requirement IS resolved — do NOT emit a missing-producer finding for it. \
 The step table's "produces"/"requires" fields are ground truth from \
 deterministic Tier 1 analysis.
+7. When a step entry contains "action_segments", treat each segment as a \
+distinct sub-action when assessing completeness. Do NOT emit \
+"missing-producer" or "shallow-ownership" solely because a token \
+(compilation step, build command, file write, etc.) appears in a non-first \
+segment rather than at the start of "action_summary". The segments \
+collectively define what the step does; any segment counts. When \
+"action_segments" is absent (preprocessor parse error or no chaining \
+detected), reason about the full "action_summary" string. If you suspect a \
+chained action you couldn't parse AND the parsing ambiguity itself surfaces a \
+real gap, emit an "unrecognized" tuple with \
+description="suspected unparsed chain" and cite the affected step. Do NOT \
+emit this tuple merely because "action_segments" is absent — only when the \
+suspected chain genuinely introduces a coverage or ownership gap.
 
 ---
 v0.7 — adversarial-pathway rubric:
@@ -283,6 +296,200 @@ def _truncate_step_field(value: str) -> str:
     return value[:_STEP_FIELD_TRUNCATE] + f"... [truncated, {remainder} more chars]"
 
 
+def _segment_action(action_str: str) -> list[str] | None:
+    """Split a shell action string on top-level ``&&``, ``;``, ``||`` separators.
+
+    Splitting respects:
+    - Single and double quoted strings (separators inside are NOT split points).
+    - Subshells: ``$( ... )`` and backtick `` ` ... ` `` (not split inside).
+    - Heredocs: ``<<EOF ... EOF`` blocks (not split inside).
+    - Pipes (``|``) are NOT separators — ``cmd | jq .`` stays as one segment.
+    - ``find ... -exec ... \\;`` — the escaped semicolon is NOT a separator.
+
+    Returns:
+    - ``None`` if *action_str* is empty/whitespace-only.
+    - ``None`` if the string is malformed (unterminated quote).
+    - A list of stripped segment strings otherwise (one element when no
+      top-level separator is found).
+
+    Consecutive separators (``a ;; b``) are treated as a single separator:
+    empty segments are dropped.
+    """
+    if not action_str or not action_str.strip():
+        return None
+
+    # State machine that scans char-by-char.
+    # We track: single-quote, double-quote, paren depth, backtick depth,
+    # heredoc state, and escape-flag.
+    segments: list[str] = []
+    seg_start = 0        # start index of current segment in action_str
+    i = 0
+    n = len(action_str)
+
+    in_single = False    # inside '...'
+    in_double = False    # inside "..."
+    paren_depth = 0      # depth of $( ... ) subshells
+    backtick_depth = 0   # depth of ` ... ` subshells
+    in_heredoc = False   # inside <<EOF...EOF
+    heredoc_delim = ""   # the terminator we're waiting for
+    escaped = False      # previous char was backslash (outside quotes)
+
+    def _emit(end: int) -> None:
+        """Emit segment action_str[seg_start:end], stripped."""
+        seg = action_str[seg_start:end].strip()
+        if seg:
+            segments.append(seg)
+
+    while i < n:
+        ch = action_str[i]
+
+        # ── Escape handling (outside single quotes) ─────────────────────────
+        if escaped:
+            escaped = False
+            i += 1
+            continue
+
+        if ch == "\\" and not in_single:
+            escaped = True
+            i += 1
+            continue
+
+        # ── Heredoc body ────────────────────────────────────────────────────
+        if in_heredoc:
+            # Scan to end of line; check if this line equals heredoc_delim.
+            if ch == "\n":
+                # Peek at the next line to see if it is the delimiter.
+                line_start = i + 1
+                line_end = action_str.find("\n", line_start)
+                if line_end == -1:
+                    line_end = n
+                next_line = action_str[line_start:line_end].strip()
+                if next_line == heredoc_delim:
+                    in_heredoc = False
+                    i = line_end  # skip past the delimiter line
+                    continue
+            i += 1
+            continue
+
+        # ── Single-quote block ───────────────────────────────────────────────
+        if in_single:
+            if ch == "'":
+                in_single = False
+            i += 1
+            continue
+
+        # ── Double-quote block ───────────────────────────────────────────────
+        if in_double:
+            if ch == '"':
+                in_double = False
+            elif ch == "\\":
+                # Inside double quotes backslash escapes the next char.
+                escaped = True
+            i += 1
+            continue
+
+        # ── Top-level character dispatch ─────────────────────────────────────
+        if ch == "'":
+            in_single = True
+            i += 1
+            continue
+
+        if ch == '"':
+            in_double = True
+            i += 1
+            continue
+
+        if ch == "`":
+            backtick_depth += 1
+            i += 1
+            continue
+
+        if ch == "$" and i + 1 < n and action_str[i + 1] == "(":
+            paren_depth += 1
+            i += 2
+            continue
+
+        if ch == "(" and paren_depth == 0:
+            # Bare subshell at top level: (cmd && ...) — treat as paren group.
+            paren_depth += 1
+            i += 1
+            continue
+
+        if ch == "(" and paren_depth > 0:
+            # Nested paren inside a $() subshell or bare subshell.
+            paren_depth += 1
+            i += 1
+            continue
+
+        if ch == ")" and paren_depth > 0:
+            paren_depth -= 1
+            i += 1
+            continue
+
+        # Backtick close — track depth naively (nested backticks are unusual).
+        if ch == "`" and backtick_depth > 0:
+            backtick_depth -= 1
+            i += 1
+            continue
+
+        # Here-string <<< — advance past all three '<' chars and continue.
+        if ch == "<" and i + 1 < n and action_str[i + 1] == "<" and i + 2 < n and action_str[i + 2] == "<" and paren_depth == 0 and backtick_depth == 0:
+            i += 3  # skip <<<; the operand is scanned normally by subsequent iterations
+            continue
+
+        # Heredoc opener: <<[WORD] at top level (but NOT <<< here-string).
+        if ch == "<" and i + 1 < n and action_str[i + 1] == "<" and paren_depth == 0 and backtick_depth == 0:
+            # Collect the heredoc word (strip leading -, whitespace, quotes).
+            j = i + 2
+            while j < n and action_str[j] in (" ", "\t", "-"):
+                j += 1
+            # Strip optional quoting around the delimiter.
+            q = action_str[j] if j < n else ""
+            if q in ("'", '"', "`"):
+                j += 1
+                end_q = action_str.find(q, j)
+                delim = action_str[j:end_q] if end_q != -1 else action_str[j:]
+                i = end_q + 1 if end_q != -1 else n
+            else:
+                end_word = j
+                while end_word < n and action_str[end_word] not in (" ", "\t", "\n", ";", "&", "|"):
+                    end_word += 1
+                delim = action_str[j:end_word]
+                i = end_word
+            if delim:
+                in_heredoc = True
+                heredoc_delim = delim
+            continue
+
+        # ── Top-level separator detection ────────────────────────────────────
+        if paren_depth == 0 and backtick_depth == 0:
+            # Check for && or ||
+            if ch in ("&", "|") and i + 1 < n and action_str[i + 1] == ch:
+                _emit(i)
+                seg_start = i + 2
+                i += 2
+                continue
+
+            # Check for ; (but NOT \; which was consumed by escape handler above)
+            if ch == ";":
+                _emit(i)
+                seg_start = i + 1
+                i += 1
+                continue
+
+        i += 1
+
+    # Check for unclosed quotes — malformed input.
+    if in_single or in_double:
+        return None
+
+    # Emit the final segment.
+    _emit(n)
+
+    # Single-element lists are valid — return them.
+    return segments if segments else None
+
+
 def build_step_table(spec_text: str, step_objects: list | None = None) -> dict:
     """Build the structured step table sent to DeepSeek.
 
@@ -304,6 +511,7 @@ def build_step_table(spec_text: str, step_objects: list | None = None) -> dict:
         step_n = raw["step"]
         action_raw = raw.get("action", "")
         verification_raw = raw.get("verification", "")
+        segments = _segment_action(action_raw)
         entry: dict = {
             "step": step_n,
             "why": raw.get("why", ""),
@@ -312,6 +520,8 @@ def build_step_table(spec_text: str, step_objects: list | None = None) -> dict:
             "produces": [],
             "requires": [],
         }
+        if segments is not None and len(segments) >= 2:
+            entry["action_segments"] = [_truncate_step_field(s) for s in segments]
 
         # If caller provided step objects (priority-3 contract fields), overlay them.
         if step_objects is not None:
