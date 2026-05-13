@@ -54,6 +54,20 @@ def compute_author_spec_hash(spec_body: str) -> str:
     return hashlib.sha256(stripped.encode("utf-8")).hexdigest()
 
 
+class WizardValidationError(ValueError):
+    """Raised by _validate_* functions when input is invalid.
+
+    ``field`` is the canonical field name (receiver, trust_profile, binding,
+    provenance, author_spec_hash).  ``message`` is a human-readable explanation
+    that ends up in the ``detail=`` field of the error emission.
+    """
+
+    def __init__(self, field: str, message: str) -> None:
+        super().__init__(message)
+        self.field = field
+        self.message = message
+
+
 def write_cache(author_spec_hash: str, answers: dict) -> pathlib.Path:
     """Atomically write the cache JSON at mode 0600. Returns the cache path."""
     if not _AUTHOR_SPEC_HASH_RE.match(author_spec_hash):
@@ -131,24 +145,30 @@ def _validate_receiver(raw: str) -> str:
         return _RECEIVER_TIERS[stripped]
     if stripped in _RECEIVER_VALUES:
         return stripped
-    raise ValueError(
+    raise WizardValidationError(
+        "receiver",
         f"invalid receiver: {raw!r}. Must be one of: "
         + ", ".join(sorted(_RECEIVER_VALUES))
-        + " (or digit 1-4)"
+        + " (or digit 1-4)",
     )
 
 
 def _validate_trust_profile(raw: str) -> list[str]:
-    """Validate and parse a trust-profile string. Returns list of tokens (empty = none)."""
+    """Validate and parse a trust-profile string. Returns list of tokens (empty = none).
+
+    The bare string "none" (or empty) collapses to [].  Mixed lists like
+    "untrusted-input,none" keep the "none" token as-is (v0.8.0 semantics).
+    """
     stripped = raw.strip()
     if not stripped or stripped == "none":
         return []
     tokens = [t.strip() for t in stripped.split(",") if t.strip()]
     for t in tokens:
-        if t not in _VALID_TRUST_TOKENS or t == "none":
-            raise ValueError(
+        if t not in _VALID_TRUST_TOKENS:
+            raise WizardValidationError(
+                "trust_profile",
                 f"unknown trust token: {t!r}. Valid tokens: "
-                + ", ".join(sorted(_VALID_TRUST_TOKENS - {"none"}))
+                + ", ".join(sorted(_VALID_TRUST_TOKENS)),
             )
     return tokens
 
@@ -157,7 +177,9 @@ def _validate_contextual_binding(raw: str) -> str:
     """Validate contextual-binding. Must be non-empty."""
     stripped = raw.strip()
     if not stripped:
-        raise ValueError("contextual-binding must not be empty")
+        raise WizardValidationError(
+            "binding", "contextual-binding must not be empty"
+        )
     return stripped
 
 
@@ -168,13 +190,17 @@ def _validate_provenance(raw: str) -> dict:
         return {"kind": "none"}
     parts = stripped.split()
     if len(parts) != 3 or parts[0] != "derived-from":
-        raise ValueError(
-            "provenance must be 'none' or 'derived-from <slug> <hex64-sha256>'"
+        raise WizardValidationError(
+            "provenance",
+            "provenance must be 'none' or 'derived-from <slug> <hex64-sha256>'",
         )
     _, slug, sha = parts
     sha_lower = sha.lower()
     if len(sha_lower) != 64 or not all(c in "0123456789abcdef" for c in sha_lower):
-        raise ValueError(f"invalid parent envelope sha256: {sha!r}")
+        raise WizardValidationError(
+            "provenance",
+            f"invalid parent envelope sha256: {sha!r}",
+        )
     return {
         "kind": "derived-from",
         "parent-slug": slug,
@@ -298,7 +324,7 @@ def run_with_flags(
 
     Cache hit takes precedence unless force=True.
     Validates all four inputs via the _validate_* helpers.
-    Raises ValueError on invalid input.
+    Raises WizardValidationError on invalid input.
     Returns the §8.2 markdown block.
     """
     if not force:
@@ -402,26 +428,13 @@ def _main() -> int:
                     provenance=args.provenance,
                     force=args.force,
                 )
-            except ValueError as exc:
-                # Determine which flag caused the error for a specific code.
-                msg = str(exc)
-                if "receiver" in msg:
-                    code = "invalid_receiver"
-                elif "trust" in msg:
-                    code = "invalid_trust_profile"
-                elif "binding" in msg:
-                    code = "invalid_binding"
-                elif "provenance" in msg or "sha256" in msg:
-                    code = "invalid_provenance"
-                else:
-                    code = "invalid_flag"
+            except WizardValidationError as exc:
                 _status.emit(
                     "error",
                     "wizard.substrate",
                     dest="stderr",
-                    reason=code,
-                    value=msg,
-                    detail=msg,
+                    reason=f"invalid_{exc.field}",
+                    detail=exc.message,
                 )
                 return 1
             sys.stdout.write(block)

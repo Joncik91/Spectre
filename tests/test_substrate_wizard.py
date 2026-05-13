@@ -8,6 +8,7 @@ import sys
 import pytest
 
 from bin import substrate_wizard
+from bin.substrate_wizard import WizardValidationError
 
 
 def test_schema_version_constant_is_0_7():
@@ -331,9 +332,9 @@ class TestNonInteractiveFlags:
         assert "provenance" in result.stderr
 
     def test_invalid_receiver_errors(self, tmp_path, monkeypatch):
-        """--receiver bogus → ValueError with 'invalid receiver' message."""
+        """--receiver bogus → WizardValidationError with field='receiver', exit 1 from CLI."""
         monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
-        with pytest.raises(ValueError, match="invalid receiver"):
+        with pytest.raises(WizardValidationError) as exc_info:
             substrate_wizard.run_with_flags(
                 _ALT_HASH,
                 receiver="bogus",
@@ -341,6 +342,8 @@ class TestNonInteractiveFlags:
                 binding="test",
                 provenance="none",
             )
+        assert exc_info.value.field == "receiver"
+        assert "invalid receiver" in exc_info.value.message
 
     def test_invalid_receiver_cli_errors(self, tmp_path):
         """CLI --receiver bogus → error wizard.substrate reason=invalid_receiver, exit 1."""
@@ -357,9 +360,9 @@ class TestNonInteractiveFlags:
         assert "invalid_receiver" in result.stderr
 
     def test_invalid_trust_profile_errors(self, tmp_path, monkeypatch):
-        """--trust-profile foo,bar → ValueError with 'unknown trust token' message."""
+        """--trust-profile foo,bar → WizardValidationError with field='trust_profile'."""
         monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
-        with pytest.raises(ValueError, match="unknown trust token"):
+        with pytest.raises(WizardValidationError) as exc_info:
             substrate_wizard.run_with_flags(
                 _ALT_HASH,
                 receiver="claude-code+human",
@@ -367,11 +370,13 @@ class TestNonInteractiveFlags:
                 binding="test",
                 provenance="none",
             )
+        assert exc_info.value.field == "trust_profile"
+        assert "unknown trust token" in exc_info.value.message
 
     def test_empty_binding_errors(self, tmp_path, monkeypatch):
-        """--binding '' → ValueError with 'contextual-binding must not be empty' message."""
+        """--binding '' → WizardValidationError with field='binding'."""
         monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
-        with pytest.raises(ValueError, match="contextual-binding must not be empty"):
+        with pytest.raises(WizardValidationError) as exc_info:
             substrate_wizard.run_with_flags(
                 _ALT_HASH,
                 receiver="claude-code+human",
@@ -379,11 +384,13 @@ class TestNonInteractiveFlags:
                 binding="",
                 provenance="none",
             )
+        assert exc_info.value.field == "binding"
+        assert "contextual-binding must not be empty" in exc_info.value.message
 
     def test_invalid_provenance_errors(self, tmp_path, monkeypatch):
-        """--provenance 'derived-from foo notahex' → ValueError mentioning sha256 or provenance."""
+        """--provenance 'derived-from foo notahex' → WizardValidationError with field='provenance'."""
         monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
-        with pytest.raises(ValueError, match="sha256|provenance"):
+        with pytest.raises(WizardValidationError) as exc_info:
             substrate_wizard.run_with_flags(
                 _ALT_HASH,
                 receiver="claude-code+human",
@@ -391,6 +398,7 @@ class TestNonInteractiveFlags:
                 binding="test binding",
                 provenance="derived-from foo notahex",
             )
+        assert exc_info.value.field == "provenance"
 
     def test_trust_profile_none_token_returns_empty_list(self, tmp_path, monkeypatch):
         """--trust-profile none → trust-profile=[], §8.2 block shows 'none'."""
@@ -464,3 +472,25 @@ class TestNonInteractiveFlags:
         monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
         with pytest.raises(ValueError, match="author-spec hash"):
             substrate_wizard.write_cache("../../evil", {})
+
+    # ------------------------------------------------------------------
+    # Trust-profile regression: mixed "untrusted-input,none" must be accepted
+    # ------------------------------------------------------------------
+
+    def test_trust_profile_mixed_with_none_token(self, tmp_path, monkeypatch):
+        """'untrusted-input,none' must be accepted and the 'none' token kept (v0.8.0 semantics)."""
+        monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+        block = substrate_wizard.run_with_flags(
+            _GOOD_HASH,
+            receiver="claude-code+human",
+            trust_profile="untrusted-input,none",
+            binding="mixed trust test",
+            provenance="none",
+        )
+        # Both tokens appear in the rendered block.
+        assert "untrusted-input" in block
+        assert "none" in block
+        # Cache stores both tokens.
+        cached = substrate_wizard.read_cache(_GOOD_HASH)
+        assert "untrusted-input" in cached["trust-profile"]
+        assert "none" in cached["trust-profile"]
