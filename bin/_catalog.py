@@ -109,9 +109,11 @@ class AxisDefinition:
 
 @dataclass
 class Catalog:
-    exemplars: dict[str, Exemplar] = field(default_factory=dict)   # slug -> Exemplar
+    exemplars: dict[str, Exemplar] = field(default_factory=dict)   # key -> Exemplar (key is "<view-type>:<slug>")
     taxonomies: dict[str, AxisTaxonomy] = field(default_factory=dict)   # view_type -> AxisTaxonomy
     parse_errors: list[CatalogError] = field(default_factory=list)
+    # (key, plugin_path, user_path) for each user-overlay entry that shadows a plugin entry
+    shadowed: list[tuple[str, str, str]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -335,6 +337,13 @@ def _scan_root(root: pathlib.Path, origin: str, out: Catalog) -> None:
             try:
                 ex = _parse_exemplar_file(md_path, origin)
                 key = f"{view_type}:{ex.slug}"
+                # Detect user-overlay shadowing: a user entry replacing a
+                # plugin entry with the same key. Plugin pass runs first so
+                # any pre-existing entry at this key is plugin-origin.
+                if origin == "user" and key in out.exemplars:
+                    prior = out.exemplars[key]
+                    if prior.origin == "plugin":
+                        out.shadowed.append((key, prior.path, str(md_path)))
                 out.exemplars[key] = ex
             except CatalogError as exc:
                 out.parse_errors.append(exc)
@@ -354,15 +363,35 @@ def load_catalog(force_reload: bool = False) -> Catalog:
 def lookup(key: str) -> Exemplar | None:
     """Lookup an exemplar by `<view-type>:<slug>` key, or by bare slug if
     unambiguous (returns None when the bare slug matches more than one
-    view-type — caller must qualify)."""
+    view-type — caller must qualify; see lookup_status() to distinguish
+    not-found from ambiguous)."""
     cat = load_catalog()
     if ":" in key:
         return cat.exemplars.get(key)
-    # Bare slug fallback — only resolve when unambiguous.
     matches = [ex for k, ex in cat.exemplars.items() if k.endswith(f":{key}")]
     if len(matches) == 1:
         return matches[0]
     return None
+
+
+def lookup_status(key: str) -> tuple[str, list[Exemplar]]:
+    """Detailed lookup. Returns one of:
+      ("found",       [exemplar])  — exact match (qualified or unambiguous bare)
+      ("not-found",   [])
+      ("ambiguous",   [match-1, match-2, ...])  — bare slug matches >1 entry
+    Callers that need to differentiate ambiguity from missing-from-catalog
+    use this instead of bare lookup().
+    """
+    cat = load_catalog()
+    if ":" in key:
+        ex = cat.exemplars.get(key)
+        return ("found", [ex]) if ex is not None else ("not-found", [])
+    matches = [ex for k, ex in cat.exemplars.items() if k.endswith(f":{key}")]
+    if len(matches) == 1:
+        return ("found", matches)
+    if len(matches) == 0:
+        return ("not-found", [])
+    return ("ambiguous", matches)
 
 
 def by_view_type(view_type: str) -> list[Exemplar]:
@@ -390,6 +419,14 @@ def validate_catalog() -> list[str]:
     """
     cat = load_catalog()
     errors: list[str] = [f"{e.path}: {e.reason}" for e in cat.parse_errors]
+    # User-overlay shadowing — informational; surfaced so operators who
+    # accidentally drop a stale overlay can spot it. Listed as warnings
+    # (validate still returns non-zero so CI catches stale overlays).
+    for key, plugin_path, user_path in cat.shadowed:
+        errors.append(
+            f"shadowed: user overlay {user_path} replaces plugin entry "
+            f"{plugin_path} (key={key})"
+        )
 
     for ex in cat.exemplars.values():
         for view_type in ex.view_types:

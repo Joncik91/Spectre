@@ -201,9 +201,8 @@ def _check_exemplar_bindings(
             # Skip template angle-bracket placeholders
             if raw_ref.startswith("<") or raw_ref in ("slug", "name"):
                 continue
-            ex = _catalog.lookup(raw_ref)
-            if ex is None:
-                # Could be unqualified; try matching against all catalog entries
+            status, matches = _catalog.lookup_status(raw_ref)
+            if status == "not-found":
                 results.append(_findings.Finding(
                     tier=2,
                     kind="exemplar-not-found",
@@ -212,9 +211,26 @@ def _check_exemplar_bindings(
                         scope="spec-wide", ref=f"section-{section}"
                     ),
                     message=f"§{section} references exemplar:{raw_ref} which is not in the catalog (plugin or user overlay).",
-                    suggested_fix=f"Run `spectre exemplars list` to see valid slugs; add the exemplar to ~/.spectre/exemplars/<view-type>/ or remove the binding.",
+                    suggested_fix=f"Run `spectre exemplars list` for valid slugs; add the exemplar to ~/.spectre/exemplars/<view-type>/ or remove the binding.",
                 ))
                 continue
+            if status == "ambiguous":
+                # Bare slug shared by multiple view-types — operator must qualify.
+                qualified_keys = sorted(
+                    f"{vt}:{raw_ref}" for ex in matches for vt in ex.view_types if f"{vt}:{raw_ref}" in _catalog.load_catalog().exemplars
+                )
+                results.append(_findings.Finding(
+                    tier=2,
+                    kind="exemplar-not-found",
+                    severity="block",
+                    location=_findings.FindingLocation(
+                        scope="spec-wide", ref=f"section-{section}"
+                    ),
+                    message=f"§{section} reference exemplar:{raw_ref} is ambiguous; matches {len(matches)} entries — qualify with <view-type>:{raw_ref}.",
+                    suggested_fix=f"Replace exemplar:{raw_ref} with one of: " + ", ".join(f"exemplar:{k}" for k in qualified_keys),
+                ))
+                continue
+            ex = matches[0]
             # Taxonomy version check
             for view_type in ex.view_types:
                 spec_version = spec_taxonomies.get(view_type)

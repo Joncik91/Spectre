@@ -120,3 +120,66 @@ def test_trust_token_genuine_typo_omits_hint():
         substrate_wizard._validate_view_trust_profile("human-user", "bogus-token")
     msg = str(exc_info.value)
     assert "Note:" not in msg
+
+
+# ── Issue #11: user-overlay shadowing surfaced via validate_catalog ──────────
+
+def test_user_overlay_shadowing_surfaced(monkeypatch, tmp_path):
+    """A user-overlay exemplar at the same key as a plugin entry must be
+    listed in validate_catalog() output."""
+    from bin import _catalog
+    # Create a fake user-overlay matching an existing plugin entry
+    user_root = tmp_path / "user_exemplars"
+    user_dir = user_root / "help-text"
+    user_dir.mkdir(parents=True)
+    user_entry = user_dir / "curl.md"
+    user_entry.write_text(
+        "---\n"
+        "view-types: [help-text]\n"
+        "conventions: [overrides plugin curl]\n"
+        "axes: {verbosity: terse, structure: flat, example-density: none}\n"
+        "taxonomy-version: 1\n"
+        "source-url: https://example.com\n"
+        "last-reviewed: 2026-05-13\n"
+        "---\n\nlocal overlay body\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(_catalog, "_user_overlay_root", lambda: user_root)
+    monkeypatch.setattr(_catalog, "_LOAD_CACHE", None)
+
+    errors = _catalog.validate_catalog()
+    shadow_msgs = [e for e in errors if "shadowed:" in e]
+    assert len(shadow_msgs) == 1
+    assert "help-text:curl" in shadow_msgs[0]
+    # Reset cache so other tests aren't affected
+    _catalog._LOAD_CACHE = None
+
+
+# ── Issue #12: lookup_status distinguishes not-found vs ambiguous ────────────
+
+def test_lookup_status_found_qualified():
+    from bin import _catalog
+    status, matches = _catalog.lookup_status("help-text:gh")
+    assert status == "found"
+    assert len(matches) == 1
+
+
+def test_lookup_status_found_unambiguous_bare():
+    from bin import _catalog
+    status, matches = _catalog.lookup_status("curl")   # only help-text:curl exists
+    assert status == "found"
+
+
+def test_lookup_status_ambiguous_bare_slug():
+    """`gh` exists under both help-text and error-text → ambiguous."""
+    from bin import _catalog
+    status, matches = _catalog.lookup_status("gh")
+    assert status == "ambiguous"
+    assert len(matches) == 2
+
+
+def test_lookup_status_not_found():
+    from bin import _catalog
+    status, matches = _catalog.lookup_status("nonexistent-slug-xyz")
+    assert status == "not-found"
+    assert matches == []
