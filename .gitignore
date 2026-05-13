@@ -7,3 +7,4 @@ specs/.active
 specs/*.spec.md
 !specs/template.spec.md
 .venv/
+docs/superpowers/
