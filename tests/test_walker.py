@@ -6,8 +6,8 @@ import pytest
 from bin import walker
 
 
-def test_walker_version_is_0_4_0():
-    assert walker.WALKER_VERSION == "0.4.0"
+def test_walker_version_is_0_4_1():
+    assert walker.WALKER_VERSION == "0.4.1"
 
 
 def test_known_receivers_includes_four_canonical_names():
@@ -700,3 +700,425 @@ def test_should_stop_after_full_walk_returns_author_arbitrated(tmp_path):
     stop, reason = walker.should_stop(state)
     assert stop is True
     assert reason == "author-arbitrated"
+
+
+# ── TestOpenQuestionParser ────────────────────────────────────────────────────
+
+class TestOpenQuestionParser:
+    def test_frontmatter_two_questions(self):
+        intent = "---\nopen_questions:\n  - daemon lifecycle\n  - prompt failure modes\n---\nSome prose."
+        result = walker._parse_open_questions(intent)
+        assert len(result) == 2
+        assert result[0]["id"] == "oq-1"
+        assert result[0]["text"] == "daemon lifecycle"
+        assert result[0]["source"] == "frontmatter"
+        assert result[1]["id"] == "oq-2"
+        assert result[1]["text"] == "prompt failure modes"
+
+    def test_inline_marker(self):
+        intent = "We need a poller. open: should it run as systemd or pm2?"
+        result = walker._parse_open_questions(intent)
+        assert len(result) == 1
+        assert result[0]["source"] == "inline"
+        assert "systemd" in result[0]["text"]
+
+    def test_mixed_frontmatter_and_inline(self):
+        intent = "---\nopen_questions:\n  - daemon lifecycle\n---\nWe need code. open: should we use asyncio?"
+        result = walker._parse_open_questions(intent)
+        assert len(result) == 2
+        assert result[0]["source"] == "frontmatter"
+        assert result[1]["source"] == "inline"
+
+    def test_empty_intent(self):
+        result = walker._parse_open_questions("")
+        assert result == []
+
+    def test_no_markers(self):
+        result = walker._parse_open_questions("Just a plain intent with no markers.")
+        assert result == []
+
+    def test_malformed_frontmatter_no_second_delimiter(self):
+        intent = "---\nopen_questions:\n  - daemon\nNo closing delimiter"
+        result = walker._parse_open_questions(intent)
+        # No second --- so frontmatter not parsed, inline scan runs on full text
+        assert isinstance(result, list)
+
+    def test_resolved_defaults_to_false(self):
+        intent = "---\nopen_questions:\n  - test question\n---"
+        result = walker._parse_open_questions(intent)
+        assert result[0]["resolved"] is False
+
+    def test_deferred_by_adr_defaults_to_none(self):
+        intent = "---\nopen_questions:\n  - test question\n---"
+        result = walker._parse_open_questions(intent)
+        assert result[0]["deferred_by_adr"] is None
+
+    def test_ids_are_sequential(self):
+        intent = "---\nopen_questions:\n  - q1\n  - q2\n  - q3\n---"
+        result = walker._parse_open_questions(intent)
+        assert [r["id"] for r in result] == ["oq-1", "oq-2", "oq-3"]
+
+
+# ── TestLifecycleTrigger ──────────────────────────────────────────────────────
+
+class TestLifecycleTrigger:
+    def _state(self, intent: str) -> walker.WalkState:
+        return walker.WalkState(
+            spec_intent=intent,
+            spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+        )
+
+    def test_intent_daemon_fires(self):
+        state = self._state("build a daemon that watches files")
+        assert walker._detect_lifecycle_trigger(state, "") is True
+
+    def test_intent_service_fires(self):
+        state = self._state("a background service for syncing")
+        assert walker._detect_lifecycle_trigger(state, "") is True
+
+    def test_draft_pm2_fires(self):
+        state = self._state("build a thing")
+        draft = "## 6. Steps\n- step: 1\n  action: pm2 start app.js\n"
+        assert walker._detect_lifecycle_trigger(state, draft) is True
+
+    def test_draft_docker_compose_fires(self):
+        state = self._state("build a thing")
+        draft = "## 6. Steps\n- step: 1\n  action: docker run -d myimage\n"
+        assert walker._detect_lifecycle_trigger(state, draft) is True
+
+    def test_neither_fires(self):
+        state = self._state("parse a CSV file once")
+        assert walker._detect_lifecycle_trigger(state, "") is False
+
+    def test_idempotent_flag(self):
+        state = self._state("build a daemon")
+        state.lifecycle_asked = True
+        concerns = walker.generate_lifecycle_concerns(state, "")
+        assert concerns == []
+
+
+# ── TestLLMCallTrigger ────────────────────────────────────────────────────────
+
+class TestLLMCallTrigger:
+    def _state(self, intent: str = "build a thing") -> walker.WalkState:
+        return walker.WalkState(
+            spec_intent=intent,
+            spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+        )
+
+    def test_anthropic_fires(self):
+        state = self._state()
+        draft = "## 6. Steps\n- step: 1\n  action: anthropic.messages.create\n"
+        assert walker._detect_llm_call_trigger(state, draft) is True
+
+    def test_openai_fires(self):
+        state = self._state()
+        draft = "## 6. Steps\n- step: 1\n  action: openai.chat.completions\n"
+        assert walker._detect_llm_call_trigger(state, draft) is True
+
+    def test_deepseek_fires(self):
+        state = self._state()
+        draft = "## 6. Steps\n- step: 1\n  action: client.chat.completions with deepseek\n"
+        assert walker._detect_llm_call_trigger(state, draft) is True
+
+    def test_ollama_fires(self):
+        state = self._state()
+        draft = "## 6. Steps\n- step: 1\n  action: ollama run llama3\n"
+        assert walker._detect_llm_call_trigger(state, draft) is True
+
+    def test_no_llm_no_fire(self):
+        state = self._state()
+        draft = "## 6. Steps\n- step: 1\n  action: cat file.txt\n"
+        assert walker._detect_llm_call_trigger(state, draft) is False
+
+    def test_empty_draft_no_fire(self):
+        state = self._state()
+        assert walker._detect_llm_call_trigger(state, "") is False
+
+
+# ── TestPromptDesignConcern ───────────────────────────────────────────────────
+
+class TestPromptDesignConcern:
+    def test_generates_when_llm_detected(self):
+        state = walker.WalkState(
+            spec_intent="build a thing",
+            spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+        )
+        draft = "## 6. Steps\n- step: 1\n  action: anthropic.messages.create\n"
+        concerns = walker.generate_prompt_design_concerns(state, draft)
+        assert len(concerns) == 1
+        assert concerns[0].id == "seed-prompt-design"
+
+    def test_idempotent_after_flag_set(self):
+        state = walker.WalkState(
+            spec_intent="build a thing",
+            spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+        )
+        state.prompt_design_asked = True
+        draft = "## 6. Steps\n- step: 1\n  action: openai.chat\n"
+        assert walker.generate_prompt_design_concerns(state, draft) == []
+
+    def test_no_emit_without_llm(self):
+        state = walker.WalkState(
+            spec_intent="parse CSV",
+            spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+        )
+        assert walker.generate_prompt_design_concerns(state, "") == []
+
+
+# ── TestSemanticCriteriaConcern ───────────────────────────────────────────────
+
+class TestSemanticCriteriaConcern:
+    def test_generates_once(self):
+        state = walker.WalkState(
+            spec_intent="build a thing",
+            spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+        )
+        concerns = walker.generate_semantic_criteria_concern(state)
+        assert len(concerns) == 1
+        assert concerns[0].id == "seed-semantic-criteria"
+
+    def test_idempotent_after_flag_set(self):
+        state = walker.WalkState(
+            spec_intent="build a thing",
+            spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+        )
+        state.semantic_criteria_asked = True
+        assert walker.generate_semantic_criteria_concern(state) == []
+
+    def test_idempotent_when_already_in_existing(self):
+        state = walker.WalkState(
+            spec_intent="build a thing",
+            spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+        )
+        state.pending.append(walker.Concern(
+            id="seed-semantic-criteria",
+            kind="receiver-clarification",
+            receivers=["human"],
+            depends_on=[],
+            summary="x",
+        ))
+        assert walker.generate_semantic_criteria_concern(state) == []
+
+
+# ── TestPrefabContradictionFilter ─────────────────────────────────────────────
+
+class TestPrefabContradictionFilter:
+    def test_vendor_agnostic_drops_deepseek(self):
+        state = walker.WalkState(
+            spec_intent="build a thing",
+            spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+        )
+        # Answer contains negation + "deepseek options" → prefab with "deepseek options" contradicts
+        state.answered["seed-1"] = "vendor-agnostic, no DeepSeek-only options"
+        assert walker._check_prefab_contradiction(state, "use deepseek options exclusively") is True
+
+    def test_positive_case_kept(self):
+        state = walker.WalkState(
+            spec_intent="build a thing",
+            spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+        )
+        state.answered["seed-1"] = "we prefer anthropic for this"
+        # No negation in answer → no contradiction
+        assert walker._check_prefab_contradiction(state, "use anthropic claude") is False
+
+    def test_no_answers_no_contradiction(self):
+        state = walker.WalkState(
+            spec_intent="build a thing",
+            spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+        )
+        assert walker._check_prefab_contradiction(state, "use deepseek api") is False
+
+
+# ── TestDeferOptionAttachment ─────────────────────────────────────────────────
+
+class TestDeferOptionAttachment:
+    def test_appends_to_non_receiver_clarification(self):
+        c = walker.Concern(
+            id="c1", kind="edge-case",
+            receivers=["human"], depends_on=[], summary="x",
+        )
+        result = walker._attach_defer_option(["option A"], c)
+        assert "defer to later layer" in result
+
+    def test_no_append_for_receiver_clarification(self):
+        c = walker.Concern(
+            id="c1", kind="receiver-clarification",
+            receivers=["human"], depends_on=[], summary="x",
+        )
+        result = walker._attach_defer_option(["option A"], c)
+        assert "defer to later layer" not in result
+
+    def test_no_duplicate_defer(self):
+        c = walker.Concern(
+            id="c1", kind="edge-case",
+            receivers=["human"], depends_on=[], summary="x",
+        )
+        result = walker._attach_defer_option(["defer to later layer"], c)
+        assert result.count("defer to later layer") == 1
+
+
+# ── TestCoverageComputation ───────────────────────────────────────────────────
+
+class TestCoverageComputation:
+    def _base_state(self, intent: str = "build a thing") -> walker.WalkState:
+        return walker.WalkState(
+            spec_intent=intent,
+            spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+        )
+
+    def test_empty_state_recommended_stop_false(self):
+        state = self._base_state()
+        state.pending.append(walker.Concern(
+            id="c1", kind="edge-case", receivers=["human"], depends_on=[], summary="x"
+        ))
+        cov = walker._compute_coverage(state, "")
+        assert cov["recommended_stop"] is False
+
+    def test_all_satisfied_recommended_stop_true(self):
+        state = self._base_state()
+        # No pending, no open_questions, all flags satisfied
+        state.semantic_criteria_asked = True
+        cov = walker._compute_coverage(state, "")
+        assert cov["recommended_stop"] is True
+        assert cov["recommended_stop_reason"] == "coverage-complete"
+
+    def test_unresolved_open_question_blocks_stop(self):
+        state = self._base_state()
+        state.semantic_criteria_asked = True
+        state.open_questions = [{"id": "oq-1", "text": "q", "resolved": False, "deferred_by_adr": None}]
+        cov = walker._compute_coverage(state, "")
+        assert cov["recommended_stop"] is False
+
+    def test_deferred_open_question_allows_stop(self):
+        state = self._base_state()
+        state.semantic_criteria_asked = True
+        state.open_questions = [{"id": "oq-1", "text": "q", "resolved": False, "deferred_by_adr": "adr-0001"}]
+        cov = walker._compute_coverage(state, "")
+        assert cov["recommended_stop"] is True
+
+    def test_tbd_placeholder_blocks_stop(self):
+        state = self._base_state()
+        state.semantic_criteria_asked = True
+        draft = "Some content <TBD> goes here"
+        cov = walker._compute_coverage(state, draft)
+        assert cov["undefined_invariants"] > 0
+        assert cov["recommended_stop"] is False
+
+    def test_deferred_count(self):
+        state = self._base_state()
+        state.open_questions = [
+            {"id": "oq-1", "text": "q1", "resolved": False, "deferred_by_adr": "adr-1"},
+            {"id": "oq-2", "text": "q2", "resolved": True, "deferred_by_adr": None},
+        ]
+        cov = walker._compute_coverage(state, "")
+        assert cov["deferred"] == 1
+
+
+# ── TestRecommendStopTransition ───────────────────────────────────────────────
+
+class TestRecommendStopTransition:
+    def test_flag_flips_on_transition(self):
+        state = walker.WalkState(
+            spec_intent="build a thing",
+            spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+        )
+        state.semantic_criteria_asked = True
+        # No pending, no OQs → coverage complete
+        cov = walker._compute_coverage(state, "")
+        assert cov["recommended_stop"] is True
+        # Simulate transition
+        assert state.last_recommend_stop_emitted is False
+
+    def test_no_redundant_transition_if_already_emitted(self):
+        state = walker.WalkState(
+            spec_intent="build a thing",
+            spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+        )
+        state.semantic_criteria_asked = True
+        state.last_recommend_stop_emitted = True
+        cov = walker._compute_coverage(state, "")
+        # Already emitted — flag stays True, no re-emit needed
+        assert state.last_recommend_stop_emitted is True
+
+
+# ── TestOpenQuestionStopGate ──────────────────────────────────────────────────
+
+class TestOpenQuestionStopGate:
+    def test_unresolved_oq_in_state(self):
+        """With unresolved OQs, state is set up correctly for CLI gate."""
+        state = walker.WalkState(
+            spec_intent="build a daemon",
+            spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+        )
+        state.open_questions = [
+            {"id": "oq-1", "text": "daemon lifecycle", "resolved": False, "deferred_by_adr": None}
+        ]
+        unresolved = [oq for oq in state.open_questions if not oq["resolved"] and not oq["deferred_by_adr"]]
+        assert len(unresolved) == 1
+
+    def test_resolved_oq_no_gate(self):
+        state = walker.WalkState(
+            spec_intent="build a daemon",
+            spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+        )
+        state.open_questions = [
+            {"id": "oq-1", "text": "daemon lifecycle", "resolved": True, "deferred_by_adr": None}
+        ]
+        unresolved = [oq for oq in state.open_questions if not oq["resolved"] and not oq["deferred_by_adr"]]
+        assert len(unresolved) == 0
+
+
+# ── TestPersistLoadBackwardsCompat ────────────────────────────────────────────
+
+class TestPersistLoadBackwardsCompat:
+    def test_v041_state_file_loads_with_new_fields(self, tmp_path):
+        """v0.8.1-shape state (walker_version=0.4.0) loads cleanly with defaults."""
+        state_path = tmp_path / ".walk.json"
+        # Write a v0.4.0-style state file (no new fields)
+        old_payload = {
+            "walker_version": "0.4.0",
+            "spec_intent": "legacy intent",
+            "spec_draft_path": "specs/x.spec.md.draft",
+            "asked": [],
+            "answered": {},
+            "pending": [],
+            "stale": [],
+            "stop_reason": None,
+            "round_count": 3,
+            "yield_history": [],
+        }
+        import json as _json
+        state_path.write_text(_json.dumps(old_payload), encoding="utf-8")
+        state = walker.load(state_path)
+        assert state is not None
+        assert state.open_questions == []
+        assert state.lifecycle_asked is False
+        assert state.prompt_design_asked is False
+        assert state.semantic_criteria_asked is False
+        assert state.last_recommend_stop_emitted is False
+        assert state.round_count == 3
+
+    def test_concern_with_no_prefab_options_loads(self, tmp_path):
+        """Concern serialized without prefab_options gets empty list default."""
+        state_path = tmp_path / ".walk.json"
+        old_payload = {
+            "walker_version": "0.4.0",
+            "spec_intent": "test",
+            "spec_draft_path": "specs/x.spec.md.draft",
+            "asked": [],
+            "answered": {},
+            "pending": [
+                {"id": "c1", "kind": "edge-case", "receivers": ["human"],
+                 "depends_on": [], "summary": "test"}
+            ],
+            "stale": [],
+            "stop_reason": None,
+            "round_count": 0,
+            "yield_history": [],
+        }
+        import json as _json
+        state_path.write_text(_json.dumps(old_payload), encoding="utf-8")
+        state = walker.load(state_path)
+        assert state is not None
+        assert state.pending[0].prefab_options == []

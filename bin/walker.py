@@ -16,7 +16,7 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Any
 
-WALKER_VERSION = "0.4.0"
+WALKER_VERSION = "0.4.1"
 
 DEFAULT_MAX_ROUNDS = 30
 DEFAULT_YIELD_THRESHOLD = 2
@@ -48,6 +48,7 @@ class Concern:
     receivers: list[str]
     depends_on: list[str]
     summary: str
+    prefab_options: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.kind not in KNOWN_CONCERN_KINDS:
@@ -70,6 +71,130 @@ class WalkState:
     stop_reason: str | None = None
     round_count: int = 0
     yield_history: list[int] = field(default_factory=list)
+    open_questions: list[dict] = field(default_factory=list)
+    lifecycle_asked: bool = False
+    prompt_design_asked: bool = False
+    semantic_criteria_asked: bool = False
+    last_recommend_stop_emitted: bool = False
+
+
+_OQ_INLINE_RE = re.compile(
+    r"(?im)(?:^|\.\s+)\s*(open|unresolved)\s*:\s*(.+?)(?=[.!?]|\n|$)"
+)
+
+# Small frozen English stopword list (no nltk dependency).
+_STOPWORDS: frozenset[str] = frozenset({
+    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+    "of", "with", "by", "from", "is", "it", "this", "that", "be", "as",
+    "are", "was", "were", "not", "if", "its", "their", "they", "we", "i",
+    "you", "he", "she", "what", "how", "when", "which", "will", "would",
+    "should", "can", "do", "does", "did", "have", "has", "had", "our",
+    "your", "all", "any", "each", "some", "such", "than", "then",
+})
+
+
+def _parse_open_questions(intent: str) -> list[dict]:
+    """Parse open-question markers from intent text.
+
+    Supports two formats:
+    1. YAML frontmatter block at the top of intent:
+       ---
+       open_questions:
+         - daemon lifecycle
+       ---
+    2. Inline markers in prose:
+       open: should it run as systemd or pm2?
+       unresolved: what's the auth strategy?
+
+    Returns list of dicts with keys: id, text, source, resolved, deferred_by_adr.
+    """
+    questions: list[str] = []
+    sources: list[str] = []
+    prose_body = intent
+
+    # ── YAML frontmatter ─────────────────────────────────────────────────────
+    if intent.startswith("---\n") or intent.startswith("---\r\n"):
+        end_idx = intent.find("\n---", 3)
+        if end_idx != -1:
+            frontmatter = intent[3:end_idx].strip()
+            prose_body = intent[end_idx + 4:].lstrip("\r\n")
+            # Minimal YAML parse: look for open_questions: section
+            in_oq = False
+            for line in frontmatter.splitlines():
+                stripped = line.rstrip()
+                if re.match(r"^\s*open_questions\s*:", stripped):
+                    in_oq = True
+                    continue
+                if in_oq:
+                    # List items under open_questions
+                    item_m = re.match(r"^\s{2,}-\s+(.+)$", stripped)
+                    if item_m:
+                        questions.append(item_m.group(1).strip())
+                        sources.append("frontmatter")
+                    elif stripped and not stripped.startswith(" "):
+                        # Different key — end of open_questions block
+                        in_oq = False
+                    # Blank lines continue the block
+            # Try PyYAML for richer parsing if available and we got nothing
+            if not questions:
+                try:
+                    import yaml  # type: ignore[import]
+                    fm_data = yaml.safe_load(frontmatter)
+                    if isinstance(fm_data, dict):
+                        oq_list = fm_data.get("open_questions", [])
+                        if isinstance(oq_list, list):
+                            for item in oq_list:
+                                if isinstance(item, str) and item.strip():
+                                    questions.append(item.strip())
+                                    sources.append("frontmatter")
+                except Exception:  # noqa: BLE001
+                    pass
+
+    # ── Inline markers in prose body ─────────────────────────────────────────
+    for m in _OQ_INLINE_RE.finditer(prose_body):
+        text = m.group(2).strip()
+        if text:
+            questions.append(text)
+            sources.append("inline")
+
+    # Build result with stable oq-N ids
+    result: list[dict] = []
+    for n, (text, src) in enumerate(zip(questions, sources), start=1):
+        result.append({
+            "id": f"oq-{n}",
+            "text": text,
+            "source": src,
+            "resolved": False,
+            "deferred_by_adr": None,
+        })
+    return result
+
+
+def _jaccard_overlap(a: str, b: str) -> float:
+    """Jaccard token overlap over non-stopword lowercased tokens."""
+    def _tokens(s: str) -> set[str]:
+        raw = re.split(r"[^a-z0-9]+", s.lower())
+        return {t for t in raw if t and t not in _STOPWORDS}
+
+    ta, tb = _tokens(a), _tokens(b)
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
+def _resolve_open_questions(state: WalkState, answer: str) -> None:
+    """Attempt to resolve open questions based on an answer text."""
+    answer_lower = answer.lower().strip()
+    for oq in state.open_questions:
+        if oq["resolved"]:
+            continue
+        # Explicit prefix: "resolves: oq-N"
+        if answer_lower.startswith(f"resolves: {oq['id']}"):
+            oq["resolved"] = True
+            continue
+        # Jaccard token overlap
+        if _jaccard_overlap(answer, oq["text"]) >= 0.4:
+            oq["resolved"] = True
 
 
 def init_walk(*, spec_intent: str, spec_draft_path: pathlib.Path) -> WalkState:
@@ -133,10 +258,12 @@ def init_walk(*, spec_intent: str, spec_draft_path: pathlib.Path) -> WalkState:
             ),
         ),
     ]
+    open_questions = _parse_open_questions(spec_intent)
     return WalkState(
         spec_intent=spec_intent,
         spec_draft_path=spec_draft_path,
         pending=seeds,
+        open_questions=open_questions,
     )
 
 
@@ -151,6 +278,8 @@ def next_concern(state: WalkState) -> Concern | None:
 def record_answer(state: WalkState, *, concern_id: str, answer: str) -> WalkState:
     """Move concern from pending to asked, store the answer, bump round_count.
     Mutates state in place AND returns it (chainable).
+    Also flips lifecycle/prompt-design/semantic-criteria asked flags and
+    attempts open-question resolution.
     """
     for i, c in enumerate(state.pending):
         if c.id == concern_id:
@@ -158,6 +287,15 @@ def record_answer(state: WalkState, *, concern_id: str, answer: str) -> WalkStat
             state.answered[concern_id] = answer
             del state.pending[i]
             state.round_count += 1
+            # Flip seed-family flags
+            if concern_id == "seed-lifecycle":
+                state.lifecycle_asked = True
+            elif concern_id == "seed-prompt-design":
+                state.prompt_design_asked = True
+            elif concern_id == "seed-semantic-criteria":
+                state.semantic_criteria_asked = True
+            # Attempt open-question resolution
+            _resolve_open_questions(state, answer)
             return state
     raise KeyError(f"concern_id {concern_id!r} not in pending")
 
@@ -259,6 +397,7 @@ def _serialize_concern(c: Concern) -> dict[str, Any]:
         "receivers": list(c.receivers),
         "depends_on": list(c.depends_on),
         "summary": c.summary,
+        "prefab_options": list(c.prefab_options),
     }
 
 
@@ -269,6 +408,7 @@ def _deserialize_concern(d: dict[str, Any]) -> Concern:
         receivers=list(d["receivers"]),
         depends_on=list(d["depends_on"]),
         summary=d["summary"],
+        prefab_options=list(d.get("prefab_options", [])),
     )
 
 
@@ -290,6 +430,11 @@ def persist(state: WalkState, path: pathlib.Path) -> None:
         "stop_reason": state.stop_reason,
         "round_count": state.round_count,
         "yield_history": list(state.yield_history),
+        "open_questions": list(state.open_questions),
+        "lifecycle_asked": state.lifecycle_asked,
+        "prompt_design_asked": state.prompt_design_asked,
+        "semantic_criteria_asked": state.semantic_criteria_asked,
+        "last_recommend_stop_emitted": state.last_recommend_stop_emitted,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name, suffix=".tmp")
@@ -313,7 +458,8 @@ def load(path: pathlib.Path) -> WalkState | None:
         return None
     data = json.loads(path.read_text(encoding="utf-8"))
     ver = data.get("walker_version")
-    if ver != WALKER_VERSION:
+    # Accept v0.4.0 state files for backwards-compat (additive fields get defaults).
+    if ver not in (WALKER_VERSION, "0.4.0"):
         raise ValueError(
             f"walker_version mismatch: file has {ver!r}, walker is {WALKER_VERSION!r}; "
             f"rm state/.walk.json to restart"
@@ -328,6 +474,11 @@ def load(path: pathlib.Path) -> WalkState | None:
         stop_reason=data.get("stop_reason"),
         round_count=data.get("round_count", 0),
         yield_history=list(data.get("yield_history", [])),
+        open_questions=list(data.get("open_questions", [])),
+        lifecycle_asked=data.get("lifecycle_asked", False),
+        prompt_design_asked=data.get("prompt_design_asked", False),
+        semantic_criteria_asked=data.get("semantic_criteria_asked", False),
+        last_recommend_stop_emitted=data.get("last_recommend_stop_emitted", False),
     )
 
 
@@ -361,6 +512,315 @@ def yield_status_line(
         f"stopping when last {yield_converge_rounds} rounds all <{yield_threshold} "
         f"(currently: {tail})"
     )
+
+
+# ── Lifecycle / LLM-call / Semantic patterns (Decision 1) ────────────────────
+
+_INTENT_LIFECYCLE_PATTERNS: list[re.Pattern] = [
+    re.compile(r"\bdaemon\b", re.IGNORECASE),
+    re.compile(r"\bservice\b", re.IGNORECASE),
+    re.compile(r"\bsystemd\b", re.IGNORECASE),
+    re.compile(r"\blong-running\b", re.IGNORECASE),
+    re.compile(r"\balways-on\b", re.IGNORECASE),
+    re.compile(r"\bbackground\b", re.IGNORECASE),
+    re.compile(r"\bpersistent\b", re.IGNORECASE),
+    re.compile(r"\bwatches\b", re.IGNORECASE),
+    re.compile(r"on save", re.IGNORECASE),
+    re.compile(r"on change", re.IGNORECASE),
+    re.compile(r"\bincremental\b", re.IGNORECASE),
+    re.compile(r"\blive\b", re.IGNORECASE),
+    re.compile(r"hot reload", re.IGNORECASE),
+    re.compile(r"\blistens\b", re.IGNORECASE),
+    re.compile(r"\bserves\b", re.IGNORECASE),
+    re.compile(r"\bendpoint\b", re.IGNORECASE),
+    re.compile(r"\bsocket\b", re.IGNORECASE),
+    re.compile(r"\bRPC\b", re.IGNORECASE),
+    re.compile(r"MCP server", re.IGNORECASE),
+    re.compile(r"\bpolls\b", re.IGNORECASE),
+    re.compile(r"every\s+\d+", re.IGNORECASE),
+    re.compile(r"\bcron\b", re.IGNORECASE),
+    re.compile(r"\bscheduled\b", re.IGNORECASE),
+    re.compile(r"\bperiodic\b", re.IGNORECASE),
+    re.compile(r"\bsubscribes\b", re.IGNORECASE),
+    re.compile(r"\bconsumes\b", re.IGNORECASE),
+    re.compile(r"on event", re.IGNORECASE),
+    re.compile(r"queue worker", re.IGNORECASE),
+]
+
+_DRAFT_LIFECYCLE_PATTERNS: list[re.Pattern] = [
+    re.compile(r"\bpm2\b", re.IGNORECASE),
+    re.compile(r"\bforever\b", re.IGNORECASE),
+    re.compile(r"\bnodemon\b", re.IGNORECASE),
+    re.compile(r"\bsupervisord\b", re.IGNORECASE),
+    re.compile(r"docker run -d", re.IGNORECASE),
+    re.compile(r"docker-compose", re.IGNORECASE),
+    re.compile(r"\bkubectl\b", re.IGNORECASE),
+    re.compile(r"restart:\s*always", re.IGNORECASE),
+    re.compile(r"\bsystemd\b", re.IGNORECASE),
+    re.compile(r"\blaunchd\b", re.IGNORECASE),
+    re.compile(r"\.plist\b", re.IGNORECASE),
+    re.compile(r"\bsc create\b", re.IGNORECASE),
+    re.compile(r"\bchokidar\b", re.IGNORECASE),
+    re.compile(r"\bwatchman\b", re.IGNORECASE),
+    re.compile(r"\bwatchdog\b", re.IGNORECASE),
+    re.compile(r"\bfsnotify\b", re.IGNORECASE),
+    re.compile(r"\binotify\b", re.IGNORECASE),
+    re.compile(r"\bexpress\b", re.IGNORECASE),
+    re.compile(r"\bfastify\b", re.IGNORECASE),
+    re.compile(r"\bflask\b", re.IGNORECASE),
+    re.compile(r"\bfastapi\b", re.IGNORECASE),
+    re.compile(r"\baxum\b", re.IGNORECASE),
+    re.compile(r"while True", re.IGNORECASE),
+    re.compile(r"\bsetInterval\b", re.IGNORECASE),
+    re.compile(r"\btokio::spawn\b", re.IGNORECASE),
+    re.compile(r"\bonStartupFinished\b", re.IGNORECASE),
+    re.compile(r"def activate\s*\(", re.IGNORECASE),
+    re.compile(r"function activate\s*\(", re.IGNORECASE),
+]
+
+_DRAFT_LLM_PATTERNS: list[re.Pattern] = [
+    re.compile(r"\banthropic\b", re.IGNORECASE),
+    re.compile(r"\bopenai\b", re.IGNORECASE),
+    re.compile(r"\bdeepseek\b", re.IGNORECASE),
+    re.compile(r"\bollama\b", re.IGNORECASE),
+    re.compile(r"client\.messages\.create", re.IGNORECASE),
+    re.compile(r"client\.chat\.completions", re.IGNORECASE),
+    re.compile(r"client\.responses\.create", re.IGNORECASE),
+]
+
+
+def _extract_step_actions(draft_text: str) -> list[str]:
+    """Extract action: values from ## 6. Steps section of draft."""
+    steps_m = re.search(r"^## 6\. Steps\s*$", draft_text, re.MULTILINE)
+    if not steps_m:
+        return []
+    section_start = steps_m.end()
+    next_h = re.search(r"^## ", draft_text[section_start:], re.MULTILINE)
+    body = (
+        draft_text[section_start: section_start + next_h.start()]
+        if next_h
+        else draft_text[section_start:]
+    )
+    actions: list[str] = []
+    for line in body.splitlines():
+        m = re.match(r"^\s+action:\s*(.*)", line, re.IGNORECASE)
+        if m:
+            actions.append(m.group(1).strip().strip('"').strip("'"))
+    return actions
+
+
+def _detect_lifecycle_trigger(state: WalkState, draft_text: str) -> bool:
+    """True if intent or draft step actions match lifecycle patterns."""
+    intent = state.spec_intent
+    for pat in _INTENT_LIFECYCLE_PATTERNS:
+        if pat.search(intent):
+            return True
+    if draft_text:
+        actions = _extract_step_actions(draft_text)
+        for action in actions:
+            for pat in _DRAFT_LIFECYCLE_PATTERNS:
+                if pat.search(action):
+                    return True
+    return False
+
+
+def _detect_llm_call_trigger(state: WalkState, draft_text: str) -> bool:
+    """True if any step action matches LLM-call patterns."""
+    if not draft_text:
+        return False
+    actions = _extract_step_actions(draft_text)
+    for action in actions:
+        for pat in _DRAFT_LLM_PATTERNS:
+            if pat.search(action):
+                return True
+    return False
+
+
+def _existing_concern_ids(state: WalkState) -> set[str]:
+    """All concern IDs in asked, pending, and answered."""
+    return (
+        {c.id for c in state.asked}
+        | {c.id for c in state.pending}
+        | set(state.answered)
+    )
+
+
+def generate_lifecycle_concerns(
+    state: WalkState,
+    draft_text: str,
+) -> list[Concern]:
+    """Emit seed-lifecycle concern when triggered and not yet asked."""
+    if state.lifecycle_asked:
+        return []
+    if "seed-lifecycle" in _existing_concern_ids(state):
+        return []
+    if not _detect_lifecycle_trigger(state, draft_text):
+        return []
+    return [Concern(
+        id="seed-lifecycle",
+        kind="receiver-clarification",
+        receivers=["human"],
+        depends_on=[],
+        summary=(
+            "Process lifecycle for the produced daemon/service: how does it start, "
+            "stop, restart on crash, survive a reboot, and who owns the process? "
+            "Provide a one-paragraph answer or 'defer to later layer'."
+        ),
+    )]
+
+
+def generate_prompt_design_concerns(
+    state: WalkState,
+    draft_text: str,
+) -> list[Concern]:
+    """Emit seed-prompt-design concern when LLM calls detected and not yet asked."""
+    if state.prompt_design_asked:
+        return []
+    if "seed-prompt-design" in _existing_concern_ids(state):
+        return []
+    if not _detect_llm_call_trigger(state, draft_text):
+        return []
+    return [Concern(
+        id="seed-prompt-design",
+        kind="receiver-clarification",
+        receivers=["human"],
+        depends_on=[],
+        summary=(
+            "Prompt design for LLM-call steps: describe the structure of the LLM "
+            "prompt (system/user split, format), failure modes on malformed output, "
+            "parse-retry strategy, and how you'll handle version instability across "
+            "model upgrades. Provide a one-paragraph answer or 'defer to later layer'."
+        ),
+    )]
+
+
+def generate_semantic_criteria_concern(
+    state: WalkState,
+) -> list[Concern]:
+    """Emit seed-semantic-criteria concern once per walk."""
+    if state.semantic_criteria_asked:
+        return []
+    if "seed-semantic-criteria" in _existing_concern_ids(state):
+        return []
+    return [Concern(
+        id="seed-semantic-criteria",
+        kind="receiver-clarification",
+        receivers=["human"],
+        depends_on=[],
+        summary=(
+            "Semantic success criteria for the product: beyond CI / mechanical checks "
+            "(exit codes, file existence, JSON shape), what are 1-3 criteria a human "
+            "reviewer would use to judge whether this works? Provide a list or "
+            "'defer to later layer'."
+        ),
+    )]
+
+
+def _check_prefab_contradiction(state: WalkState, prefab_text: str) -> bool:
+    """Return True if prefab_text contradicts a prior answered concern.
+
+    Contradiction rule: the answer contains a negation token AND shares >= 2
+    content tokens with the prefab (both lowercased).
+    """
+    _NEGATION_TOKENS: frozenset[str] = frozenset({
+        "not", "no", "never", "without", "excluding", "vendor-agnostic",
+    })
+
+    def _tokens(s: str) -> set[str]:
+        # Split on non-alphanumeric (including hyphens) to normalize compound words
+        return {t for t in re.split(r"[^a-z0-9]+", s.lower()) if t and len(t) > 1}
+
+    prefab_tokens = _tokens(prefab_text)
+    for answer in state.answered.values():
+        answer_tokens = _tokens(answer)
+        # Check for negation tokens (also split vendor-agnostic)
+        has_negation = bool(answer_tokens & {"not", "no", "never", "without", "excluding"})
+        if not has_negation and "vendor-agnostic" in answer.lower():
+            has_negation = True
+        if has_negation:
+            shared = (prefab_tokens & answer_tokens) - _STOPWORDS
+            # Remove negation-adjacent tokens from shared computation
+            shared -= {"not", "no", "never", "without", "excluding", "vendor", "agnostic"}
+            if len(shared) >= 2:
+                return True
+    return False
+
+
+def _attach_defer_option(prefab_options: list[str], concern: Concern) -> list[str]:
+    """Append 'defer to later layer' if not already present and concern is not receiver-clarification."""
+    if concern.kind == "receiver-clarification":
+        return list(prefab_options)
+    for opt in prefab_options:
+        if "defer to later layer" in opt.lower():
+            return list(prefab_options)
+    return list(prefab_options) + ["defer to later layer"]
+
+
+def _compute_coverage(state: WalkState, draft_text: str) -> dict:
+    """Compute coverage metrics for the current walk state.
+
+    Returns dict with keys: answered, pending, deferred, undefined_invariants,
+    rounds, recommended_stop, recommended_stop_reason.
+    """
+    answered_count = len(state.answered)
+    pending_count = sum(1 for c in state.pending if c.id not in state.stale)
+    deferred_count = sum(1 for oq in state.open_questions if oq.get("deferred_by_adr"))
+    rounds = state.round_count
+
+    # Count undefined §8.1 invariants
+    undefined_invariants = 0
+    if draft_text:
+        for placeholder in ("<TBD>", "<placeholder>", "<unresolved>"):
+            if placeholder in draft_text:
+                undefined_invariants += 1
+        for anchor in ("mutates:", "never-touches:", "decision-budget:", "reboot-survival:"):
+            m = re.search(
+                r"^\s*-\s+" + re.escape(anchor) + r"\s*(\?|$)",
+                draft_text,
+                re.MULTILINE,
+            )
+            if m:
+                undefined_invariants += 1
+
+    # Check open questions — all resolved or deferred
+    oq_all_resolved = all(
+        oq.get("resolved") or oq.get("deferred_by_adr")
+        for oq in state.open_questions
+    ) if state.open_questions else True
+
+    # Check seed families satisfied
+    lifecycle_satisfied = (
+        state.lifecycle_asked
+        or not _detect_lifecycle_trigger(state, draft_text)
+    )
+    prompt_design_satisfied = (
+        state.prompt_design_asked
+        or not _detect_llm_call_trigger(state, draft_text)
+    )
+    semantic_satisfied = (
+        state.semantic_criteria_asked
+        or "seed-semantic-criteria" in state.answered
+    )
+
+    recommended_stop = (
+        oq_all_resolved
+        and undefined_invariants == 0
+        and lifecycle_satisfied
+        and prompt_design_satisfied
+        and semantic_satisfied
+        and pending_count == 0
+    )
+    recommended_stop_reason = "coverage-complete" if recommended_stop else None
+
+    return {
+        "answered": answered_count,
+        "pending": pending_count,
+        "deferred": deferred_count,
+        "undefined_invariants": undefined_invariants,
+        "rounds": rounds,
+        "recommended_stop": recommended_stop,
+        "recommended_stop_reason": recommended_stop_reason,
+    }
 
 
 def generate_negative_path_concerns(
@@ -1158,6 +1618,12 @@ if __name__ == "__main__":
         default="state/.walk.json",
         help="Path to walk state JSON (default: state/.walk.json).",
     )
+    p_an.add_argument(
+        "--verbose",
+        action="store_true",
+        dest="verbose",
+        help="Emit full coverage line per round.",
+    )
 
     # ── stop ──────────────────────────────────────────────────────────────────
     p_st = sub.add_parser(
@@ -1166,6 +1632,46 @@ if __name__ == "__main__":
     )
     p_st.add_argument("--reason", required=True, help=f"Stop reason. Canonical: {', '.join(STOP_REASONS)} (other strings accepted).")
     p_st.add_argument(
+        "--state-path",
+        default="state/.walk.json",
+        help="Path to walk state JSON (default: state/.walk.json).",
+    )
+    p_st.add_argument(
+        "--draft",
+        default=None,
+        help="Path to spec draft file (for coverage computation).",
+    )
+
+    # ── coverage ──────────────────────────────────────────────────────────────
+    p_cov = sub.add_parser(
+        "coverage",
+        help="Read-only coverage report for the current walk state.",
+    )
+    p_cov.add_argument(
+        "--state-path",
+        default="state/.walk.json",
+        help="Path to walk state JSON (default: state/.walk.json).",
+    )
+    p_cov.add_argument(
+        "--draft",
+        default=None,
+        help="Path to spec draft file.",
+    )
+    p_cov.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_mode",
+        help="Emit pure JSON to stdout (status to stderr).",
+    )
+
+    # ── defer-open-question ───────────────────────────────────────────────────
+    p_doq = sub.add_parser(
+        "defer-open-question",
+        help="Mark an open question as deferred to a specific ADR.",
+    )
+    p_doq.add_argument("--id", required=True, help="Open question id (e.g. oq-2).")
+    p_doq.add_argument("--adr", required=True, help="ADR slug (e.g. adr-0007).")
+    p_doq.add_argument(
         "--state-path",
         default="state/.walk.json",
         help="Path to walk state JSON (default: state/.walk.json).",
@@ -1222,15 +1728,26 @@ if __name__ == "__main__":
                 "stop_reason": state.stop_reason,
                 "round_count": state.round_count,
                 "yield_history": list(state.yield_history),
+                "open_questions": list(state.open_questions),
+                "lifecycle_asked": state.lifecycle_asked,
+                "prompt_design_asked": state.prompt_design_asked,
+                "semantic_criteria_asked": state.semantic_criteria_asked,
+                "last_recommend_stop_emitted": state.last_recommend_stop_emitted,
             }
             print(json.dumps(payload, indent=2, sort_keys=True))
         else:
             stop = state.stop_reason if state.stop_reason else "none"
             pending_count = sum(1 for c in state.pending if c.id not in state.stale)
+            oq_count = len(state.open_questions)
             _status.emit("ok", "walker.init",
                          rounds=state.round_count,
                          pending=pending_count,
+                         open_questions=oq_count,
                          stop=stop)
+            if oq_count > 0:
+                oq_ids = ",".join(oq["id"] for oq in state.open_questions)
+                _status.emit("result", "walker.open-questions-detected",
+                             count=oq_count, ids=oq_ids)
 
     elif args.cmd == "peek-pending":
         state_path = pathlib.Path(args.state_path)
@@ -1336,6 +1853,11 @@ if __name__ == "__main__":
                 "stop_reason": state.stop_reason,
                 "round_count": state.round_count,
                 "yield_history": list(state.yield_history),
+                "open_questions": list(state.open_questions),
+                "lifecycle_asked": state.lifecycle_asked,
+                "prompt_design_asked": state.prompt_design_asked,
+                "semantic_criteria_asked": state.semantic_criteria_asked,
+                "last_recommend_stop_emitted": state.last_recommend_stop_emitted,
             }
             print(json.dumps(payload, indent=2, sort_keys=True))
         else:
@@ -1406,6 +1928,33 @@ if __name__ == "__main__":
             _status.emit("error", "walker.answer_failed", dest="stderr", reason=str(exc))
             sys.exit(1)
 
+        # Read draft for coverage computation
+        draft_text = ""
+        draft_path = state.spec_draft_path
+        if draft_path.exists():
+            try:
+                draft_text = draft_path.read_text(encoding="utf-8")
+            except OSError:
+                pass
+
+        # Coverage and recommend-stop transition
+        cov = _compute_coverage(state, draft_text)
+        prev_emitted = state.last_recommend_stop_emitted
+        if cov["recommended_stop"] and not prev_emitted:
+            _status.emit("result", "walker.recommend-stop", reason="coverage-complete")
+            state.last_recommend_stop_emitted = True
+        # Per-round verbose coverage (explicit flag or env var)
+        if getattr(args, "verbose", False) or os.environ.get("SPECTRE_VERBOSE") == "1":
+            _status.emit(
+                "result", "walker.coverage",
+                answered=cov["answered"],
+                pending=cov["pending"],
+                deferred=cov["deferred"],
+                **{"undefined-invariants": cov["undefined_invariants"]},
+                **{"recommended-stop": "yes" if cov["recommended_stop"] else "no"},
+                rounds=cov["rounds"],
+            )
+
         try:
             persist(state, state_path)
         except OSError as exc:
@@ -1425,6 +1974,40 @@ if __name__ == "__main__":
                          path=str(state_path))
             sys.exit(1)
 
+        # Open-question gate for author-arbitrated stop
+        if args.reason == "author-arbitrated":
+            unresolved_oqs = [
+                oq for oq in state.open_questions
+                if not oq.get("resolved") and not oq.get("deferred_by_adr")
+            ]
+            if unresolved_oqs:
+                oq_ids = ",".join(oq["id"] for oq in unresolved_oqs)
+                _status.emit(
+                    "warn", "walker.open-questions-unresolved",
+                    count=len(unresolved_oqs),
+                    ids=oq_ids,
+                )
+                sys.exit(1)
+
+        # Compute and emit full coverage line
+        draft_text = ""
+        draft_path_for_cov = pathlib.Path(args.draft) if getattr(args, "draft", None) else state.spec_draft_path
+        if draft_path_for_cov.exists():
+            try:
+                draft_text = draft_path_for_cov.read_text(encoding="utf-8")
+            except OSError:
+                pass
+        cov = _compute_coverage(state, draft_text)
+        _status.emit(
+            "result", "walker.coverage",
+            answered=cov["answered"],
+            pending=cov["pending"],
+            deferred=cov["deferred"],
+            **{"undefined-invariants": cov["undefined_invariants"]},
+            **{"recommended-stop": "yes" if cov["recommended_stop"] else "no"},
+            rounds=cov["rounds"],
+        )
+
         state.stop_reason = args.reason
         try:
             persist(state, state_path)
@@ -1432,3 +2015,69 @@ if __name__ == "__main__":
             _status.emit("error", "walker.persist", dest="stderr", reason=str(exc))
             sys.exit(1)
         _status.emit("ok", "walker.stop", reason=args.reason)
+
+    elif args.cmd == "coverage":
+        state_path = pathlib.Path(args.state_path)
+        try:
+            state = load(state_path)
+        except ValueError as exc:
+            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc))
+            sys.exit(1)
+        if state is None:
+            _status.emit("error", "walker.state_missing", dest="stderr",
+                         path=str(state_path))
+            sys.exit(1)
+
+        draft_text = ""
+        if getattr(args, "draft", None):
+            draft_path_cov = pathlib.Path(args.draft)
+            if draft_path_cov.exists():
+                try:
+                    draft_text = draft_path_cov.read_text(encoding="utf-8")
+                except OSError:
+                    pass
+        cov = _compute_coverage(state, draft_text)
+
+        if args.json_mode:
+            print(json.dumps(cov, indent=2))
+        else:
+            _status.emit(
+                "result", "walker.coverage",
+                answered=cov["answered"],
+                pending=cov["pending"],
+                deferred=cov["deferred"],
+                **{"undefined-invariants": cov["undefined_invariants"]},
+                **{"recommended-stop": "yes" if cov["recommended_stop"] else "no"},
+                rounds=cov["rounds"],
+            )
+
+    elif args.cmd == "defer-open-question":
+        state_path = pathlib.Path(args.state_path)
+        try:
+            state = load(state_path)
+        except ValueError as exc:
+            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc))
+            sys.exit(1)
+        if state is None:
+            _status.emit("error", "walker.state_missing", dest="stderr",
+                         path=str(state_path))
+            sys.exit(1)
+
+        # Find the open question by id
+        target_oq = None
+        for oq in state.open_questions:
+            if oq["id"] == args.id:
+                target_oq = oq
+                break
+
+        if target_oq is None:
+            _status.emit("error", "walker.bad_oq_id", dest="stderr", id=args.id)
+            sys.exit(1)
+
+        target_oq["deferred_by_adr"] = args.adr
+        try:
+            persist(state, state_path)
+        except OSError as exc:
+            _status.emit("error", "walker.persist", dest="stderr", reason=str(exc))
+            sys.exit(1)
+        _status.emit("ok", "walker.open-question-deferred", id=args.id, adr=args.adr)
