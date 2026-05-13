@@ -191,7 +191,7 @@ if __name__ == "__main__":
     if not rids:
         _status.emit("error", "track.bad_resources", dest="stderr",
                      reason="--resources is empty",
-                     remediation="open an issue with the full halt output")
+                     remediation="pass a comma-separated list of resource IDs to --resources")
         sys.exit(1)
 
     if args.cmd == "acquire":
@@ -223,6 +223,6 @@ if __name__ == "__main__":
             except Exception as exc:  # noqa: BLE001
                 _status.emit("error", "track.release", dest="stderr",
                              resource=rid, reason=str(exc),
-                             remediation="open an issue with the full halt output")
+                             remediation="retry /implement; if it recurs open an issue at https://github.com/Joncik91/Spectre/issues with this halt's full output")
                 sys.exit(1)
             _status.emit("ok", "track.release", resource=rid)

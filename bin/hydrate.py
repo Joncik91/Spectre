@@ -21,12 +21,12 @@ WELCOMED = STATE / ".spectre-welcomed"
 def _is_first_run() -> bool:
     """Return True iff this looks like a genuinely fresh project.
 
-    Conditions (all must hold):
+    Conditions (all must hold for first-run to be True):
     - specs/.active does NOT exist
     - state/scratchpad.json does NOT exist
-    - state/ does NOT exist OR exists but contains no *.walk.json or
-      *.eval-result.json files
     - state/.spectre-welcomed does NOT exist
+    - state/ does NOT exist OR exists but contains no *.json files AND
+      no files starting with .spec- or .envelope
     """
     if ACTIVE.exists():
         return False
@@ -35,11 +35,13 @@ def _is_first_run() -> bool:
     if WELCOMED.exists():
         return False
     if STATE.is_dir():
-        # Non-empty state dir with walk or eval files → not first-run
-        walk_files = list(STATE.glob("*.walk.json"))
-        eval_files = list(STATE.glob("*.eval-result.json"))
-        if walk_files or eval_files:
+        # Any .json file in state/ (walk, eval-result, eval-bundle, envelope, etc.)
+        if any(STATE.glob("*.json")):
             return False
+        # Any hidden marker starting with .spec- or .envelope
+        for p in STATE.iterdir():
+            if p.name.startswith(".spec-") or p.name.startswith(".envelope"):
+                return False
     return True
 
 

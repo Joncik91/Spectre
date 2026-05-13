@@ -473,7 +473,7 @@ def _main() -> int:
             except RuntimeError as exc:
                 _status.emit(
                     "error", "wizard.substrate", dest="stderr", reason=str(exc),
-                    remediation="open an issue with the full halt output",
+                    remediation="verify DEEPSEEK_API_KEY is set and the DeepSeek API is reachable, then retry /vision",
                 )
                 return 1
             sys.stdout.write(block)

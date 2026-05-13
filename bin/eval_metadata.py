@@ -458,7 +458,7 @@ if __name__ == "__main__":
             if not payload_path.exists():
                 _status.emit("error", "eval_metadata.payload_missing", dest="stderr",
                              path=args.payload,
-                             remediation="open an issue with the full halt output")
+                             remediation="verify --payload path exists and is readable")
                 sys.exit(1)
             raw = payload_path.read_text(encoding="utf-8")
         try:
@@ -466,7 +466,7 @@ if __name__ == "__main__":
         except json.JSONDecodeError as exc:
             _status.emit("error", "eval_metadata.bad_payload_json", dest="stderr",
                          reason=str(exc),
-                         remediation="open an issue with the full halt output")
+                         remediation="re-run /vision to regenerate a valid payload")
             sys.exit(1)
 
         # Map payload keys to write_sidecar kwargs.
@@ -545,6 +545,6 @@ if __name__ == "__main__":
         else:
             _status.emit("error", "eval_metadata.no_input", dest="stderr",
                          reason="provide --file or --stdin",
-                         remediation="open an issue with the full halt output")
+                         remediation="pass --file <path> or pipe data via --stdin")
             sys.exit(1)
         print(hashlib.sha256(data).hexdigest())

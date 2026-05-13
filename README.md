@@ -248,16 +248,16 @@ The table below covers the most common halts in `/vision` and `/implement` happy
 
 | Halt code | What it means | Remediation |
 |---|---|---|
-| `walker.open-questions-unresolved` | The interview detected open questions in your intent that are not yet answered or deferred. | Answer them, or `spectre walker defer-open-question --id <oq-id> --adr <slug>`. |
-| `envelope.check status=tampered` | The locked spec or its sidecar was modified after the seal was generated. | Re-run `/vision` to regenerate the integrity seal. |
-| `envelope.check status=missing` | `/implement` was invoked without a locked spec. | Run `/vision` and lock the spec first. |
-| `walker.bad_oq_id` | Tried to defer an open-question with an unrecognised ID. | Run `spectre walker get-state --json` to list valid IDs. |
-| `track.queue` | Another parallel track holds the requested resource lock. | Wait for the holding track to release, or pass `--skip-queue` to bypass. |
-| `walker.state_missing` | A walker command was invoked with no active interview session. | Run `/vision` to start a new interview. |
-| `walker.answer_failed` | `answer-concern` could not record your answer — the question ID was not recognised. | Run `spectre walker get-state --json` to list valid concern IDs, then retry. |
-| `tier.should_halt` | The tier halt-decision path raised an unexpected error. | Report the `error=` field; retry `/implement`. |
-| `hydrate.stale_active` | `.active` points to a spec that no longer exists on disk. | Run `/vision` to create or re-lock a spec, or update `.active` manually. |
-| `walker.duplicate_id` | `append-concern` was rejected because the concern ID already exists. | Internal error; report it with the full output. |
+| `walker.open-questions-unresolved` | The interview detected open questions in your intent that are not yet answered or deferred. | answer each question or run 'spectre walker defer-open-question --id <oq-id> --adr <slug>' |
+| `envelope.check status=tampered` | The locked spec or its sidecar was modified after the seal was generated. | run /vision and lock the spec to produce an envelope |
+| `envelope.check status=missing` | `/implement` was invoked without a locked spec. | run /vision and lock the spec to produce an envelope |
+| `walker.bad_oq_id` | Tried to defer an open-question with an unrecognised ID. | run 'spectre walker get-state --json' to list valid IDs |
+| `track.queue` | Another parallel track holds the requested resource lock. | wait for the holding track to release or pass --skip-queue to bypass |
+| `walker.state_missing` | A walker command was invoked with no active interview session. | run /vision to start |
+| `walker.answer_failed` | `answer-concern` could not record your answer — the question ID was not recognised. | run 'spectre walker get-state --json' to list valid concern IDs |
+| `tier.should_halt` | The tier halt-decision path raised an unexpected error. | open an issue at https://github.com/Joncik91/Spectre/issues with this halt's full output |
+| `hydrate.stale_active` | `.active` points to a spec that no longer exists on disk. | run /vision to start a new spec or 'spectre _scratchpad reset' |
+| `walker.duplicate_id` | `append-concern` was rejected because the concern ID already exists. | open an issue at https://github.com/Joncik91/Spectre/issues with this halt's full output |
 
 For any other code, `spectre explain <code>` gives the full glossary entry including its `user_action:` field.
 

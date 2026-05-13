@@ -351,7 +351,7 @@ if __name__ == "__main__":
         if not isinstance(parsed, list):
             _status.emit("error", "audit.bad_properties_type", dest="stderr",
                          reason="must be JSON array of dicts or null",
-                         remediation="open an issue with the full halt output")
+                         remediation="fix spec § properties: to be a JSON array of dicts (or null)")
             sys.exit(1)
         return parsed
 
@@ -360,12 +360,12 @@ if __name__ == "__main__":
             paths = json.loads(args.paths)
         except json.JSONDecodeError as exc:
             _status.emit("error", "audit.bad_paths_json", dest="stderr", reason=str(exc),
-                         remediation="open an issue with the full halt output")
+                         remediation="open an issue at https://github.com/Joncik91/Spectre/issues with this halt's full output")
             sys.exit(1)
         if not isinstance(paths, list):
             _status.emit("error", "audit.bad_paths_type", dest="stderr",
                          reason="must be JSON array of strings",
-                         remediation="open an issue with the full halt output")
+                         remediation="open an issue at https://github.com/Joncik91/Spectre/issues with this halt's full output")
             sys.exit(1)
         properties = _parse_properties(args.properties)
 
@@ -375,7 +375,7 @@ if __name__ == "__main__":
             )
         except Exception as exc:  # noqa: BLE001
             _status.emit("error", "audit.run", dest="stderr", reason=str(exc),
-                         remediation="open an issue with the full halt output")
+                         remediation="open an issue at https://github.com/Joncik91/Spectre/issues with this halt's full output")
             sys.exit(1)
 
         summary = _results_to_summary(results)
@@ -412,7 +412,7 @@ if __name__ == "__main__":
             )
         except Exception as exc:  # noqa: BLE001
             _status.emit("error", "audit.run", dest="stderr", reason=str(exc),
-                         remediation="open an issue with the full halt output")
+                         remediation="open an issue at https://github.com/Joncik91/Spectre/issues with this halt's full output")
             sys.exit(1)
 
         summary = _results_to_summary(results)

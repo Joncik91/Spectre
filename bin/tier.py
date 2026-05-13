@@ -375,7 +375,7 @@ if __name__ == "__main__":
             )
         except Exception as exc:  # noqa: BLE001
             _status.emit("error", "tier.should_halt", dest="stderr", reason=str(exc),
-                         remediation="open an issue with the full halt output")
+                         remediation="open an issue at https://github.com/Joncik91/Spectre/issues with this halt's full output")
             sys.exit(1)
         _status.emit("result", "tier.gate",
                      halt="true" if halt else "false")

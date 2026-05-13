@@ -1975,14 +1975,14 @@ if __name__ == "__main__":
         # in case the function is reused programmatically)
         if args.kind not in KNOWN_CONCERN_KINDS:
             _status.emit("error", "walker.unknown_kind", dest="stderr", kind=args.kind,
-                         remediation="open an issue with the full halt output")
+                         remediation="open an issue at https://github.com/Joncik91/Spectre/issues with this halt's full output")
             sys.exit(1)
 
         # Reject duplicate id (in pending OR answered)
         existing_ids = {c.id for c in state.pending} | {c.id for c in state.asked} | set(state.answered)
         if args.id in existing_ids:
             _status.emit("error", "walker.duplicate_id", dest="stderr", id=args.id,
-                         remediation="open an issue with the full halt output")
+                         remediation="open an issue at https://github.com/Joncik91/Spectre/issues with this halt's full output")
             sys.exit(1)
 
         receiver = args.receiver  # already validated by argparse choices

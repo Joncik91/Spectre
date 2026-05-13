@@ -175,12 +175,12 @@ if __name__ == "__main__":
                 payload = json.loads(raw)
             except json.JSONDecodeError as exc:
                 _status.emit("error", "ledger.bad_payload_json", dest="stderr", reason=str(exc),
-                         remediation="open an issue with the full halt output")
+                         remediation="fix JSON syntax in --payload value")
                 sys.exit(1)
             if not isinstance(payload, dict):
                 _status.emit("error", "ledger.bad_payload_type", dest="stderr",
                              reason="must be JSON object",
-                             remediation="open an issue with the full halt output")
+                             remediation="verify --ledger-path exists and is readable")
                 sys.exit(1)
         else:
             payload = {}
@@ -188,7 +188,7 @@ if __name__ == "__main__":
                 if "=" not in kv:
                     _status.emit("error", "ledger.bad_payload_kv", dest="stderr",
                                  kv=kv, reason="expected KEY=VALUE",
-                                 remediation="open an issue with the full halt output")
+                                 remediation="use form KEY=VALUE (e.g. --field reason=author-arbitrated)")
                     sys.exit(1)
                 k, _, v = kv.partition("=")
                 payload[k] = v

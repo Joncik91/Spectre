@@ -49,7 +49,7 @@ def test_fresh_project_is_first_run(tmp_path):
 
 
 def test_state_dir_exists_no_walk_files_still_first_run(tmp_path):
-    """state/ dir present but empty (no .walk.json / .eval-result.json) — still first-run."""
+    """state/ dir present but empty (no *.json or marker files) — still first-run."""
     (tmp_path / "state").mkdir()
     assert _first_run(tmp_path) is True
 
@@ -83,6 +83,30 @@ def test_eval_result_file_present_not_first_run(tmp_path):
     state = tmp_path / "state"
     state.mkdir()
     (state / "foo.eval-result.json").write_text("{}", encoding="utf-8")
+    assert _first_run(tmp_path) is False
+
+
+def test_eval_bundle_present_not_first_run(tmp_path):
+    """state/.eval-bundle.json present (partial /vision run) — not first-run."""
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / ".eval-bundle.json").write_text("{}", encoding="utf-8")
+    assert _first_run(tmp_path) is False
+
+
+def test_envelope_json_present_not_first_run(tmp_path):
+    """state/.envelope.json present — not first-run."""
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / ".envelope.json").write_text("{}", encoding="utf-8")
+    assert _first_run(tmp_path) is False
+
+
+def test_state_dir_with_random_json_not_first_run(tmp_path):
+    """state/ with any *.json file — not first-run."""
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "arbitrary.json").write_text("{}", encoding="utf-8")
     assert _first_run(tmp_path) is False
 
 

@@ -7,7 +7,7 @@ All notable changes to the Spectre plugin.
 The polish release. Five axes of UX/clarity improvements; no breaking changes; backwards-compatible state and sidecar formats.
 
 ### Added — vocabulary layer (Axis A)
-- New `docs/glossary.md` — 95 status codes + 15 load-bearing terms, all with dev/pm/triggered_by/user_action/related fields.
+- New `docs/glossary.md` — 100 status codes + 15 load-bearing terms, all with dev/pm/triggered_by/user_action/related fields.
 - New `bin/_glossary.py` — markdown parser + lookup API + CLI.
 - `spectre explain <code>` and `spectre glossary` subcommands.
 - `SPECTRE_AUDIENCE=pm` env var — dual-channel rendering: status lines get a 2nd indented PM sentence.

@@ -211,6 +211,6 @@ if __name__ == "__main__":
             recs = find_recurrences(kind=args.kind, threshold=args.threshold)
         except Exception as exc:  # noqa: BLE001
             _status.emit("error", "observation.find_recurrences", dest="stderr", reason=str(exc),
-                         remediation="open an issue with the full halt output")
+                         remediation="verify the observations store is intact; try deleting state/.observations.json and retrying")
             sys.exit(1)
         print(json.dumps(recs, indent=2))

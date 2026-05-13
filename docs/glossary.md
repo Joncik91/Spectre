@@ -63,9 +63,9 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 ## audit.bad_properties_type
 - kind: status
 - dev: --properties argument parsed to a non-list type; expected a JSON array.
-- pm: The spec property checks were the wrong shape. This is a Spectre internal error — please report it.
+- pm: The spec property checks were the wrong shape. Fix the properties: block in your spec.
 - triggered_by: `spectre auditor` CLI with wrong-type --properties argument.
-- user_action: Internal error; report with the type field value.
+- user_action: Fix spec § properties: to be a JSON array of dicts (or null).
 - related: audit.bad_properties_json
 - since: v0.6.0
 
@@ -171,9 +171,9 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 ## eval_metadata.bad_payload_json
 - kind: status
 - dev: JSON decode error parsing the --payload argument to eval_metadata CLI.
-- pm: The evaluation data payload could not be read. This is a Spectre internal error.
+- pm: The evaluation data payload could not be read. Re-run /vision to regenerate a valid payload.
 - triggered_by: `spectre eval_metadata` CLI with malformed JSON --payload argument.
-- user_action: Internal error; report with the error field value.
+- user_action: Re-run /vision to regenerate a valid payload.
 - related: eval_metadata.payload_missing
 - since: v0.5.0
 
@@ -216,18 +216,18 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 ## eval_metadata.no_input
 - kind: status
 - dev: No input provided to eval_metadata CLI; missing required argument.
-- pm: The evaluation metadata command was called without required input. This is a Spectre internal error.
+- pm: The evaluation metadata command was called without required input. Pass --file <path> or pipe data via --stdin.
 - triggered_by: `spectre eval_metadata` CLI called with no arguments.
-- user_action: Internal error; report it.
+- user_action: Pass --file <path> or pipe data via --stdin.
 - related: eval_metadata.file_missing
 - since: v0.5.0
 
 ## eval_metadata.payload_missing
 - kind: status
 - dev: Required --payload argument was not provided to eval_metadata CLI.
-- pm: Evaluation data was not passed to the metadata writer. This is a Spectre internal error.
+- pm: Evaluation data was not passed to the metadata writer. Verify --payload path exists and is readable.
 - triggered_by: `spectre eval_metadata` CLI without required --payload flag.
-- user_action: Internal error; report it.
+- user_action: Verify --payload path exists and is readable.
 - related: eval_metadata.bad_payload_json
 - since: v0.5.0
 
@@ -351,27 +351,27 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 ## ledger.bad_payload_json
 - kind: status
 - dev: JSON decode error parsing the --payload argument to the ledger CLI.
-- pm: The ledger payload could not be read. This is a Spectre internal error.
+- pm: The ledger payload could not be read. Check the JSON syntax in the --payload value.
 - triggered_by: `spectre cdlc_ledger append` with malformed --payload JSON.
-- user_action: Internal error; report it.
+- user_action: Fix JSON syntax in --payload value.
 - related: ledger.bad_payload_type
 - since: v0.6.0
 
 ## ledger.bad_payload_kv
 - kind: status
 - dev: A key-value pair in the ledger payload is malformed or the wrong type.
-- pm: A data field in the ledger payload was invalid. This is a Spectre internal error.
+- pm: A data field in the ledger payload was invalid. Use KEY=VALUE form.
 - triggered_by: `spectre cdlc_ledger append` when a payload field fails validation.
-- user_action: Internal error; report it.
+- user_action: Use form KEY=VALUE (e.g. --field reason=author-arbitrated).
 - related: ledger.bad_payload_json
 - since: v0.6.0
 
 ## ledger.bad_payload_type
 - kind: status
 - dev: --payload argument parsed to a non-dict type; expected a JSON object.
-- pm: The ledger payload was the wrong shape. This is a Spectre internal error.
+- pm: The ledger payload was the wrong shape. Check the --ledger-path exists and is readable.
 - triggered_by: `spectre cdlc_ledger append` when payload is not a JSON object.
-- user_action: Internal error; report it.
+- user_action: Verify --ledger-path exists and is readable.
 - related: ledger.bad_payload_json
 - since: v0.6.0
 
@@ -387,9 +387,9 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 ## observation.find_recurrences
 - kind: status
 - dev: Error finding recurrence patterns in the halt observation store.
-- pm: Spectre could not analyze halt patterns. This is a Spectre internal error.
+- pm: Spectre could not analyze halt patterns. The observations store may be corrupt.
 - triggered_by: `spectre observations find-recurrences` on unexpected exception.
-- user_action: Report the error field.
+- user_action: Verify the observations store is intact; try deleting state/.observations.json and retrying.
 - related: observation.record
 - since: v0.7.0
 
@@ -711,7 +711,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 ## walker.init
 - kind: status
 - dev: Walker state machine initialized or resumed; rounds= completed so far, pending= active concerns, stop= stop reason or none.
-- pm: The interview has started. There are {pending} open questions for you to answer.
+- pm: The interview has started. There are {pending} questions waiting for you.
 - triggered_by: First `/vision` invocation on a new spec, or resumption of an existing walk.
 - user_action: None — Claude will surface the first question next.
 - related: walker.answer, walker.yield, walker.stop
