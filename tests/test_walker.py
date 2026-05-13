@@ -1172,3 +1172,102 @@ class TestRefreshPending:
         count_before = len(state.pending)
         walker._refresh_pending(state, "")
         assert len(state.pending) == count_before
+
+
+# ── TestJaccardShortOQ ────────────────────────────────────────────────────────
+
+class TestJaccardShortOQ:
+    """Short OQ (<=3 content tokens) requires 0.6 threshold, not 0.4."""
+
+    def _state_with_oq(self, oq_text: str) -> walker.WalkState:
+        state = walker.WalkState(
+            spec_intent="build a thing",
+            spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+        )
+        state.open_questions = [{"id": "oq-1", "text": oq_text, "resolved": False, "deferred_by_adr": None}]
+        return state
+
+    def test_short_oq_not_resolved_at_low_jaccard(self):
+        """2-token OQ 'mcp protocol' NOT auto-resolved when Jaccard=0.5 (below 0.6 threshold)."""
+        # "mcp protocol" → content tokens: {mcp, protocol} (2 non-stopword) → threshold=0.6
+        # answer adds 2 more tokens → Jaccard = 2/4 = 0.5 < 0.6 → must NOT resolve
+        state = self._state_with_oq("mcp protocol")
+        walker._resolve_open_questions(state, "we use mcp protocol for everything")
+        assert state.open_questions[0]["resolved"] is False
+
+    def test_longer_oq_resolved_at_standard_jaccard(self):
+        """5-token OQ resolves at standard 0.4 threshold."""
+        # "daemon crash restart failure policy" → many non-stopword tokens
+        state = self._state_with_oq("daemon crash restart failure policy")
+        # Answer shares 4 of 5 tokens — Jaccard > 0.4
+        walker._resolve_open_questions(state, "daemon crash restart failure policy is retry")
+        assert state.open_questions[0]["resolved"] is True
+
+    def test_explicit_resolves_prefix_always_works(self):
+        """Explicit 'resolves: oq-1' prefix resolves regardless of OQ length."""
+        state = self._state_with_oq("use mcp")
+        walker._resolve_open_questions(state, "resolves: oq-1 we will use mcp")
+        assert state.open_questions[0]["resolved"] is True
+
+
+# ── TestLifecycleFalsePositive ────────────────────────────────────────────────
+
+class TestLifecycleFalsePositive:
+    """Tightened patterns must not fire on service-mesh or live-performance."""
+
+    def _state(self, intent: str) -> walker.WalkState:
+        return walker.WalkState(
+            spec_intent=intent,
+            spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+        )
+
+    def test_lifecycle_no_false_positive_on_service_mesh(self):
+        """'service-mesh research' intent must NOT trigger lifecycle concern."""
+        state = self._state("service-mesh research and comparison tool")
+        assert walker._detect_lifecycle_trigger(state, "") is False
+
+    def test_standalone_service_still_fires(self):
+        """Plain 'service' (not hyphenated) still triggers."""
+        state = self._state("deploy a service to handle webhooks")
+        assert walker._detect_lifecycle_trigger(state, "") is True
+
+    def test_live_in_hyphenated_context_no_false_positive(self):
+        """'live-performance' must NOT trigger lifecycle concern."""
+        state = self._state("analyze live-performance metrics offline")
+        assert walker._detect_lifecycle_trigger(state, "") is False
+
+    def test_standalone_live_still_fires(self):
+        """Standalone 'live' still triggers (e.g. 'live reload')."""
+        state = self._state("build a live dashboard for metrics")
+        assert walker._detect_lifecycle_trigger(state, "") is True
+
+
+# ── TestMultiLineYamlInvariants ───────────────────────────────────────────────
+
+class TestMultiLineYamlInvariants:
+    """Multi-line YAML §8.1 fields must NOT be flagged as undefined."""
+
+    def test_inline_empty_anchor_is_flagged(self):
+        """Inline `- mutates:` with no value IS flagged as undefined."""
+        draft = "## 8. Contracts\n- mutates:\n"
+        cov = walker._compute_coverage(
+            walker.WalkState(spec_intent="x", spec_draft_path=pathlib.Path("x.draft")),
+            draft,
+        )
+        assert cov["undefined_invariants"] > 0
+
+    def test_inline_defined_anchor_not_flagged(self):
+        """Inline `- mutates: /etc/foo` is NOT flagged."""
+        draft = "## 8. Contracts\n- mutates: /etc/foo\n"
+        state = walker.WalkState(spec_intent="x", spec_draft_path=pathlib.Path("x.draft"))
+        state.semantic_criteria_asked = True
+        cov = walker._compute_coverage(state, draft)
+        assert cov["undefined_invariants"] == 0
+
+    def test_multiline_yaml_anchor_not_flagged(self):
+        """Multi-line form `- mutates:\\n  - /etc/foo` is NOT flagged."""
+        draft = "## 8. Contracts\n- mutates:\n  - /etc/foo\n  - /var/log/app\n"
+        state = walker.WalkState(spec_intent="x", spec_draft_path=pathlib.Path("x.draft"))
+        state.semantic_criteria_asked = True
+        cov = walker._compute_coverage(state, draft)
+        assert cov["undefined_invariants"] == 0

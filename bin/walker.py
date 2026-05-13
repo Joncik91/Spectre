@@ -183,7 +183,15 @@ def _jaccard_overlap(a: str, b: str) -> float:
 
 
 def _resolve_open_questions(state: WalkState, answer: str) -> None:
-    """Attempt to resolve open questions based on an answer text."""
+    """Attempt to resolve open questions based on an answer text.
+
+    Jaccard threshold: 0.4 for OQs with >=4 content tokens; 0.6 for
+    shorter OQs (<=3 tokens) to prevent false resolution of terse OQs.
+    """
+    def _content_tokens(s: str) -> set[str]:
+        raw = re.split(r"[^a-z0-9]+", s.lower())
+        return {t for t in raw if t and t not in _STOPWORDS}
+
     answer_lower = answer.lower().strip()
     for oq in state.open_questions:
         if oq["resolved"]:
@@ -192,8 +200,10 @@ def _resolve_open_questions(state: WalkState, answer: str) -> None:
         if answer_lower.startswith(f"resolves: {oq['id']}"):
             oq["resolved"] = True
             continue
-        # Jaccard token overlap
-        if _jaccard_overlap(answer, oq["text"]) >= 0.4:
+        # Jaccard token overlap — raise threshold for short OQs (<=3 content tokens)
+        oq_tokens = _content_tokens(oq["text"])
+        threshold = 0.6 if len(oq_tokens) <= 3 else 0.4
+        if _jaccard_overlap(answer, oq["text"]) >= threshold:
             oq["resolved"] = True
 
 
@@ -518,7 +528,9 @@ def yield_status_line(
 
 _INTENT_LIFECYCLE_PATTERNS: list[re.Pattern] = [
     re.compile(r"\bdaemon\b", re.IGNORECASE),
-    re.compile(r"\bservice\b", re.IGNORECASE),
+    # Tightened: \bservice\b matches "service-mesh" because Python \b treats
+    # hyphen as non-word. Use negative lookbehind/lookahead on [-a-z] instead.
+    re.compile(r"(?<![a-z-])service(?![-a-z])", re.IGNORECASE),
     re.compile(r"\bsystemd\b", re.IGNORECASE),
     re.compile(r"\blong-running\b", re.IGNORECASE),
     re.compile(r"\balways-on\b", re.IGNORECASE),
@@ -528,7 +540,9 @@ _INTENT_LIFECYCLE_PATTERNS: list[re.Pattern] = [
     re.compile(r"on save", re.IGNORECASE),
     re.compile(r"on change", re.IGNORECASE),
     re.compile(r"\bincremental\b", re.IGNORECASE),
-    re.compile(r"\blive\b", re.IGNORECASE),
+    # Tightened: \blive\b matches "live" inside "live performance" (not a
+    # lifecycle trigger). Require no surrounding hyphen or letter.
+    re.compile(r"(?<![a-z-])live(?![-a-z])", re.IGNORECASE),
     re.compile(r"hot reload", re.IGNORECASE),
     re.compile(r"\blistens\b", re.IGNORECASE),
     re.compile(r"\bserves\b", re.IGNORECASE),
@@ -788,14 +802,28 @@ def _compute_coverage(state: WalkState, draft_text: str) -> dict:
         for placeholder in ("<TBD>", "<placeholder>", "<unresolved>"):
             if placeholder in draft_text:
                 undefined_invariants += 1
+        draft_lines = draft_text.splitlines()
         for anchor in ("mutates:", "never-touches:", "decision-budget:", "reboot-survival:"):
-            m = re.search(
+            # Inline check: `- anchor: ?` or `- anchor:` with nothing after colon.
+            # Also handles multi-line YAML (`- anchor:\n  - value`) by peeking at
+            # the next non-blank line — if it's indented content, the field IS
+            # defined and we don't flag it.
+            anchor_re = re.compile(
                 r"^\s*-\s+" + re.escape(anchor) + r"\s*(\?|$)",
-                draft_text,
                 re.MULTILINE,
             )
+            m = anchor_re.search(draft_text)
             if m:
-                undefined_invariants += 1
+                # Anchor line has empty/? value — peek at next non-blank line
+                line_end = draft_text.find("\n", m.start())
+                rest = draft_text[line_end + 1:] if line_end != -1 else ""
+                next_nonblank = next(
+                    (ln for ln in rest.splitlines() if ln.strip()), ""
+                )
+                # If next non-blank line is indented (multi-line value), field
+                # is defined — skip. Otherwise it is truly undefined.
+                if not next_nonblank.startswith("  "):
+                    undefined_invariants += 1
 
     # Check open questions — all resolved or deferred
     oq_all_resolved = all(
