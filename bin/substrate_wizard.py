@@ -31,6 +31,9 @@ SUBSTRATE_WIZARD_VERSION = "0.7"
 
 _82_BLOCK_RE = re.compile(r"\n\n?###\s+8\.2\b.*?(?=\n##\s|\n\Z|\Z)", re.DOTALL)
 
+# Must match hashlib.sha256().hexdigest() output — 64 lowercase hex chars.
+_AUTHOR_SPEC_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+
 
 def cache_dir_default() -> pathlib.Path:
     """Canonical cache dir: ~/.spectre/substrate-cache/."""
@@ -53,6 +56,10 @@ def compute_author_spec_hash(spec_body: str) -> str:
 
 def write_cache(author_spec_hash: str, answers: dict) -> pathlib.Path:
     """Atomically write the cache JSON at mode 0600. Returns the cache path."""
+    if not _AUTHOR_SPEC_HASH_RE.match(author_spec_hash):
+        raise ValueError(
+            "invalid author-spec hash (must be 64-char lowercase hex)"
+        )
     target = cache_path_for_hash(author_spec_hash)
     target.parent.mkdir(parents=True, exist_ok=True)
     body = json.dumps(
@@ -79,6 +86,10 @@ def write_cache(author_spec_hash: str, answers: dict) -> pathlib.Path:
 
 def read_cache(author_spec_hash: str) -> dict | None:
     """Return cached answers if schema matches; None otherwise."""
+    if not _AUTHOR_SPEC_HASH_RE.match(author_spec_hash):
+        raise ValueError(
+            "invalid author-spec hash (must be 64-char lowercase hex)"
+        )
     target = cache_path_for_hash(author_spec_hash)
     if not target.exists():
         return None
@@ -328,7 +339,6 @@ def _main() -> int:
     p_run.add_argument(
         "--receiver",
         default=None,
-        choices=list(_RECEIVER_VALUES),
         help="Receiver fingerprint (non-interactive).",
     )
     p_run.add_argument(
@@ -361,6 +371,17 @@ def _main() -> int:
     args = parser.parse_args()
 
     if args.cmd == "run":
+        # Validate --author-spec-hash before anything else.
+        if not _AUTHOR_SPEC_HASH_RE.match(args.author_spec_hash):
+            _status.emit(
+                "error",
+                "wizard.substrate",
+                dest="stderr",
+                reason="invalid_author_spec_hash",
+                value=args.author_spec_hash[:16],
+            )
+            return 1
+
         flags = {
             "--receiver": args.receiver,
             "--trust-profile": args.trust_profile,

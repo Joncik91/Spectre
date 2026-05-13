@@ -22,11 +22,18 @@ def test_cache_dir_default_is_user_spectre(monkeypatch, tmp_path):
     assert p == tmp_path / ".spectre" / "substrate-cache"
 
 
+_VALID_HASH_A = "a" * 64
+_VALID_HASH_B = "b" * 64
+_VALID_HASH_C = "c" * 64
+_VALID_HASH_D = "d" * 64
+_VALID_HASH_E = "e" * 64
+
+
 def test_cache_path_for_hash_returns_named_file(monkeypatch, tmp_path):
     """Cache file name is <author-spec-hash>.json under the cache dir."""
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
-    p = substrate_wizard.cache_path_for_hash("abc123")
-    assert p.name == "abc123.json"
+    p = substrate_wizard.cache_path_for_hash(_VALID_HASH_A)
+    assert p.name == f"{_VALID_HASH_A}.json"
     assert p.parent.name == "substrate-cache"
 
 
@@ -39,7 +46,7 @@ def test_write_cache_creates_file_at_mode_0600(monkeypatch, tmp_path):
         "contextual-binding": "test",
         "provenance": {"kind": "none"},
     }
-    p = substrate_wizard.write_cache("abc123", answers)
+    p = substrate_wizard.write_cache(_VALID_HASH_A, answers)
     assert p.exists()
     assert oct(p.stat().st_mode)[-3:] == "600"
     body = json.loads(p.read_text())
@@ -50,7 +57,7 @@ def test_write_cache_creates_file_at_mode_0600(monkeypatch, tmp_path):
 def test_read_cache_returns_none_when_missing(monkeypatch, tmp_path):
     """Cache read on missing file returns None, not exception."""
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
-    assert substrate_wizard.read_cache("missing-hash") is None
+    assert substrate_wizard.read_cache(_VALID_HASH_B) is None
 
 
 def test_read_cache_returns_none_on_schema_mismatch(monkeypatch, tmp_path):
@@ -58,18 +65,18 @@ def test_read_cache_returns_none_on_schema_mismatch(monkeypatch, tmp_path):
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
     cache_dir = tmp_path / ".spectre" / "substrate-cache"
     cache_dir.mkdir(parents=True)
-    (cache_dir / "abc.json").write_text(
+    (cache_dir / f"{_VALID_HASH_C}.json").write_text(
         json.dumps({"schema_version": "0.6", "answers": {}})
     )
-    assert substrate_wizard.read_cache("abc") is None
+    assert substrate_wizard.read_cache(_VALID_HASH_C) is None
 
 
 def test_read_cache_returns_answers_when_fresh(monkeypatch, tmp_path):
     """Matching schema + present file → return parsed answers dict."""
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
     answers = {"receiver-fingerprint": "claude-code+human"}
-    substrate_wizard.write_cache("abc", answers)
-    got = substrate_wizard.read_cache("abc")
+    substrate_wizard.write_cache(_VALID_HASH_D, answers)
+    got = substrate_wizard.read_cache(_VALID_HASH_D)
     assert got == answers
 
 
@@ -120,7 +127,7 @@ def test_run_with_all_answers_returns_82_markdown(monkeypatch, tmp_path):
     def fake_prompt(question: str) -> str:
         return next(answers_iter)
 
-    block = substrate_wizard.run("hash-abc", prompt_fn=fake_prompt)
+    block = substrate_wizard.run(_VALID_HASH_A, prompt_fn=fake_prompt)
     assert "### 8.2 Cognitive-substrate contract" in block
     assert "claude-code+human" in block
     assert "untrusted-input" in block
@@ -134,9 +141,9 @@ def test_run_writes_cache(monkeypatch, tmp_path):
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
     answers_iter = iter(["1", "none", "test", "none"])
     substrate_wizard.run(
-        "hash-cache", prompt_fn=lambda _q: next(answers_iter)
+        _VALID_HASH_B, prompt_fn=lambda _q: next(answers_iter)
     )
-    cached = substrate_wizard.read_cache("hash-cache")
+    cached = substrate_wizard.read_cache(_VALID_HASH_B)
     assert cached is not None
     assert cached["receiver-fingerprint"] == "claude-code+human"
 
@@ -144,7 +151,7 @@ def test_run_writes_cache(monkeypatch, tmp_path):
 def test_run_uses_cache_when_present(monkeypatch, tmp_path):
     """If a fresh cache exists, run() uses it without re-prompting."""
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
-    substrate_wizard.write_cache("hash-fresh", {
+    substrate_wizard.write_cache(_VALID_HASH_C, {
         "receiver-fingerprint": "claude-code-autonomous",
         "trust-profile": [],
         "contextual-binding": "x",
@@ -154,7 +161,7 @@ def test_run_uses_cache_when_present(monkeypatch, tmp_path):
     def fail_prompt(_q):
         raise AssertionError("should not prompt when cache is fresh")
 
-    block = substrate_wizard.run("hash-fresh", prompt_fn=fail_prompt)
+    block = substrate_wizard.run(_VALID_HASH_C, prompt_fn=fail_prompt)
     assert "claude-code-autonomous" in block
 
 
@@ -166,7 +173,7 @@ def test_run_raises_runtime_error_on_eof(monkeypatch, tmp_path):
         raise EOFError()
 
     with pytest.raises(RuntimeError, match="deferred"):
-        substrate_wizard.run("hash-eof", prompt_fn=eof_prompt)
+        substrate_wizard.run(_VALID_HASH_D, prompt_fn=eof_prompt)
 
 
 def test_run_provenance_with_parent_envelope_hash(monkeypatch, tmp_path):
@@ -180,7 +187,7 @@ def test_run_provenance_with_parent_envelope_hash(monkeypatch, tmp_path):
         f"derived-from foo-bar {parent_sha}",
     ])
     block = substrate_wizard.run(
-        "hash-deriv", prompt_fn=lambda _q: next(answers_iter)
+        _VALID_HASH_E, prompt_fn=lambda _q: next(answers_iter)
     )
     assert "kind: derived-from" in block
     assert "parent-slug: foo-bar" in block
@@ -195,7 +202,7 @@ def test_cli_run_prints_82_block(tmp_path, monkeypatch):
     }
     result = subprocess.run(
         [sys.executable, "-m", "bin.substrate_wizard", "run",
-         "--author-spec-hash", "cli-hash",
+         "--author-spec-hash", "c" * 64,
          "--receiver", "claude-code+human",
          "--trust-profile", "none",
          "--binding", "test binding",
@@ -323,51 +330,34 @@ class TestNonInteractiveFlags:
         assert "binding" in result.stderr
         assert "provenance" in result.stderr
 
-    def test_invalid_receiver_errors(self, tmp_path):
-        """--receiver bogus → invalid_receiver error, exit 1."""
-        flags = [
-            "--receiver", "bogus",
-            "--trust-profile", "none",
-            "--binding", "test",
-            "--provenance", "none",
-        ]
-        # argparse will reject choices not in the list, so we bypass by patching
-        # choices. Instead test via run_with_flags directly (which accepts any str).
-        # For the CLI we use a known-bad value that doesn't match argparse choices.
-        # argparse will write to stderr and exit 2 for invalid choice; that's acceptable
-        # behavior — but the spec says emit our own error. We test run_with_flags directly.
-        import pathlib as _pl
-        orig_home = _pl.Path.home
-        _pl.Path.home = lambda: tmp_path
-        try:
-            with pytest.raises(ValueError, match="invalid receiver"):
-                substrate_wizard.run_with_flags(
-                    _ALT_HASH,
-                    receiver="bogus",
-                    trust_profile="none",
-                    binding="test",
-                    provenance="none",
-                )
-        finally:
-            _pl.Path.home = orig_home
+    def test_invalid_receiver_errors(self, tmp_path, monkeypatch):
+        """--receiver bogus → ValueError with 'invalid receiver' message."""
+        monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+        with pytest.raises(ValueError, match="invalid receiver"):
+            substrate_wizard.run_with_flags(
+                _ALT_HASH,
+                receiver="bogus",
+                trust_profile="none",
+                binding="test",
+                provenance="none",
+            )
 
     def test_invalid_receiver_cli_errors(self, tmp_path):
-        """CLI --receiver bogus → argparse error (exit 2) before wizard runs."""
+        """CLI --receiver bogus → error wizard.substrate reason=invalid_receiver, exit 1."""
         result = _run_wizard(
             tmp_path,
             ["--author-spec-hash", _ALT_HASH,
+             "--receiver", "bogus",
              "--trust-profile", "none",
              "--binding", "test",
              "--provenance", "none"],
         )
-        # Without --receiver argparse exits 2 (missing required arg in partial flags).
-        # The error path is covered by the partial-flags test.
-        # Here we verify that an invalid choice triggers exit non-zero.
-        # (argparse enforces choices so we can't pass "bogus" directly)
-        assert result.returncode != 0  # missing --receiver → partial flags → exit 1
+        assert result.returncode == 1
+        assert "ERROR wizard.substrate" in result.stderr
+        assert "invalid_receiver" in result.stderr
 
     def test_invalid_trust_profile_errors(self, tmp_path, monkeypatch):
-        """--trust-profile foo,bar → invalid_trust_profile error, exit 1."""
+        """--trust-profile foo,bar → ValueError with 'unknown trust token' message."""
         monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
         with pytest.raises(ValueError, match="unknown trust token"):
             substrate_wizard.run_with_flags(
@@ -379,7 +369,7 @@ class TestNonInteractiveFlags:
             )
 
     def test_empty_binding_errors(self, tmp_path, monkeypatch):
-        """--binding '' → invalid_binding error (ValueError), exit 1."""
+        """--binding '' → ValueError with 'contextual-binding must not be empty' message."""
         monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
         with pytest.raises(ValueError, match="contextual-binding must not be empty"):
             substrate_wizard.run_with_flags(
@@ -391,7 +381,7 @@ class TestNonInteractiveFlags:
             )
 
     def test_invalid_provenance_errors(self, tmp_path, monkeypatch):
-        """--provenance 'derived-from foo notahex' → invalid_provenance, exit 1."""
+        """--provenance 'derived-from foo notahex' → ValueError mentioning sha256 or provenance."""
         monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
         with pytest.raises(ValueError, match="sha256|provenance"):
             substrate_wizard.run_with_flags(
@@ -429,3 +419,48 @@ class TestNonInteractiveFlags:
         # All four must appear.
         for flag in ("receiver", "trust-profile", "binding", "provenance"):
             assert flag in result.stderr
+
+    # ------------------------------------------------------------------
+    # Path-traversal guard: --author-spec-hash validation
+    # ------------------------------------------------------------------
+
+    def test_invalid_author_spec_hash_traversal_rejected(self, tmp_path):
+        """--author-spec-hash traversal string → error wizard.substrate reason=invalid_author_spec_hash, exit 1."""
+        result = _run_wizard(
+            tmp_path,
+            ["--author-spec-hash", "../../etc/passwd"] + _BASE_FLAGS,
+        )
+        assert result.returncode == 1
+        assert "ERROR wizard.substrate" in result.stderr
+        assert "invalid_author_spec_hash" in result.stderr
+        # No file must be written outside the test HOME.
+        cache_dir = tmp_path / ".spectre" / "substrate-cache"
+        written = list(cache_dir.rglob("*")) if cache_dir.exists() else []
+        assert written == [], f"Unexpected files written: {written}"
+
+    def test_invalid_author_spec_hash_short_rejected(self, tmp_path):
+        """--author-spec-hash 'abc123' (too short) → error wizard.substrate reason=invalid_author_spec_hash, exit 1."""
+        result = _run_wizard(
+            tmp_path,
+            ["--author-spec-hash", "abc123"] + _BASE_FLAGS,
+        )
+        assert result.returncode == 1
+        assert "ERROR wizard.substrate" in result.stderr
+        assert "invalid_author_spec_hash" in result.stderr
+
+    def test_invalid_author_spec_hash_uppercase_rejected(self, tmp_path):
+        """--author-spec-hash with 64 UPPERCASE hex chars → rejected (we require lowercase)."""
+        uppercase_hash = "A" * 64
+        result = _run_wizard(
+            tmp_path,
+            ["--author-spec-hash", uppercase_hash] + _BASE_FLAGS,
+        )
+        assert result.returncode == 1
+        assert "ERROR wizard.substrate" in result.stderr
+        assert "invalid_author_spec_hash" in result.stderr
+
+    def test_write_cache_rejects_invalid_hash(self, tmp_path, monkeypatch):
+        """write_cache() raises ValueError for a non-hex hash (library caller bypass)."""
+        monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+        with pytest.raises(ValueError, match="author-spec hash"):
+            substrate_wizard.write_cache("../../evil", {})
