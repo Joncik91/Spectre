@@ -2,6 +2,21 @@
 
 All notable changes to the Spectre plugin.
 
+## v1.0.1 — 2026-05-13
+
+Post-release doc verification pass against v1.0.0 + one catalog content fix. No code/behavior changes outside the catalog content.
+
+### Fixed — catalog content
+- **Observability taxonomy bump v1→v2.** Added `local-direct-read` to the `collection` axis values for `/proc`-style TUI readers. `htop` and `tmux-status` reassigned from the misfit `sidecar-export` to `local-direct-read`. `prometheus` taxonomy-version bumped to 2 (axes unchanged — `pull-scrape` was already correct).
+
+### Changed — documentation alignment
+- `README.md` rewritten to reflect v1.0 surface: Background gains the six-view receiver-propagation framing; new "Six-view at a glance" and "Exemplars & Bindings" sections; Troubleshooting table extended with 10 v1.0 finding kinds; API section adds v1.0 component versions + the `INFO tier3.budget {json}` contract.
+- `docs/API.md` adds CLI commands section (incl. `spectre exemplars`), Finding kinds section (grouped by emitting tier/module), §§9-13 View Sections schema documentation, and refreshed module layout.
+- `docs/ARCHITECTURE.md` adds Tier-2b (`cross_view_gate`) as a separate module from `coverage_gate`, walker v1.0 state shape + generator inventory, new Substrate wizard + Tier-3 prompt extension + Hard cutover sections.
+- New `docs/exemplars/README.md` — catalog guide for operators + contributors with per-entry review gate spec.
+
+---
+
 ## v1.0.0 — 2026-05-13
 
 The six-view spec family release. Structural completion of what a "spec" means in Spectre: a family of six receiver-calibrated views (implementing-agent, product-input, product-output, human-user, integrator, operator), locked together, cross-consistent, calibrated to the metis catalog. **Hard cutover from v0.9** — no migration tool, no version dispatch. Pre-v1.0 specs must be regenerated via `/vision`.
