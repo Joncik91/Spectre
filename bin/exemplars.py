@@ -20,13 +20,14 @@ from bin import _catalog
 def _cmd_list(args: argparse.Namespace) -> int:
     cat = _catalog.load_catalog()
     if args.view_type:
-        items = [ex for ex in cat.exemplars.values() if args.view_type in ex.view_types]
+        items = [(k, ex) for k, ex in cat.exemplars.items() if args.view_type in ex.view_types]
     else:
-        items = list(cat.exemplars.values())
-    items.sort(key=lambda e: (e.view_types[0] if e.view_types else "", e.slug))
+        items = list(cat.exemplars.items())
+    items.sort(key=lambda kv: kv[0])
     if args.json:
         payload = [
             {
+                "key": k,
                 "slug": ex.slug,
                 "view-types": ex.view_types,
                 "conventions": ex.conventions,
@@ -38,7 +39,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
                 "origin": ex.origin,
                 "path": ex.path,
             }
-            for ex in items
+            for k, ex in items
         ]
         print(json.dumps(payload, indent=2))
         return 0
@@ -46,10 +47,9 @@ def _cmd_list(args: argparse.Namespace) -> int:
         print("EXEMPLARS: 0", file=sys.stderr)
         return 0
     print(f"EXEMPLARS: {len(items)}")
-    for ex in items:
-        axes_str = ", ".join(f"{k}={v}" for k, v in ex.axes.items())
-        view_str = ",".join(ex.view_types)
-        print(f"  [{ex.origin}] {ex.slug:24s} views={view_str:24s} axes=({axes_str})")
+    for k, ex in items:
+        axes_str = ", ".join(f"{ak}={av}" for ak, av in ex.axes.items())
+        print(f"  [{ex.origin}] {k:36s} axes=({axes_str})")
     return 0
 
 

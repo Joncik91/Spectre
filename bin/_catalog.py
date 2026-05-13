@@ -326,13 +326,16 @@ def _scan_root(root: pathlib.Path, origin: str, out: Catalog) -> None:
                 out.taxonomies[view_type] = taxonomy   # user overlay wins because scanned after
             except CatalogError as exc:
                 out.parse_errors.append(exc)
-        # Exemplars
+        # Exemplars — keyed by "<view-type>:<slug>" so the same slug can appear
+        # under multiple view-types (e.g. gh.md exists under help-text/ AND
+        # error-text/). Spec bindings reference the fully-qualified key.
         for md_path in sorted(view_dir.glob("*.md")):
             if md_path.name.lower() == "readme.md":
                 continue
             try:
                 ex = _parse_exemplar_file(md_path, origin)
-                out.exemplars[ex.slug] = ex
+                key = f"{view_type}:{ex.slug}"
+                out.exemplars[key] = ex
             except CatalogError as exc:
                 out.parse_errors.append(exc)
 
@@ -348,8 +351,18 @@ def load_catalog(force_reload: bool = False) -> Catalog:
     return cat
 
 
-def lookup(slug: str) -> Exemplar | None:
-    return load_catalog().exemplars.get(slug)
+def lookup(key: str) -> Exemplar | None:
+    """Lookup an exemplar by `<view-type>:<slug>` key, or by bare slug if
+    unambiguous (returns None when the bare slug matches more than one
+    view-type — caller must qualify)."""
+    cat = load_catalog()
+    if ":" in key:
+        return cat.exemplars.get(key)
+    # Bare slug fallback — only resolve when unambiguous.
+    matches = [ex for k, ex in cat.exemplars.items() if k.endswith(f":{key}")]
+    if len(matches) == 1:
+        return matches[0]
+    return None
 
 
 def by_view_type(view_type: str) -> list[Exemplar]:

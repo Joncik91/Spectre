@@ -1,0 +1,11 @@
+taxonomy-version: 1
+axes:
+  verbosity:
+    values: [terse, balanced, verbose]
+    description: How much text accompanies each user-facing help emission. Terse = one-line flag descriptions; balanced = paragraph per topic; verbose = full prose with discussion of tradeoffs.
+  structure:
+    values: [flat, sectioned, subcommand-tree]
+    description: How help content is hierarchically organized. Flat = single page; sectioned = labeled blocks (USAGE, OPTIONS, EXAMPLES); subcommand-tree = recursive per-subcommand help (`tool help cmd`, `tool help cmd subcmd`).
+  example-density:
+    values: [none, inline, separate-section, runnable-blocks]
+    description: Where and how worked examples appear. None = no examples; inline = one-liner after the flag; separate-section = EXAMPLES block; runnable-blocks = fenced code with prerequisites and expected output.
