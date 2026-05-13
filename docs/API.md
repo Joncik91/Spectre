@@ -60,6 +60,9 @@ Every Spectre CLI subcommand (under `bin/`) emits structured status lines on std
 | `SPECTRE_QUIET=1` | Suppresses `ok` and `info` lines. |
 | `SPECTRE_VERBOSE=1` | Adds `expand=` field with multi-line context (e.g. spec body in hydrate output). |
 | `SPECTRE_JSON=1` | Writes JSON records to stdout; text status moves to stderr. |
+| `SPECTRE_AUDIENCE=pm` | Dual-channel text rendering: after each status line, emits a second indented line with a plain-English sentence resolved from the glossary. `pm` sentences use `{field}` substitution from the emit's field map. If the code has no glossary entry, emits `  (no glossary entry for <code>)` instead. No effect in `dev` mode (default). |
+| `SPECTRE_GLOSSARY=1` | In JSON mode (`SPECTRE_JSON=1`), adds a `"pm"` key to every JSON record with the glossary PM sentence. Works independently of `SPECTRE_AUDIENCE`. |
+| `SPECTRE_GLOSSARY_PATH` | Override path to the glossary file. Default: `docs/glossary.md` relative to the plugin root. Used in tests to point at fixture glossaries. |
 
 **Path display rule.** All paths emitted by CLIs are project-relative (`specs/foo.spec.md`, `state/scratchpad.json`). Absolute paths, `${CLAUDE_PLUGIN_ROOT}`, and `$HOME` literals never appear in user-facing output. The `bin/_path_display.py` helper enforces this at the emit boundary.
 
@@ -103,6 +106,66 @@ From `specs/template.spec.md`. Each step is a self-contained transaction. Spectr
 ```
 
 Soft verifications (`echo done`, `true`, `: ; …`) are rejected by the Tier 1 AST classifier. Resource IDs must match a node in `specs/.graph.md`. Properties run after `verification:` passes — auditor verdicts are informational, never blocking. `produces:`/`requires:` support 8 contract types: `file:`, `package:`, `console-script:`, `route:`, `module:`, `binary:`, `db-table:`, `db-column:`. Mismatch → block-severity `unowned-requirement`.
+
+## Vocabulary
+
+`docs/glossary.md` is the canonical registry of every user-visible status code and load-bearing term.
+
+### Glossary schema
+
+Two entry shapes:
+
+**Status code** (`## <dotted.code>`):
+```markdown
+## walker.init
+- kind: status
+- dev: <one-line technical description>
+- pm: <plain-English description; may use {field} placeholders>
+- triggered_by: <when this code fires>
+- user_action: <what the user should do, or None>
+- related: comma, separated, keys
+- since: v0.x.y
+```
+
+**Term** (`## term:<noun>`):
+```markdown
+## term:walker
+- kind: term
+- dev: <precise one-line definition>
+- pm: <plain-English explanation>
+- related: comma, separated, keys
+```
+
+### CLI
+
+```
+spectre glossary [--filter PREFIX] [--audience dev|pm] [--json]
+```
+List all glossary entries. `--filter walker.` limits to the `walker.*` namespace.
+
+```
+spectre explain <code-or-term>
+```
+Pretty-print a single entry. `<code-or-term>` is either a status code (`walker.init`) or a term key with optional `term:` prefix (`term:walker` or just `walker`).
+
+### `SPECTRE_AUDIENCE=pm` — dual-channel rendering
+
+When set, every `emit()` call produces a second indented line below the status line:
+
+```
+OK walker.init rounds=3 pending=5 stop=none
+  The interview has started. There are 5 open questions for you to answer.
+```
+
+The PM sentence is resolved from the glossary `pm:` field with `{field}` placeholders substituted from the emit's keyword arguments. Missing fields → empty string (no crash).
+
+### `SPECTRE_GLOSSARY=1` — JSON pm-key opt-in
+
+When `SPECTRE_JSON=1` and `SPECTRE_GLOSSARY=1` (or `SPECTRE_AUDIENCE=pm`), every JSON record gains a `"pm"` key:
+
+```json
+{"level":"ok","code":"walker.init","rounds":3,"pending":5,"stop":"none","pm":"The interview has started. There are 5 open questions for you to answer."}
+```
 
 ## §8 Receiver Calibration
 
