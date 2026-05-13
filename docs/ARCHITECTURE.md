@@ -54,6 +54,9 @@ The hooks **never read or write** the active spec body itself — only the point
 ### `/vision <text>` (`skills/vision/SKILL.md`, ~340 lines)
 
 ```
+Phase: First-run welcome                 read hydrate.signal is_first_run field; on true:
+                                         render welcome block + choice 1/2/3;
+                                         on false: skip silently
 Phase: Fingerprint (silent, internal)    → state/local-symbols.json + template surfacing
 Phase: Wizard                            4 mandatory §8.2 questions; cached by author-spec-hash
 Phase: Intent                            (user input)

@@ -296,7 +296,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 
 ## hydrate.signal
 - kind: status
-- dev: No active spec found; emits reason=no-active-spec with a hint to run /vision.
+- dev: No active spec found; emits reason=no-active-spec with a hint to run /vision. Also emits is_first_run=true|false — true when specs/.active, state/scratchpad.json, state/*.walk.json, state/*.eval-result.json, and state/.spectre-welcomed are all absent.
 - pm: No active project found. Run /vision to start a new spec.
 - triggered_by: SessionStart when specs/.active does not exist.
 - user_action: Run /vision to begin a new spec.
@@ -519,13 +519,22 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - related: scratchpad.pending_adoption_set
 - since: v0.4.0
 
+## templates.import_builtin
+- kind: status
+- dev: Built-in template copied into specs/<slug>.spec.md.draft; name= is the builtin name, slug= is the target slug, path= is the written draft path. On error (reason=exists), the draft already exists — choose a different --slug or delete the existing draft.
+- pm: The built-in template has been copied into your project as a draft spec. Proceed with /vision to complete the spec.
+- triggered_by: `spectre templates import-builtin --name <name> --slug <slug>` subcommand.
+- user_action: If this emits as error with reason=exists, choose a different --slug or delete the existing draft file.
+- related: templates.list
+- since: v0.9.0
+
 ## templates.list
 - kind: status
-- dev: Template list operation completed; count= templates found in the store.
+- dev: Template list operation completed; count= templates found in the store (includes user templates and built-in templates with kind=builtin).
 - pm: There are {count} spec templates available.
 - triggered_by: `spectre templates list` subcommand.
 - user_action: None — informational listing.
-- related: hydrate.template_patches_pending
+- related: hydrate.template_patches_pending, templates.import_builtin
 - since: v0.7.0
 
 ## tier.classify

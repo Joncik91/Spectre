@@ -19,6 +19,51 @@ Triggered when the user types `/vision` followed by free-form text describing wh
 
 ## Protocol
 
+### Phase: First-run welcome
+
+At skill entry, before any CLI invocation, Claude reads the most recent `hydrate.signal`
+status emitted by the SessionStart hook. If `is_first_run=true`, render this block to the
+user verbatim:
+
+```
+Welcome — Spectre turns vague ideas into machine-verified specs.
+  /vision <your idea>    interview you to lock a spec
+  /implement             execute the locked spec step-by-step
+  spectre glossary       browse plain-English explanations of every term
+```
+
+Then surface the following numbered choice prompt:
+
+```
+1) Start fresh — describe what you want to build
+2) Use the built-in template as a starter
+3) Skip the welcome and just start (won't re-prompt next session)
+```
+
+Operator picks 1, 2, or 3:
+
+- **1 (Start fresh)** — proceed to the Fingerprint phase as normal.
+- **2 (Use built-in template)** — ask the user for a slug, then run:
+  ```bash
+  spectre templates import-builtin --name template --slug <user-supplied-slug>
+  ```
+  On `OK templates.import_builtin`, the imported draft becomes the seed for the walk's
+  draft materialization in the Draft phase. Skip the Fingerprint phase and proceed
+  directly to the Wizard phase.
+  If the `import-builtin` subcommand is unavailable (non-zero exit), fall back to
+  surfacing the manual copy command:
+  ```
+  cp ${CLAUDE_PLUGIN_ROOT}/specs/template.spec.md specs/<slug>.spec.md.draft
+  ```
+  Then re-invoke /vision.
+- **3 (Skip welcome)** — write the marker file to suppress future welcomes, then
+  proceed to the Fingerprint phase as normal:
+  ```bash
+  mkdir -p state && touch state/.spectre-welcomed
+  ```
+
+If `is_first_run=false`, skip this section entirely and proceed to the Fingerprint phase.
+
 ### Phase: Fingerprint (silent, internal)
 
 Before treating the user's text as a Spark, run the fingerprinter to surface prior art in the user's codebase:

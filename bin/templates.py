@@ -23,6 +23,23 @@ import tempfile
 TEMPLATES_VERSION = "0.4.2"
 
 
+def builtin_template_path() -> pathlib.Path:
+    """Resolve specs/template.spec.md relative to CLAUDE_PLUGIN_ROOT or this file's parent."""
+    plugin_root_env = os.environ.get("CLAUDE_PLUGIN_ROOT")
+    if plugin_root_env:
+        return pathlib.Path(plugin_root_env) / "specs" / "template.spec.md"
+    # Dev fallback: bin/ is two levels up from specs/
+    return pathlib.Path(__file__).resolve().parent.parent / "specs" / "template.spec.md"
+
+
+def list_builtins() -> list[dict]:
+    """Return list of built-in template descriptors: [{name, kind, path}, ...]."""
+    path = builtin_template_path()
+    if not path.is_file():
+        return []
+    return [{"kind": "builtin", "name": "template", "path": str(path)}]
+
+
 def templates_dir_default() -> pathlib.Path:
     return pathlib.Path.home() / ".spectre" / "templates"
 
@@ -30,24 +47,25 @@ def templates_dir_default() -> pathlib.Path:
 def list_templates() -> list[dict]:
     """Return list of template descriptors: [{name, kind, path}, ...].
 
-    kind is "spec" (under specs/) or "skill" (under skills/). Empty list
-    if the templates dir doesn't exist.
+    kind is "spec" (under specs/), "skill" (under skills/), or "builtin"
+    (shipped with the plugin). Empty list if the templates dir doesn't exist
+    and no builtins are found.
     """
     base = templates_dir_default()
-    if not base.is_dir():
-        return []
     out: list[dict] = []
-    for kind, subdir in (("spec", "specs"), ("skill", "skills")):
-        sub = base / subdir
-        if not sub.is_dir():
-            continue
-        for entry in sorted(sub.iterdir()):
-            if entry.is_file() and entry.suffix == ".md":
-                # name is the stem with .spec stripped if present
-                name = entry.stem
-                if name.endswith(".spec"):
-                    name = name[:-len(".spec")]
-                out.append({"name": name, "kind": kind, "path": str(entry)})
+    if base.is_dir():
+        for kind, subdir in (("spec", "specs"), ("skill", "skills")):
+            sub = base / subdir
+            if not sub.is_dir():
+                continue
+            for entry in sorted(sub.iterdir()):
+                if entry.is_file() and entry.suffix == ".md":
+                    # name is the stem with .spec stripped if present
+                    name = entry.stem
+                    if name.endswith(".spec"):
+                        name = name[:-len(".spec")]
+                    out.append({"name": name, "kind": kind, "path": str(entry)})
+    out.extend(list_builtins())
     return out
 
 
@@ -173,6 +191,21 @@ if __name__ == "__main__":
         help="Emit the full descriptors as JSON (ignores --limit).",
     )
 
+    p_import_builtin = sub.add_parser(
+        "import-builtin",
+        help="Copy a built-in template into the active project as a spec draft.",
+    )
+    p_import_builtin.add_argument(
+        "--name",
+        required=True,
+        help="Name of the built-in template (e.g. 'template').",
+    )
+    p_import_builtin.add_argument(
+        "--slug",
+        required=True,
+        help="Target slug for the draft file (written to specs/<slug>.spec.md.draft).",
+    )
+
     args = parser.parse_args()
 
     if args.cmd == "list":
@@ -189,3 +222,44 @@ if __name__ == "__main__":
             _status.emit("result", "templates.list",
                          count=len(ts),
                          items=items or "none")
+
+    elif args.cmd == "import-builtin":
+        # Find the builtin by name
+        builtins = list_builtins()
+        match = next((b for b in builtins if b["name"] == args.name), None)
+        if match is None:
+            _status.emit("error", "templates.import_builtin", dest="stderr",
+                         reason=f"unknown builtin name: {args.name!r}",
+                         remediation="run 'spectre templates list --json' to see available builtins")
+            sys.exit(1)
+
+        target_dir = pathlib.Path.cwd() / "specs"
+        target = target_dir / f"{args.slug}.spec.md.draft"
+
+        if target.exists():
+            _status.emit("error", "templates.import_builtin", dest="stderr",
+                         reason="exists",
+                         path=str(target),
+                         remediation="choose a different --slug or delete the existing draft")
+            sys.exit(1)
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+        body = pathlib.Path(match["path"]).read_text(encoding="utf-8")
+        # Atomic write via temp file
+        fd, tmp = tempfile.mkstemp(dir=str(target_dir), prefix=target.name + ".", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(body)
+            os.replace(tmp, str(target))
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
+        _status.emit("ok", "templates.import_builtin",
+                     name=args.name,
+                     slug=args.slug,
+                     path=f"specs/{args.slug}.spec.md.draft",
+                     remediation="run /vision to continue with the pre-seeded draft")

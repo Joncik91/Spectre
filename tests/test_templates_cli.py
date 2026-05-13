@@ -37,16 +37,17 @@ class TestListCli:
         r = _run("list", env=_isolate_home(tmp_path))
         assert r.returncode == 0
 
-    def test_list_empty_prints_zero_count(self, tmp_path):
+    def test_list_empty_shows_builtin_count(self, tmp_path):
+        """With no user templates, count= reflects built-in templates only."""
         r = _run("list", env=_isolate_home(tmp_path))
-        assert "count=0" in r.stdout
+        assert "count=1" in r.stdout  # one builtin: template
 
-    def test_list_one_spec_shows_count_one(self, tmp_path):
+    def test_list_one_spec_shows_count_including_builtin(self, tmp_path):
         spec_dir = tmp_path / ".spectre" / "templates" / "specs"
         spec_dir.mkdir(parents=True)
         (spec_dir / "auth.spec.md").write_text("# auth")
         r = _run("list", env=_isolate_home(tmp_path))
-        assert "count=1" in r.stdout
+        assert "count=2" in r.stdout  # 1 user spec + 1 builtin
 
     def test_list_includes_spec_name(self, tmp_path):
         spec_dir = tmp_path / ".spectre" / "templates" / "specs"
@@ -84,7 +85,7 @@ class TestListCli:
         (spec_dir / "auth.spec.md").write_text("x")
         r = _run("list", "--json", env=_isolate_home(tmp_path))
         data = json.loads(r.stdout)
-        assert isinstance(data, list) and len(data) == 1
+        assert isinstance(data, list) and len(data) == 2  # 1 user spec + 1 builtin
 
     def test_list_json_schema_has_kind(self, tmp_path):
         spec_dir = tmp_path / ".spectre" / "templates" / "specs"
@@ -92,7 +93,8 @@ class TestListCli:
         (spec_dir / "auth.spec.md").write_text("x")
         r = _run("list", "--json", env=_isolate_home(tmp_path))
         data = json.loads(r.stdout)
-        assert data[0]["kind"] == "spec"
+        user_specs = [t for t in data if t["kind"] == "spec"]
+        assert user_specs[0]["kind"] == "spec"
 
 
 class TestArgparse:

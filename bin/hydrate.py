@@ -14,6 +14,33 @@ from bin import _status  # noqa: E402
 SPECS = Path("specs")
 ACTIVE = SPECS / ".active"
 SCRATCH = Path("state") / "scratchpad.json"
+STATE = Path("state")
+WELCOMED = STATE / ".spectre-welcomed"
+
+
+def _is_first_run() -> bool:
+    """Return True iff this looks like a genuinely fresh project.
+
+    Conditions (all must hold):
+    - specs/.active does NOT exist
+    - state/scratchpad.json does NOT exist
+    - state/ does NOT exist OR exists but contains no *.walk.json or
+      *.eval-result.json files
+    - state/.spectre-welcomed does NOT exist
+    """
+    if ACTIVE.exists():
+        return False
+    if SCRATCH.exists():
+        return False
+    if WELCOMED.exists():
+        return False
+    if STATE.is_dir():
+        # Non-empty state dir with walk or eval files → not first-run
+        walk_files = list(STATE.glob("*.walk.json"))
+        eval_files = list(STATE.glob("*.eval-result.json"))
+        if walk_files or eval_files:
+            return False
+    return True
 
 
 def list_specs() -> str:
@@ -38,6 +65,9 @@ def _state_fields() -> dict:
 
 
 def main() -> int:
+    # Capture first-run state BEFORE migration (migrate creates scratchpad.json).
+    first_run = _is_first_run()
+
     # Auto-migrate v1 scratchpad on SessionStart, regardless of .active state.
     _result = _mig.migrate(SCRATCH)
     if _result == "migrated":
@@ -46,7 +76,8 @@ def main() -> int:
 
     if not ACTIVE.exists():
         _status.emit("result", "hydrate.signal", reason="no-active-spec",
-                     hint="run /vision to begin")
+                     hint="run /vision to begin",
+                     is_first_run=first_run)
         detect_and_propose_patches()
         surface_pending_template_patches()
         return 0
