@@ -1122,3 +1122,53 @@ class TestPersistLoadBackwardsCompat:
         state = walker.load(state_path)
         assert state is not None
         assert state.pending[0].prefab_options == []
+
+
+# ── TestRefreshPending ────────────────────────────────────────────────────────
+
+class TestRefreshPending:
+    """_refresh_pending wires lifecycle/prompt-design/semantic-criteria into pending."""
+
+    def _base_state(self, intent: str = "build a thing") -> walker.WalkState:
+        return walker.WalkState(
+            spec_intent=intent,
+            spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+        )
+
+    def test_semantic_criteria_added_on_empty_state(self):
+        """seed-semantic-criteria appears in pending after first refresh."""
+        state = self._base_state()
+        walker._refresh_pending(state, "")
+        ids = [c.id for c in state.pending]
+        assert "seed-semantic-criteria" in ids
+
+    def test_lifecycle_added_when_intent_triggers(self):
+        """seed-lifecycle appears when intent contains lifecycle signal."""
+        state = self._base_state(intent="Build a daemon that watches the filesystem")
+        walker._refresh_pending(state, "")
+        ids = [c.id for c in state.pending]
+        assert "seed-lifecycle" in ids
+
+    def test_lifecycle_not_added_when_no_trigger(self):
+        """seed-lifecycle absent when intent has no lifecycle signal."""
+        state = self._base_state(intent="parse a CSV file and sum column A")
+        walker._refresh_pending(state, "")
+        ids = [c.id for c in state.pending]
+        assert "seed-lifecycle" not in ids
+
+    def test_refresh_idempotent_after_flags_set(self):
+        """Second refresh with flags set adds nothing new."""
+        state = self._base_state(intent="Build a daemon watches filesystem")
+        state.lifecycle_asked = True
+        state.prompt_design_asked = True
+        state.semantic_criteria_asked = True
+        walker._refresh_pending(state, "")
+        assert state.pending == []
+
+    def test_refresh_idempotent_when_concern_already_in_pending(self):
+        """If seed-semantic-criteria already in pending, no duplicate added."""
+        state = self._base_state()
+        walker._refresh_pending(state, "")
+        count_before = len(state.pending)
+        walker._refresh_pending(state, "")
+        assert len(state.pending) == count_before

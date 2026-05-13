@@ -756,6 +756,21 @@ def _attach_defer_option(prefab_options: list[str], concern: Concern) -> list[st
     return list(prefab_options) + ["defer to later layer"]
 
 
+def _refresh_pending(state: WalkState, draft_text: str) -> None:
+    """Run all dynamic generators and append newly-applicable concerns to pending.
+
+    Called from peek-pending (before returning the next concern) and from
+    answer-concern (after recording an answer, before computing coverage) so
+    generators fire as the draft evolves and intent signals are met.
+
+    Generators that are already satisfied (flag set / already in pending+asked)
+    are no-ops per their own guards.
+    """
+    state.pending.extend(generate_lifecycle_concerns(state, draft_text))
+    state.pending.extend(generate_prompt_design_concerns(state, draft_text))
+    state.pending.extend(generate_semantic_criteria_concern(state))
+
+
 def _compute_coverage(state: WalkState, draft_text: str) -> dict:
     """Compute coverage metrics for the current walk state.
 
@@ -797,10 +812,9 @@ def _compute_coverage(state: WalkState, draft_text: str) -> dict:
         state.prompt_design_asked
         or not _detect_llm_call_trigger(state, draft_text)
     )
-    semantic_satisfied = (
-        state.semantic_criteria_asked
-        or "seed-semantic-criteria" in state.answered
-    )
+    # semantic_criteria_asked is the single source of truth — set by record_answer
+    # when seed-semantic-criteria is answered. No need to also check state.answered.
+    semantic_satisfied = state.semantic_criteria_asked
 
     recommended_stop = (
         oq_all_resolved
@@ -1762,6 +1776,22 @@ if __name__ == "__main__":
                          path=_path_display.display(state_path))
             sys.exit(1)
 
+        # Read draft for dynamic generator refresh
+        draft_text_pp = ""
+        if state.spec_draft_path.exists():
+            try:
+                draft_text_pp = state.spec_draft_path.read_text(encoding="utf-8")
+            except OSError:
+                pass
+        # Fire newly-applicable generators before returning next concern
+        _refresh_pending(state, draft_text_pp)
+        # Persist if generators added anything (idempotent if nothing changed)
+        try:
+            persist(state, state_path)
+        except OSError as exc:
+            _status.emit("error", "walker.persist", dest="stderr", reason=str(exc))
+            sys.exit(1)
+
         concern = next_concern(state)
         if concern is None:
             if args.json_mode:
@@ -1928,7 +1958,7 @@ if __name__ == "__main__":
             _status.emit("error", "walker.answer_failed", dest="stderr", reason=str(exc))
             sys.exit(1)
 
-        # Read draft for coverage computation
+        # Read draft for generator refresh + coverage computation
         draft_text = ""
         draft_path = state.spec_draft_path
         if draft_path.exists():
@@ -1936,6 +1966,9 @@ if __name__ == "__main__":
                 draft_text = draft_path.read_text(encoding="utf-8")
             except OSError:
                 pass
+
+        # Fire newly-applicable generators now that the draft may have evolved
+        _refresh_pending(state, draft_text)
 
         # Coverage and recommend-stop transition
         cov = _compute_coverage(state, draft_text)

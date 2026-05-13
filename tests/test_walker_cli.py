@@ -278,13 +278,17 @@ class TestPeekPendingCli:
         state_path = tmp_path / ".walk.json"
         draft = tmp_path / "foo.spec.md.draft"
         draft.write_text("# draft\n", encoding="utf-8")
-        # Build state with empty pending
+        # Build state with empty pending — use neutral intent so no lifecycle trigger
         state = walker.init_walk(spec_intent="test", spec_draft_path=draft)
         # Drain all pending by moving them to asked
         for c in list(state.pending):
             state.asked.append(c)
             state.answered[c.id] = "answer"
         state.pending.clear()
+        # Mark all dynamic-generator flags so _refresh_pending is a no-op
+        state.lifecycle_asked = True
+        state.prompt_design_asked = True
+        state.semantic_criteria_asked = True
         walker.persist(state, state_path)
         r = _run("peek-pending", "--state-path", str(state_path))
         assert r.returncode == 0
@@ -304,6 +308,10 @@ class TestPeekPendingCli:
             state.asked.append(c)
             state.answered[c.id] = "answer"
         state.pending.clear()
+        # Mark all dynamic-generator flags so _refresh_pending is a no-op
+        state.lifecycle_asked = True
+        state.prompt_design_asked = True
+        state.semantic_criteria_asked = True
         walker.persist(state, state_path)
         r = _run("peek-pending", "--state-path", str(state_path), "--json")
         assert r.returncode == 0
