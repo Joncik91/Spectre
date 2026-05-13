@@ -127,7 +127,7 @@ The persistence-tier gate (§3.5) is the single source of truth for halt-vs-exec
 
 **v0.3.1 loopback downgrade** (closes [#1](https://github.com/Joncik91/Spectre/issues/1) gap 9): `_is_network()` now parses URLs in argv. `127.0.0.1`, `localhost`, `[::1]`, `0.0.0.0`, and RFC1918 (`10.*`, `172.16-31.*`, `192.168.*`) downgrade `curl`/`wget` to path-tier classification on the output file. The packet never leaves the kernel; halting is pure friction. Variable URLs (`$VAR`) keep network tier — false-positive is the safe default.
 
-## Evaluator pipeline (v0.3.0)
+## Evaluator pipeline (v1.0)
 
 ```
 draft.spec.md.draft
@@ -140,20 +140,38 @@ draft.spec.md.draft
         │       Imports NOTHING from bin/tier or bin/resources.
         │       Findings: missing-why, soft-verification,
         │                 action-not-probed, missing-receiver-calibration.
+        │       v1.0 addition: _v1_structural_checks() verifies §§8.3-8.7
+        │         + §§9-13 present (or N/A), validates contract subsections,
+        │         warns on more-than-two N/A views. Gated by is_v1_spec().
+        │         Short-circuits for pre-v1.0 specs (no Spec-version: frontmatter).
         │
-        ├──→ Tier 2: coverage_gate.classify(draft_path,
-        │                                   preview_adrs=preview_adrs)
+        ├──→ Tier 2a: coverage_gate.classify(draft_path,
+        │                                    preview_adrs=preview_adrs)
         │       Cross-checks §8.1 calibration vs action path captures.
         │       Findings: undeclared-resource (warn),
         │                 undeclared-host-path (block),
         │                 calibration-hard-violation (block),
         │                 decision-without-adr (warn, deterministic).
         │
+        ├──→ Tier 2b: cross_view_gate.classify(draft_path)       [v1.0 only]
+        │       Cross-view consistency checks; short-circuits for non-v1.0 specs.
+        │       1. Resolves §§9-13 cross-view string references against §8.x fields.
+        │       2. Validates exemplar bindings against the metis catalog.
+        │       3. Enforces taxonomy-version match (exemplar vs catalog).
+        │       4. Flags fingerprint↔hard-contract contradictions across §§8.3-8.7.
+        │       Entry point: cross_view_gate.classify() — never raises.
+        │
         └──→ Tier 3: llm_judge.evaluate(spec_text, config=…)
                 Single JSON-only API call to DeepSeek deepseek-v4-flash.
                 Contradiction-tuple protocol — 10 kinds + unrecognized fallback.
+                v1.0 addition: _build_exemplar_context() — when the spec binds
+                  exemplars in §§9-13, conventions lists are injected into the
+                  contradiction prompt (capped at 5 violation tuples per call).
+                  No additional API calls — context appended to the single call.
                 CoT faithfulness cite-and-verify pass (zero extra API calls
                   when no block tuples exist).
+                Budget instrumentation: emits one JSON line to stderr per call:
+                  INFO tier3.budget {"calls":1,"exemplars_injected":N,"dismissals_by_fp":{…}}
                 Never raises. All failures become a single
                 tier3-unavailable info-severity sentinel finding.
         │
@@ -171,13 +189,13 @@ draft.spec.md.draft
 
 **Why three tiers?**
 
-- Tier 1 is **deterministic and free**. Catches the cheapest mistakes (missing `why:`, soft verifications) before any LLM call.
-- Tier 2 is **structural and free**. Cross-checks the §8.1 hard contract against actions' path captures. This is where most real bugs hide — a step that mutates `/etc/systemd/system/` while the spec only declares `mutates: /opt/btc-poller/` is a calibration gap that no syntax checker would notice.
+- Tier 1 is **deterministic and free**. Catches the cheapest mistakes (missing `why:`, soft verifications) before any LLM call. v1.0 extends this with structural checks for §§8.3-8.7 and §§9-13.
+- Tier 2 is **structural and free**. v1.0 splits this into two modules: (a) `coverage_gate` cross-checks the §8.1 hard contract against actions' path captures — this is where most real bugs hide; (b) `cross_view_gate` cross-validates the six-view model: reference resolution, exemplar catalog integrity, taxonomy-version consistency, and fingerprint↔hard-contract coherence.
 - Tier 3 is **semantic and paid**. DeepSeek is structurally other-than-Claude — different training distribution, different blind spots, different priors. The adversarial-reviewer principle: same-family review has correlated blind spots; different-family review breaks the correlation. Costs are capped (`budget_tokens_per_spec`) and opt-in (`enabled = false` by default).
 
 **Stable fingerprints, dismissable findings.** Every finding has a SHA-256 fingerprint over `{tier, kind, scope, step, steps, ref}` — message text is deliberately excluded so LLM nondeterminism doesn't break dismissals. A user dismisses a Tier 3 finding by appending `# tier3-dismissed: <fingerprint> "<reason>"` to the spec; the next evaluator run skips that finding. Tier 1 and Tier 2 findings are `dismissable=False` — structural rules don't get to be argued away.
 
-## Interrogation walker (v0.4.0)
+## Interrogation walker (v1.0)
 
 `bin/walker.py` is the strict-hybrid state machine that drives `/vision` Steps 1–5. It owns walk state, branching, dependency-tracked invalidation, and stop conditions. The skill phrases the walker's structured Concerns into natural-language questions; the walker is canonical, the rendered question is best-effort.
 
@@ -192,9 +210,75 @@ State persists at `state/.walk.json` (atomic JSON write — same pattern as `bin
 
 `init_walk` seeds five concerns: one `assumption-surface` (round 1: surface unstated assumptions in the intent) plus four `receiver-clarification` concerns covering the §8.1 hard contract (mutates, never-touches, decision-budget, reboot-survival). The downstream evaluator (§6.4) requires these fields; seeding them at walk-init guarantees they're answered before draft materialization.
 
+**v1.0 WalkState additions.** The `WalkState` dataclass gains:
+
+- `view_scope: dict[str, str]` — tracks in-scope / not-applicable per non-agent view. Keys: `"product-input"`, `"product-output"`, `"human-user"`, `"integrator"`, `"operator"`. Values: `"in-scope"` or `"not-applicable"`. Set by answering the five scope-check concerns (`scope-product-input`, etc.) mapped in `_VIEW_SCOPE_CONCERN_IDS`.
+- `product_input_asked: bool`, `product_output_asked: bool`, `human_user_asked: bool`, `integrator_asked: bool`, `operator_asked: bool` — idempotency guards for the per-view concern generators.
+
+**v1.0 generator inventory.** Five new `generate_*_concerns()` functions (one per non-agent view) extend the existing generator set:
+
+| Generator | Scope concern ID | Follow-up concern count |
+|---|---|---|
+| `generate_product_input_concerns()` | `scope-product-input` | 4 |
+| `generate_product_output_concerns()` | `scope-product-output` | 4 |
+| `generate_human_user_concerns()` | `scope-human-user` | 3 |
+| `generate_integrator_concerns()` | `scope-integrator` | 4 |
+| `generate_operator_concerns()` | `scope-operator` | 4 |
+
+Each generator emits the scope-check concern first. N/A scope short-circuits follow-ups; in-scope answers cascade into the view's concern set.
+
+**WALKER_VERSION = "1.0.0" — hard cutover.** Pre-v1.0 state files (`walker_version != "1.0.0"`) raise `ValueError` on load with a recovery hint. Operators must delete `state/.walk.json` and re-run `/vision`. No migration path; no version dispatch. This is intentional: the new `view_scope` and five per-view `*_asked` fields cannot be defaulted from an older state shape without silently skipping view concerns for in-flight specs.
+
 Reference:
 - Design: `docs/superpowers/specs/2026-05-06-spectre-v0.4-cdlc-closure.md`
 - Plan: `docs/superpowers/plans/2026-05-06-v0.4.0-walker.md`
+
+## Substrate wizard (v1.0 — per-view extension)
+
+`bin/substrate_wizard.py` fires at `/vision` Step 0.5 to populate §8.2 via 4 mandatory questions. v1.0 extends this with `run_per_view()`, which renders one §8.x block from validated flag values.
+
+**Per-view fingerprint vocabularies (`_VIEW_FINGERPRINTS`).** Each of the six views has its own allowed receiver-fingerprint set:
+
+| View | Vocabulary |
+|---|---|
+| `implementing-agent` | `claude-code+human`, `claude-code-autonomous`, `non-claude-ai`, `human-only` |
+| `product-input` | `human-typed`, `programmatic-trusted`, `programmatic-untrusted`, `streamed-event`, `not-applicable` |
+| `product-output` | `human-reader`, `programmatic-consumer`, `streaming-sink`, `log-aggregator`, `not-applicable` |
+| `human-user` | `cli-power-user`, `cli-novice`, `gui-only`, `no-human-user`, `not-applicable` |
+| `integrator` | `library-consumer`, `api-consumer`, `webhook-subscriber`, `sdk-author`, `no-integrator`, `not-applicable` |
+| `operator` | `on-call-engineer`, `sre-team`, `self-operated`, `no-operator`, `not-applicable` |
+
+**Per-view trust-profile vocabularies (`_VIEW_TRUST_TOKENS`).** Trust tokens are scoped to each view and isolated by design. A token valid in one view's vocabulary is rejected if specified in another view's profile — cross-vocabulary cross-pollination would mislead the evaluator. Example: `handles-secrets` is valid for `implementing-agent`; `accessibility-required` is valid for `human-user`. Neither is accepted in the other's profile field.
+
+**`run_per_view()` entry point.** Caller (`/vision` skill) walks the `view_scope` dict from `WalkState` and invokes `run_per_view(view=..., receiver=..., trust_profile=..., binding=...)` once per in-scope view. Returns a rendered §8.x markdown block. When `receiver == "not-applicable"`, the block degenerates to a single `not-applicable: <reason>` field. Cache responsibility is on the caller (see `run_with_flags` for the §8.2 cache pattern).
+
+## Tier-3 prompt extension (v1.0 — exemplar context injection)
+
+When a v1.0 spec binds exemplars in §§9-13, `_build_exemplar_context()` appends the bound conventions lists to the Tier-3 contradiction prompt:
+
+1. Walks §§9-13 sections and extracts `exemplar:<view-type>:<slug>` references.
+2. Looks each reference up in the metis catalog via `_catalog.lookup()`. Missing entries are silently skipped (Tier-2 cross-view gate already flags `exemplar-not-found`).
+3. Formats the conventions list per binding and appends to the user-message portion of the API call. Capped at 5 violation tuples per call — same single API call, no multiplied requests.
+4. DeepSeek is instructed to identify steps whose output would violate a bound exemplar's conventions.
+
+**Budget instrumentation.** Every `evaluate()` call emits one JSON line to stderr, regardless of whether exemplars were injected:
+
+```
+INFO tier3.budget {"calls": 1, "exemplars_injected": N, "dismissals_by_fp": {...}}
+```
+
+`calls` is always `1`. The ship-gate harness uses this line to confirm Tier-3 call volume stays within budget. Parse with `json.loads`, not regex, since the payload is structured JSON.
+
+## Hard cutover: v1.0 breaks walker_version backwards compatibility
+
+Pre-1.0 state files (`walker_version != "1.0.0"` in `state/.walk.json`) raise `ValueError` on `walker.load()` with a message of the form:
+
+```
+walker_version mismatch: file has '0.4.1', walker is '1.0.0';
+remove state/.walk.json and re-run /vision to start a fresh walk.
+```
+
+No migration tool is provided. The state-shape change (five new per-view fields + `view_scope` dict) cannot be safely defaulted from a v0.x state file without silently omitting view-concern families for any in-flight spec that would have answered them. Recovery: delete `state/.walk.json` and re-run `/vision`.
 
 ## Observe + Adapt (v0.4.1)
 
@@ -255,6 +339,8 @@ Steps reference them via `resources: [res-port-8080]`. The supervisor grants the
 
 ## Spec template anatomy (`specs/template.spec.md`)
 
+**Pre-v1.0 shape (§§1-8.2):**
+
 ```
 §1  Hard Problem            one-paragraph non-obvious challenge
 §2  First Principles        3–7 bullets (physics/logic, no analogies)
@@ -264,8 +350,26 @@ Steps reference them via `resources: [res-port-8080]`. The supervisor grants the
 §6  Steps                   YAML list: why/action/verification (+ properties, resources)
 §7  Success Criteria        binary checklist
 §8  Receiver Calibration    8.1 hard contract (machine-enforced)
-                            8.2 human notes (informational)
+                            8.2 cognitive-substrate contract (§8.2 wizard-prompted)
 ```
+
+**v1.0 additions (§§8.3-8.7 + §§9-13):**
+
+```
+§8.3  Product-input substrate     per-view receiver-fingerprint + trust-profile + contextual-binding
+§8.4  Product-output substrate    (same schema; separate vocabulary)
+§8.5  Human-user substrate        (same schema; separate vocabulary)
+§8.6  Integrator substrate        (same schema; separate vocabulary)
+§8.7  Operator substrate          (same schema; separate vocabulary)
+
+§9   Product-Input View           contracts: mechanical | coverage | exemplar-bindings
+§10  Product-Output View          (same three-type taxonomy)
+§11  Human-User View              (same three-type taxonomy)
+§12  Integrator View              (same three-type taxonomy)
+§13  Operator View                (same three-type taxonomy)
+```
+
+v1.0 specs must open with `**Spec-version:** 1.0` frontmatter. Any view may be marked `not-applicable: <reason>` to degenerate to a single-field block; more than two N/A views generates a warn-severity `excessive-not-applicable` finding.
 
 §8.1 is the load-bearing addition from v0.3.0. The four required fields — `mutates`, `never-touches`, `decision-budget`, `reboot-survival` — are cross-checked by Tier 2 against every action's path captures. This is what catches "the spec said it would only touch `/opt/foo/` but step 7 writes to `/etc/`" before any code runs.
 
