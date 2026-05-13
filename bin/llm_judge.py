@@ -112,8 +112,12 @@ distinct sub-action when assessing completeness. Do NOT emit \
 segment rather than at the start of "action_summary". The segments \
 collectively define what the step does; any segment counts. When \
 "action_segments" is absent (preprocessor parse error or no chaining \
-detected), reason about the full "action_summary" string and explicitly note \
-in your "rationale" if you suspect a chained action you couldn't parse.
+detected), reason about the full "action_summary" string. If you suspect a \
+chained action you couldn't parse AND the parsing ambiguity itself surfaces a \
+real gap, emit an "unrecognized" tuple with \
+description="suspected unparsed chain" and cite the affected step. Do NOT \
+emit this tuple merely because "action_segments" is absent — only when the \
+suspected chain genuinely introduces a coverage or ownership gap.
 
 ---
 v0.7 — adversarial-pathway rubric:
@@ -405,8 +409,14 @@ def _segment_action(action_str: str) -> list[str] | None:
             i += 2
             continue
 
+        if ch == "(" and paren_depth == 0:
+            # Bare subshell at top level: (cmd && ...) — treat as paren group.
+            paren_depth += 1
+            i += 1
+            continue
+
         if ch == "(" and paren_depth > 0:
-            # Nested paren inside a $() subshell.
+            # Nested paren inside a $() subshell or bare subshell.
             paren_depth += 1
             i += 1
             continue
@@ -422,7 +432,12 @@ def _segment_action(action_str: str) -> list[str] | None:
             i += 1
             continue
 
-        # Heredoc opener: <<[WORD] at top level.
+        # Here-string <<< — advance past all three '<' chars and continue.
+        if ch == "<" and i + 1 < n and action_str[i + 1] == "<" and i + 2 < n and action_str[i + 2] == "<" and paren_depth == 0 and backtick_depth == 0:
+            i += 3  # skip <<<; the operand is scanned normally by subsequent iterations
+            continue
+
+        # Heredoc opener: <<[WORD] at top level (but NOT <<< here-string).
         if ch == "<" and i + 1 < n and action_str[i + 1] == "<" and paren_depth == 0 and backtick_depth == 0:
             # Collect the heredoc word (strip leading -, whitespace, quotes).
             j = i + 2

@@ -123,3 +123,26 @@ class TestSegmentAction:
         # Quoted arg with && inside quote, then a real separator outside.
         result = _segment_action('echo "a && b" && true')
         assert result == ['echo "a && b"', "true"]
+
+    # ── Bare-paren subshell (SHOULD-FIX 1) ──────────────────────────────────
+
+    def test_bare_paren_subshell_not_split(self):
+        # (cd /tmp && rm foo) is a bare subshell group — must not be split.
+        result = _segment_action("(cd /tmp && rm foo) && echo done")
+        assert result == ["(cd /tmp && rm foo)", "echo done"]
+
+    def test_bare_paren_only(self):
+        # A single bare-paren group with no trailing chain.
+        result = _segment_action("(cd /tmp && rm foo)")
+        assert result == ["(cd /tmp && rm foo)"]
+
+    # ── Here-string <<< (SHOULD-FIX 2) ──────────────────────────────────────
+
+    def test_here_string_not_parsed_as_heredoc(self):
+        # <<< is a here-string, NOT a heredoc opener — must not swallow the rest.
+        result = _segment_action('cat <<< "hello" && echo done')
+        assert result == ['cat <<< "hello"', "echo done"]
+
+    def test_here_string_unquoted(self):
+        result = _segment_action("grep foo <<< bar && echo done")
+        assert result == ["grep foo <<< bar", "echo done"]
