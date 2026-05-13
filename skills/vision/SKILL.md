@@ -140,6 +140,12 @@ Capture stdout — that's the §8.2 markdown block. Inject it after §8.1 in the
 
 If `trust-profile` includes `untrusted-input` or `handles-secrets`, every step that produces an artifact MUST declare `untrusted-input: yes/no` and (when relevant) `sanitizes:` covering its sanitized OUTPUT. The evaluator's Tier 1 will block on missing annotations.
 
+**Step 4 — fire per-view substrate (v1.0):** §§8.3-8.7 carry one substrate block per non-agent view (product-input, product-output, human-user, integrator, operator). Each view is either in-scope (the spec author answered the scope-check concern with a value other than `not-applicable`) or marked N/A. For each in-scope view, ask the four substrate questions tailored to that view (the receiver-fingerprint vocabulary is per-view; see `bin/substrate_wizard._VIEW_FINGERPRINTS` for the allowed values). Invoke `bin.substrate_wizard.run_per_view(view=<view>, receiver=<value>, trust_profile=<csv>, binding=<one-line>)` and inject the returned markdown after §8.2.
+
+For views the walker has answered `not-applicable`, invoke `run_per_view(view=<view>, receiver='not-applicable', not_applicable_reason='<one-line reason>')` instead. The resulting §8.x block degenerates to a single `not-applicable: <reason>` field; the corresponding §9-13 view section body must also be replaced with the same `not-applicable: <reason>` marker.
+
+Trust-profile vocabularies are per-view and NOT interchangeable. `untrusted-input` is valid only in §8.2 (implementing-agent); `accessibility-required` is valid only in §8.5 (human-user); `paging-required` is valid only in §8.7 (operator). Cross-pollination is rejected by the validator.
+
 ### Phase: Intent
 
 The user has typed `/vision <free-form text>`. Treat the text as **intent**, not as a spec. Anchor cwd via `pwd` to capture `$PROJECT`. If `$PROJECT` looks like a plugin cache (`/root/.claude/plugins/...`), HALT.
@@ -209,6 +215,24 @@ Repeat until the walker reports stop:
    ...
    ```
    The operator may answer with the digit (e.g. `1`) or the option token (e.g. `yes`), or type a free-form answer. If `options=` is absent, accept free-form text only.
+
+   **v1.0 — exemplar-selection concerns.** When a concern ID matches `*-style-*` (e.g. `help-text-style-hu`, `error-text-style-hu`, `log-format-style-op`, `api-exemplar-int`, `observability-style-op`), the operator is being asked to bind the spec to a catalog exemplar. Before rendering the question, fetch the catalog entries for the relevant view-type:
+
+   ```bash
+   spectre exemplars list --view-type <type> --json
+   ```
+
+   Then render each option with its axis values so the operator sees what they're choosing **between**, not just from:
+   ```
+   1) <slug-1> — axes: <axis1=value, axis2=value, ...>
+   2) <slug-2> — axes: <axis1=value, axis2=value, ...>
+   ...
+   N) none — skip exemplar binding for this view
+   ```
+
+   The operator's answer becomes the spec's exemplar binding (e.g. `help-text-style: exemplar:help-text:curl`). Tier-2 cross_view_gate validates the binding against the catalog at lock time; Tier-3 llm_judge injects the chosen exemplar's conventions into its contradiction prompt during implementation review.
+
+   **v1.0 — view-scope concerns.** Concern IDs `scope-product-input`, `scope-product-output`, `scope-human-user`, `scope-integrator`, `scope-operator` ask the operator to declare whether a view applies. When the operator answers `not-applicable`, the corresponding §8.x substrate block degenerates to `not-applicable: <reason>` and the §9-13 section body is omitted. The walker short-circuits follow-up concerns for that view.
 
    Append on the same turn:
    ```
@@ -292,7 +316,13 @@ Repeat until the walker reports stop:
 The walk has stopped. Render the draft from accumulated `state.answered` plus `state.spec_intent`:
 
 1. **Slugify the title** (lowercase, `[^a-z0-9]+ → -`, trim).
-2. **Write the draft file** atomically at `$PROJECT/specs/<slug>.spec.md.draft` using the answers as Steps + First Principles + §8 Receiver Calibration content. The exact mapping from concerns to spec sections lives in your judgment of what the answers tell you; the skill does not impose a 1:1 mapping. Standard `## 1. Hard Problem` through `## 8. Receiver Calibration` structure per `specs/template.spec.md`.
+2. **Write the draft file** atomically at `$PROJECT/specs/<slug>.spec.md.draft` using the answers as Steps + First Principles + §§8-13 content. The exact mapping from concerns to spec sections lives in your judgment of what the answers tell you; the skill does not impose a 1:1 mapping.
+
+   **v1.0 structure (required):** frontmatter must include `**Spec-version:** 1.0`. The draft must carry §§1-7 (implementing-agent view), §§8.1-8.7 (receiver-calibration family, one block per view), and §§9-13 (one view section per non-agent receiver) per `specs/template.spec.md`. Views the operator marked `not-applicable` via `scope-*` concerns get a single `not-applicable: <reason>` field in their §8.x substrate AND a single `not-applicable: <reason>` marker in place of their §9-13 contracts. Views the operator put in-scope get fully-populated §8.x and §9-13 contents.
+
+   §§9-13 contracts MUST declare at least one of: `### Mechanical contracts`, `### Coverage contracts`, `### Exemplar bindings` (Tier-1 `malformed-view-contract` blocks lock otherwise). Exemplar bindings use the form `<aspect>-style: exemplar:<view-type>:<slug>` referencing a catalog entry surfaced by the walker (verify with `spectre exemplars list`). Pin the taxonomy version: `taxonomy-version: <view-type>:<int>, ...`.
+
+   Cross-view string references (e.g. `<halt-hint from §8.2 ux-contract>`) are resolved by Tier-2 cross_view_gate at lock time — a reference to a non-existent §8.x field is a block finding. Prefer references over duplicate strings when the same message appears across views.
 3. **Emit the lock-confirm prompt and render it to the operator.** After printing the draft summary line, emit:
 
    ```bash

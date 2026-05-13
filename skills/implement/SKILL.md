@@ -271,6 +271,8 @@ If `never-ask-again`: treat as `once-only` for now. Print "Note: never-ask-again
 
 **Sandbox-paradox brake.** The CLI consults the persistent counter against `DEFAULT_BRAKE_THRESHOLD` (default 3) BEFORE writing the TOML; if the counter is already at threshold, the CLI prints the BRAKE message and exits 0 without bumping anything. The brake is session-scoped via `state/scratchpad.json`'s `tracks.<track>.session_adoption_count` field — restarting Claude Code (or starting a new spec/track) resets it on the next `/vision`. The threshold is read dynamically from `DEFAULT_BRAKE_THRESHOLD` rather than hardcoded.
 
+**v1.0 — `satisfies:` step field.** v1.0 specs may declare an optional `satisfies:` array on individual steps (e.g. `satisfies: [human-user-help-text, operator-log-format]`) naming which view contracts the step's output is meant to fulfill. When present, Tier-3 (if enabled) will inject the bound exemplar's conventions into its contradiction prompt for that step — this is mechanical; no skill action is required beyond preserving the field on round-trip. The Tier-3 prompt extension fires automatically from `bin/llm_judge._build_exemplar_context` when the spec's frontmatter declares `**Spec-version:** 1.0` and the view binds an exemplar. The tier classifier itself does NOT route differently based on `satisfies:` — view-specific routing is deferred to v1.1 once dogfooding reveals how view-bound implementations fail.
+
 ### Phase: Resource acquire
 
 If `current_resources` is non-empty, acquire each Resource via the supervisor before executing. Run:
