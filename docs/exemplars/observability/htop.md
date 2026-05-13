@@ -10,8 +10,8 @@ conventions:
   - "Color coding is role-consistent across the process table: kernel threads use one color, user processes another, and zombie processes a distinct third; using the same color for any two of these categories is a violation"
   - "The process list is sortable by any column; the currently active sort column is indicated by a highlight or `>` marker on the column header, not by text annotation in the row"
   - "The search/filter bar (`/` key) appears inline at the bottom of the screen and narrows the process list in real time as characters are typed; a modal dialog that requires confirmation before filtering is a violation"
-axes: {metric-model: counters-plus-gauges, cardinality: low-fixed-labels, collection: sidecar-export}
-taxonomy-version: 1
+axes: {metric-model: counters-plus-gauges, cardinality: low-fixed-labels, collection: local-direct-read}
+taxonomy-version: 2
 source-url: https://htop.dev/
 last-reviewed: 2026-05-13
 ---
