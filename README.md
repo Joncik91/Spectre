@@ -6,7 +6,57 @@
 
 > Spectre — a deterministic spec-driven Claude Code plugin. Vision → Spec → Evaluate → Lock → Implement → Verify, with three-tier pre-lock review and per-project resource locking.
 
-[![tests](https://img.shields.io/badge/tests-1555%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![tests](https://img.shields.io/badge/tests-1748%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+## What is Spectre?
+
+Spectre turns a vague idea into a locked, machine-verifiable specification, then drives an AI to execute it step-by-step. You stay in the loop at every gate — clarifying questions during the interview, confirming the locked spec, approving each step's verification.
+
+Plain Claude Code lets you chat with the agent and hope it stays on-track. Spectre makes the spec the canonical artifact: every action ties back to a numbered step you can audit, every halt has a verification gate, and drift is detectable across reboots and session restarts.
+
+## Who is this for?
+
+- A **PM with a one-line idea** who wants a real spec without writing one from scratch.
+- An **engineer who wants AI to execute** a spec step-by-step with verification gates at every step.
+- A **team lead who wants traceability** — every decision, every step, every halt is captured as an immutable artifact (ADRs, sidecars, ledger).
+
+## Quickstart
+
+```
+1. /vision <your idea>          start an interactive interview to lock a spec
+2. (answer 4-8 questions)        the interview adapts to your domain
+3. lock the draft                confirm and Spectre seals it with an integrity hash
+4. /implement                    Spectre drives the steps, verifying each
+5. spectre glossary              browse plain-English meanings of every status code
+6. SPECTRE_AUDIENCE=pm           set in your env for auto-rendered plain-English status lines
+```
+
+## Vocabulary
+
+Spectre uses some engineer terms with specific meanings. If a status line is
+unclear, two paths work:
+
+- `spectre glossary` — list every status code and term, with plain-English explanations.
+- `spectre explain <code>` — single-code lookup with context.
+- `SPECTRE_AUDIENCE=pm` — environment variable; when set, every status line is
+  followed by an indented plain-English sentence. Set it in your shell rc to make
+  it permanent.
+
+Full vocabulary registry: [docs/glossary.md](docs/glossary.md).
+
+## Table of Contents
+
+- [What it does](#what-it-does)
+- [Background](#background)
+- [Install](#install)
+- [Usage](#usage)
+- [Troubleshooting](#troubleshooting)
+- [API](#api)
+- [Architecture](#architecture)
+- [Tests](#tests)
+- [Maintainers](#maintainers)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## What it does
 
@@ -31,34 +81,20 @@ Then:
 
 Runs the spec one step at a time: prints the `why:` before each action, gates on the `verification:` command, halts on risky actions, never silently fails.
 
-Plain Claude Code lets you chat with the agent and hope it stays on-track. Spectre makes the spec the canonical artifact: every action ties back to a numbered step you can audit, every halt has a verification gate, and drift is detectable across reboots and session restarts.
-
-## Table of Contents
-
-- [Background](#background)
-- [Install](#install)
-- [Usage](#usage)
-- [API](#api)
-- [Architecture](#architecture)
-- [Tests](#tests)
-- [Maintainers](#maintainers)
-- [Contributing](#contributing)
-- [License](#license)
-
 ## Background
 
 Default Claude Code auto-memory drifts during long sessions: spec-level intent gets buried under terminal scroll-back, "what did I just change on disk" answers require re-reading logs that have already aged out of context, and the agent will happily power through a half-broken plan when nobody re-grounds it.
 
 Spectre overrides this with a deterministic state machine that drives an unbroken **vision → spec → evaluate → lock → implement → verify** chain.
 
-Two hooks own the context plane, two skills own the agent plane, and stdlib-only Python modules own the state plane (interrogation walker, observations log, personal-rules overrides, CDLC ledger, templates registry, template-patcher). See [`CHANGELOG.md`](CHANGELOG.md) for the per-release log.
+Two hooks own the context plane, two skills own the agent plane, and stdlib-only Python modules own the state plane (the interview phase (`walker` internally), observations log, personal-rules overrides, CDLC ledger, templates registry, template-patcher). See [`CHANGELOG.md`](CHANGELOG.md) for the per-release log.
 
 **The four invariants:**
 
 - **Spec is law.** `specs/.active` is an explicit instruction-pointer file. The hydrator re-injects exactly one spec on every session start — no mtime guessing, no scrollback archaeology.
 - **Steps are atomic transactions.** Every step has `why:` (first-principles justification, printed before execution), `action:` (the command), and `verification:` (a separate command that must exit 0 to prove the side effect). Soft verifications (`true`, `echo done`) are forbidden by the evaluator.
 - **Pre-lock review is mandatory.** Three tiers of validation run before a draft becomes the active spec: deterministic AST classifier (Tier 1, always), structural coverage gate (Tier 2, always), DeepSeek `deepseek-v4-flash` adversarial reviewer (Tier 3, opt-in). Block-severity findings prevent lock. Tier 3 status is always surfaced — when it skips, the skip is visible (see "First-run setup" below).
-- **Spec authorship is interrogation, not transcription.** The interrogation walker treats authorship as a graph walk: the human supplies intent, the LLM walks the possibility-graph one concern at a time. The walker (`bin/walker.py`) refuses to prune branches biology lets humans skip and stops only when the author says so OR when adversarial review (Tier 3) stops finding new things. Output: a complete-enough spec authored in ~10 min instead of ~60 min.
+- **Spec authorship is interrogation, not transcription.** The interview phase (`walker` internally) treats authorship as a graph walk: the human supplies intent, the LLM walks the possibility-graph one concern at a time. The walker (`bin/walker.py`) refuses to prune branches biology lets humans skip and stops only when the author says so OR when adversarial review (Tier 3) stops finding new things. Output: a complete-enough spec authored in ~10 min instead of ~60 min.
 - **Risky steps halt by default.** A persistence-tier classifier gates every action: `silent` and `repo` execute freely; `host` and `network` halt and ask. The Never Autonomous list (sudo, rm -rf, systemctl mask, …) is a hard halt regardless of tier.
 
 ## Install
@@ -118,7 +154,7 @@ The key value is never copied into `reviewer.toml` — only the env-var name is 
 
 ### Personal rules — adoptive halt overrides
 
-`~/.spectre/personal-rules.toml` accumulates user-adopted rule overrides. Every TIER GATE halt in `/implement` records a fingerprint to `~/.spectre/observations.jsonl`. After a halt where you reply `yes` and the action verifies, the skill prompts: **"Adopt this halt-class as personal-rule-skip? (adopt / once-only / never-ask-again)"**.
+`~/.spectre/personal-rules.toml` accumulates user-adopted rule overrides. Every TIER GATE halt in `/implement` records a fingerprint (a stable hash of the halt class and action context) to `~/.spectre/observations.jsonl`. After a halt where you reply `yes` and the action verifies, the skill prompts: **"Adopt this halt-class as personal-rule-skip? (adopt / once-only / never-ask-again)"**.
 
 - `adopt` writes to `personal-rules.toml`. Future runs of the same `(classifier_label, fingerprint)` skip the halt automatically.
 - Sandbox-paradox brake: after 3 adoptions in one session, the prompt stops firing. The skill prints `BRAKE: edit ~/.spectre/personal-rules.toml to review`. Restarting resets the counter (counter is persisted per-track in `state/scratchpad.json`).
@@ -145,7 +181,7 @@ The setup wizard provisions `~/.spectre/templates/{specs,skills}/` + `~/.spectre
 
 ### Template-patches — Adapt's auto-proposals
 
-When a TIER GATE halt fingerprint recurs ≥3 times across your projects without being adopted as a personal-rule, Spectre auto-proposes a markdown patch to your project's `specs/template.spec.md`. Patches land at `~/.spectre/template-patches/proposed/<slug>.md`. SessionStart surfaces the count.
+When a TIER GATE halt fingerprint (a stable hash of the halt class and action context) recurs ≥3 times across your projects without being adopted as a personal-rule, Spectre auto-proposes a markdown patch to your project's `specs/template.spec.md`. Patches land at `~/.spectre/template-patches/proposed/<slug>.md`. SessionStart surfaces the count.
 
 Manual workflow: `cat` the proposed patch, decide. Move to `accepted/` to mark applied, `rejected/` to dismiss. Spectre never auto-merges.
 
@@ -168,10 +204,10 @@ Minimum viable sequence:
 
 #### /vision flow
 
-`/vision` drives a multi-turn interrogation walk before writing a single line of spec:
+`/vision` drives a multi-turn interview walk before writing a single line of spec:
 
 - Codebase fingerprint scan, then Feasibility Audit (silent).
-- Walker initialized with five seed concerns (1 assumption-surface + 4 §8.1 receiver-clarification: mutates / never-touches / decision-budget / reboot-survival).
+- The interview phase (`walker` internally) initialized with five seed concerns (1 assumption-surface + 4 §8.1 receiver-clarification: mutates / never-touches / decision-budget / reboot-survival).
 - Round 1: walker emits the next concern; skill phrases as a natural-language question.
 - User answers; walker records answer, queues dependent concerns per receiver.
 - Loop continues until: user types `stop`, OR Tier 3 yield-delta converges (3 rounds with <2 new findings), OR max-rounds (30), OR per-receiver-exhausted.
@@ -206,6 +242,25 @@ Minimum viable sequence:
 
 The hydrator re-injects the same active spec and the scratchpad's `step` (per track) on every session start — you resume mid-mission across reboots and Claude restarts. To switch missions, run `/vision` again; the prior spec's history (ADRs, eval sidecar) stays on disk.
 
+## Troubleshooting
+
+The table below covers the most common halts in `/vision` and `/implement` happy paths. Each `remediation=` field is also emitted inline when the halt fires.
+
+| Halt code | What it means | Remediation |
+|---|---|---|
+| `walker.open-questions-unresolved` | The interview detected open questions in your intent that are not yet answered or deferred. | Answer them, or `spectre walker defer-open-question --id <oq-id> --adr <slug>`. |
+| `envelope.check status=tampered` | The locked spec or its sidecar was modified after the seal was generated. | Re-run `/vision` to regenerate the integrity seal. |
+| `envelope.check status=missing` | `/implement` was invoked without a locked spec. | Run `/vision` and lock the spec first. |
+| `walker.bad_oq_id` | Tried to defer an open-question with an unrecognised ID. | Run `spectre walker get-state --json` to list valid IDs. |
+| `track.queue` | Another parallel track holds the requested resource lock. | Wait for the holding track to release, or pass `--skip-queue` to bypass. |
+| `walker.state_missing` | A walker command was invoked with no active interview session. | Run `/vision` to start a new interview. |
+| `walker.answer_failed` | `answer-concern` could not record your answer — the question ID was not recognised. | Run `spectre walker get-state --json` to list valid concern IDs, then retry. |
+| `tier.should_halt` | The tier halt-decision path raised an unexpected error. | Report the `error=` field; retry `/implement`. |
+| `hydrate.stale_active` | `.active` points to a spec that no longer exists on disk. | Run `/vision` to create or re-lock a spec, or update `.active` manually. |
+| `walker.duplicate_id` | `append-concern` was rejected because the concern ID already exists. | Internal error; report it with the full output. |
+
+For any other code, `spectre explain <code>` gives the full glossary entry including its `user_action:` field.
+
 ## API
 
 Full API reference — hooks, skills, spec step schema, sidecar format, and layout — lives at [`docs/API.md`](docs/API.md).
@@ -221,7 +276,7 @@ CLI status lines follow a single grammar: `<LEVEL> <code> key=value …` where `
 ## Tests
 
 ```bash
-pytest tests/                  # 1555 tests, all stdlib + pytest
+pytest tests/                  # 1748 tests, all stdlib + pytest
 pytest tests/ -v               # verbose
 pytest tests/test_spec_evaluator.py -v   # single module
 ```
