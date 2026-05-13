@@ -132,3 +132,63 @@ class TestImportBuiltinCli:
                  cwd=tmp_path)
         assert r.returncode == 0
         assert (tmp_path / "specs").is_dir()
+
+    def test_import_builtin_path_traversal_slug_exits_nonzero(self, tmp_path):
+        """--slug with path traversal exits 1 and emits invalid_slug; no file written outside cwd."""
+        r = _run("import-builtin", "--name", "template", "--slug", "../../etc/passwd",
+                 cwd=tmp_path)
+        assert r.returncode == 1
+        assert "invalid_slug" in r.stderr
+        evil_candidates = [
+            Path("/etc/passwd.spec.md.draft"),
+            Path("/tmp/etc"),
+        ]
+        for p in evil_candidates:
+            assert not p.exists(), f"Path traversal wrote {p}"
+        assert not (tmp_path / "specs").exists()
+
+    def test_import_builtin_uppercase_slug_exits_nonzero(self, tmp_path):
+        """--slug with uppercase letters exits 1 and emits invalid_slug."""
+        r = _run("import-builtin", "--name", "template", "--slug", "MyTest",
+                 cwd=tmp_path)
+        assert r.returncode == 1
+        assert "invalid_slug" in r.stderr
+
+    def test_import_builtin_valid_slug_writes_draft(self, tmp_path):
+        """--slug matching ^[a-z0-9][a-z0-9-]*$ writes the draft file."""
+        r = _run("import-builtin", "--name", "template", "--slug", "my-test-123",
+                 cwd=tmp_path)
+        assert r.returncode == 0
+        assert (tmp_path / "specs" / "my-test-123.spec.md.draft").is_file()
+
+
+class TestSlugValidation:
+    """Unit tests for _SLUG_RE — validate the regex directly."""
+
+    def test_slug_re_blocks_path_traversal(self):
+        from bin.templates import _SLUG_RE
+        assert _SLUG_RE.match("../../etc/passwd") is None
+
+    def test_slug_re_blocks_uppercase(self):
+        from bin.templates import _SLUG_RE
+        assert _SLUG_RE.match("MyTest") is None
+
+    def test_slug_re_blocks_slash(self):
+        from bin.templates import _SLUG_RE
+        assert _SLUG_RE.match("foo/bar") is None
+
+    def test_slug_re_accepts_lowercase_alphanumeric(self):
+        from bin.templates import _SLUG_RE
+        m = _SLUG_RE.match("mytest123")
+        assert m is not None
+        assert m.group(0) == "mytest123"
+
+    def test_slug_re_accepts_hyphenated(self):
+        from bin.templates import _SLUG_RE
+        m = _SLUG_RE.match("my-test-123")
+        assert m is not None
+        assert m.group(0) == "my-test-123"
+
+    def test_slug_re_blocks_leading_hyphen(self):
+        from bin.templates import _SLUG_RE
+        assert _SLUG_RE.match("-bad-slug") is None

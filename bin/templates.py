@@ -17,10 +17,13 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 import shutil
 import tempfile
 
 TEMPLATES_VERSION = "0.4.2"
+
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
 def builtin_template_path() -> pathlib.Path:
@@ -224,6 +227,17 @@ if __name__ == "__main__":
                          items=items or "none")
 
     elif args.cmd == "import-builtin":
+        # Validate slug before any filesystem access.
+        if not _SLUG_RE.match(args.slug):
+            _status.emit("error", "templates.import_builtin", dest="stderr",
+                         reason="invalid_slug",
+                         value=args.slug[:16],
+                         remediation=(
+                             "slug must match ^[a-z0-9][a-z0-9-]*$ "
+                             "(lowercase alphanumeric + hyphens, must start alphanumeric)"
+                         ))
+            sys.exit(1)
+
         # Find the builtin by name
         builtins = list_builtins()
         match = next((b for b in builtins if b["name"] == args.name), None)
