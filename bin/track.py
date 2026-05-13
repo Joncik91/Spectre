@@ -139,6 +139,7 @@ def _split_resources(arg: str) -> list[str]:
 
 if __name__ == "__main__":
     import argparse
+    from bin import _status
 
     parser = argparse.ArgumentParser(
         prog="track",
@@ -188,32 +189,35 @@ if __name__ == "__main__":
     project = Path(args.project)
     rids = _split_resources(args.resources)
     if not rids:
-        print("ERROR: --resources is empty.", file=sys.stderr)
+        _status.emit("error", "track.bad_resources", dest="stderr",
+                     reason="--resources is empty")
         sys.exit(1)
 
     if args.cmd == "acquire":
         try:
             ensure_supervisor_running(project)
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: supervisor spawn failed: {exc}", file=sys.stderr)
+            _status.emit("error", "track.supervisor_spawn", dest="stderr", reason=str(exc))
             sys.exit(1)
         for rid in rids:
             try:
                 resp = acquire(project, track_name=args.track, resource_id=rid)
             except Exception as exc:  # noqa: BLE001
-                print(f"ERROR: acquire {rid}: {exc}", file=sys.stderr)
+                _status.emit("error", "track.acquire", dest="stderr",
+                             resource=rid, reason=str(exc))
                 sys.exit(1)
             if not resp.get("granted"):
                 pos = resp.get("queued_position", "?")
-                print(f"QUEUED: {rid} (position {pos})")
+                _status.emit("halt", "track.queue", resource=rid, position=pos)
                 sys.exit(1)
-            print(f"ACQUIRED: {rid}")
+            _status.emit("ok", "track.acquire", resource=rid)
 
     elif args.cmd == "release":
         for rid in rids:
             try:
                 release(project, track_name=args.track, resource_id=rid)
             except Exception as exc:  # noqa: BLE001
-                print(f"ERROR: release {rid}: {exc}", file=sys.stderr)
+                _status.emit("error", "track.release", dest="stderr",
+                             resource=rid, reason=str(exc))
                 sys.exit(1)
-            print(f"RELEASED: {rid}")
+            _status.emit("ok", "track.release", resource=rid)

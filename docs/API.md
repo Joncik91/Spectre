@@ -8,8 +8,55 @@ Registered by `.claude-plugin/plugin.json`.
 
 | Event | Matcher | Command | Output |
 |---|---|---|---|
-| `SessionStart` | — | `python3 bin/hydrate.py` | Active spec body wrapped in `--- ACTIVE SPEC ---` markers + per-track `STATE:` line. Or `SIGNAL:` / `MIGRATED:` / `ERROR:` fallback. |
+| `SessionStart` | — | `python3 bin/hydrate.py` | `RESULT hydrate.spec_summary slug=… step=N exit_code=N last_command=…` — one line per active spec. `RESULT hydrate.signal reason=no-active-spec hint=…` if none. `OK hydrate.migrated` on v1→v2 upgrade. `WARN hydrate.stale_active` if `.active` pointer is broken. |
 | `PostToolUse` | `Bash` | `python3 bin/compact.py` | JSON `{"additionalContext": "<Delta + Anchor block>"}`. Capped under ~500 chars. |
+
+## CLI output grammar
+
+Every Spectre CLI subcommand (under `bin/`) emits structured status lines on stdout following a single grammar:
+
+```
+<LEVEL> <code> [key=value ...]
+```
+
+**Levels** (seven, exhaustive):
+
+| Level | Semantics |
+|---|---|
+| `ok` | Non-blocking confirmation — operation completed, no action required. |
+| `info` | Contextual information — not a state change, purely informational. |
+| `warn` | Soft problem — execution continues, user should be aware. |
+| `halt` | Hard stop — the gate fired, no further execution until user responds. |
+| `error` | Unrecoverable error — the CLI cannot complete the requested operation. |
+| `result` | Structured output — the answer to a query (tier, fingerprint, eval summary, …). |
+| `prompt` | Request for user input — the skill is waiting for a reply before proceeding. |
+
+**Codes** are stable dot-namespaced identifiers: `<module>.<verb>`. A few canonical examples:
+
+| Code | Level | Fields |
+|---|---|---|
+| `walker.init` | `ok` | `rounds=`, `pending=`, `stop=` |
+| `walker.answer` | `ok` | `id=`, `round_count=` |
+| `walker.yield` | `ok` | `new_t3=`, `history=` |
+| `eval.summary` | `result` | `tier1=pass\|fail`, `tier2=pass\|fail`, `tier3=pass\|skip`, `block=N`, `warn=N` |
+| `tier.classify` | `result` | `tier=silent\|repo\|host\|network`, `halt=true\|false` |
+| `envelope.check` | `result` | `status=ok\|missing\|tampered`, `path=` |
+| `hydrate.spec_summary` | `result` | `slug=`, `step=N`, `exit_code=N`, `last_command=` |
+| `hydrate.signal` | `result` | `reason=no-active-spec`, `hint=` |
+| `scratchpad.pending_prompt` | `result` | `fingerprint=`, `label=` |
+| `personal_rules.brake` | `warn` | `session_count=N`, `max=N`, `remediation=` |
+| `audit.summary` | `result` | `checks=N`, `passed=true\|false` |
+| `wizard.setup` | `ok` | `result=enabled\|exists\|setup-skipped`, `target=` |
+
+**Environment controls:**
+
+| Variable | Effect |
+|---|---|
+| `SPECTRE_QUIET=1` | Suppresses `ok` and `info` lines. |
+| `SPECTRE_VERBOSE=1` | Adds `expand=` field with multi-line context (e.g. spec body in hydrate output). |
+| `SPECTRE_JSON=1` | Writes JSON records to stdout; text status moves to stderr. |
+
+**Path display rule.** All paths emitted by CLIs are project-relative (`specs/foo.spec.md`, `state/scratchpad.json`). Absolute paths, `${CLAUDE_PLUGIN_ROOT}`, and `$HOME` literals never appear in user-facing output. The `bin/_path_display.py` helper enforces this at the emit boundary.
 
 ## Skills
 
@@ -170,8 +217,8 @@ bin/
   handoff_envelope.py           JSON-Schema-validated vision→implement handoff with bytewise integrity
   handoff_validator.py          Tier 0 envelope check on implement start
 skills/
-  vision/SKILL.md               /vision protocol (Steps 0–7, ~410 lines)
-  implement/SKILL.md            /implement protocol (Steps 0–7.5, ~520 lines)
+  vision/SKILL.md               /vision protocol (phase-named: Fingerprint → Wizard → Intent → Feasibility → Walker loop → Draft → Evaluator gate → Lock → Transition)
+  implement/SKILL.md            /implement protocol (phase-named: Mode routing → Track → Tier 0 envelope → Context read → … → Finding capture)
 specs/
   template.spec.md              canonical spec structure (§1–§8.2)
   .active                       instruction pointer (atomic-flipped)
@@ -184,5 +231,5 @@ docs/
   ARCHITECTURE.md               internal architecture overview
   API.md                        this file — hooks, skills, schemas, layout
   superpowers/                  design specs + implementation plans (archival)
-tests/                          1512 pytest tests, stdlib + pytest only
+tests/                          1555 pytest tests, stdlib + pytest only
 ```

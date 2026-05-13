@@ -95,6 +95,7 @@ def read_ledger(*, project_path: pathlib.Path) -> list[dict]:
 if __name__ == "__main__":
     import argparse
     import sys
+    from bin import _status
 
     parser = argparse.ArgumentParser(
         prog="cdlc_ledger",
@@ -155,10 +156,8 @@ if __name__ == "__main__":
 
     if args.cmd == "append":
         if args.payload is not None and args.payload_kv:
-            print(
-                "ERROR: --payload and --payload-kv are mutually exclusive.",
-                file=sys.stderr,
-            )
+            _status.emit("error", "ledger.bad_args", dest="stderr",
+                         reason="--payload and --payload-kv are mutually exclusive")
             sys.exit(1)
         payload: dict
         if args.payload is not None:
@@ -174,19 +173,18 @@ if __name__ == "__main__":
             try:
                 payload = json.loads(raw)
             except json.JSONDecodeError as exc:
-                print(f"ERROR: bad --payload JSON: {exc}", file=sys.stderr)
+                _status.emit("error", "ledger.bad_payload_json", dest="stderr", reason=str(exc))
                 sys.exit(1)
             if not isinstance(payload, dict):
-                print("ERROR: --payload must be a JSON object.", file=sys.stderr)
+                _status.emit("error", "ledger.bad_payload_type", dest="stderr",
+                             reason="must be JSON object")
                 sys.exit(1)
         else:
             payload = {}
             for kv in args.payload_kv:
                 if "=" not in kv:
-                    print(
-                        f"ERROR: bad --payload-kv {kv!r} (expected KEY=VALUE).",
-                        file=sys.stderr,
-                    )
+                    _status.emit("error", "ledger.bad_payload_kv", dest="stderr",
+                                 kv=kv, reason="expected KEY=VALUE")
                     sys.exit(1)
                 k, _, v = kv.partition("=")
                 payload[k] = v
@@ -198,14 +196,14 @@ if __name__ == "__main__":
                 project_path=pathlib.Path(args.project),
             )
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "ledger.append", dest="stderr", reason=str(exc))
             sys.exit(1)
-        print(f"APPENDED: kind={args.kind}")
+        _status.emit("ok", "ledger.append", kind=args.kind)
 
     elif args.cmd == "read":
         try:
             txs = read_ledger(project_path=pathlib.Path(args.project))
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "ledger.read", dest="stderr", reason=str(exc))
             sys.exit(1)
         print(json.dumps(txs, indent=2))

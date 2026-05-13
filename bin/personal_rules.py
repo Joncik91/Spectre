@@ -312,6 +312,7 @@ def reset_session_counter() -> None:
 if __name__ == "__main__":
     import argparse
     import sys
+    from bin import _status
 
     parser = argparse.ArgumentParser(
         prog="personal_rules",
@@ -379,13 +380,13 @@ if __name__ == "__main__":
         try:
             current = adoption_count_this_session_persistent(sp_path, track=args.track)
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "personal_rules.adopt", dest="stderr", reason=str(exc))
             sys.exit(1)
         if current >= DEFAULT_BRAKE_THRESHOLD:
-            print(
-                f"BRAKE: {current} adoptions this session. Edit "
-                f"~/.spectre/personal-rules.toml to review or remove. Skipping prompt."
-            )
+            _status.emit("warn", "personal_rules.brake",
+                         session_count=current,
+                         max=DEFAULT_BRAKE_THRESHOLD,
+                         remediation="~/.spectre/personal-rules.toml")
             sys.exit(0)
         try:
             append_adoption(
@@ -397,9 +398,11 @@ if __name__ == "__main__":
             )
             new_count = adoption_count_this_session_persistent(sp_path, track=args.track)
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "personal_rules.adopt", dest="stderr", reason=str(exc))
             sys.exit(1)
-        print(f"ADOPTED. ({new_count}/{DEFAULT_BRAKE_THRESHOLD} this session)")
+        _status.emit("ok", "personal_rules.adopt",
+                     session_count=new_count,
+                     max=DEFAULT_BRAKE_THRESHOLD)
 
     elif args.cmd == "session-count":
         try:
@@ -407,6 +410,6 @@ if __name__ == "__main__":
                 pathlib.Path(args.scratchpad), track=args.track
             )
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "personal_rules.session_count", dest="stderr", reason=str(exc))
             sys.exit(1)
         print(n)

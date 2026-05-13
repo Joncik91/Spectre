@@ -68,7 +68,7 @@ class TestAuditActionCli:
             "--paths", json.dumps([str(p)]),
             "--prose",
         )
-        assert "AUDIT:" in r.stdout
+        assert "audit.summary" in r.stdout
 
     def test_prose_format_includes_passed_true(self, tmp_path):
         p = tmp_path / "exists.txt"
@@ -79,7 +79,7 @@ class TestAuditActionCli:
             "--paths", json.dumps([str(p)]),
             "--prose",
         )
-        assert "passed=True" in r.stdout
+        assert "passed=true" in r.stdout
 
     def test_bad_paths_json_exits_1(self):
         r = _run("audit-action", "--action", "x", "--paths", "{not json")
@@ -237,7 +237,7 @@ class TestAuditAndClearCli:
             "--scratchpad", str(sp),
             "--track", "default",
         )
-        assert "AUDIT:" in r.stdout
+        assert "audit.summary" in r.stdout
 
     def test_round_trip_matches_heredoc_on_disk_state(self, tmp_path):
         """End-to-end: scratchpad on-disk shape must match what the §5.5

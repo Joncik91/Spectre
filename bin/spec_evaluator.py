@@ -41,7 +41,7 @@ from bin import eval_metadata as _eval_metadata
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-EVALUATOR_VERSION = "0.7.4"
+EVALUATOR_VERSION = "0.8.0"
 TIER1_TIMEOUT_MS = 100
 TIER2_TIMEOUT_S = 2
 TIER3_TIMEOUT_S = 180  # legacy default — now used as chunk_timeout_s fallback
@@ -611,6 +611,7 @@ def clear_bundle(bundle_path: pathlib.Path) -> None:
 if __name__ == "__main__":
     import argparse
     import sys
+    from bin import _status
 
     parser = argparse.ArgumentParser(
         prog="spec_evaluator",
@@ -655,7 +656,7 @@ if __name__ == "__main__":
         try:
             result = evaluate(spec_path, config_path=config_path, bundle_persist_dir=bundle_dir)
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "eval.run", dest="stderr", reason=str(exc))
             sys.exit(1)
 
         out_data = {
@@ -689,10 +690,8 @@ if __name__ == "__main__":
         slug = args.slug
         slugified = _adr.slugify(slug)
         if slugified != slug:
-            print(
-                f"Error: {slug!r} is not a valid slug — did you mean {slugified!r}?",
-                file=sys.stderr,
-            )
+            _status.emit("error", "eval.bad_slug", dest="stderr",
+                         slug=slug, suggestion=slugified)
             sys.exit(1)
         canonical = pathlib.Path("specs") / f"{slug}.spec.md"
         print(str(canonical))
@@ -702,5 +701,5 @@ if __name__ == "__main__":
         try:
             clear_bundle(bundle_path)
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "eval.clear_bundle", dest="stderr", reason=str(exc))
             sys.exit(1)

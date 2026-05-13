@@ -248,6 +248,7 @@ def persist_venv_python(
 
 if __name__ == "__main__":
     import argparse
+    from bin import _status
 
     parser = argparse.ArgumentParser(
         prog="managed_venv",
@@ -295,9 +296,10 @@ if __name__ == "__main__":
             venv_py = ensure_venv(pathlib.Path(args.project_path))
             persist_venv_python(pathlib.Path(args.scratchpad), venv_py)
         except RuntimeError as exc:
-            print(exc, file=sys.stderr)
+            _status.emit("error", "venv.ensure", dest="stderr", reason=str(exc))
             sys.exit(1)
-        print(f"VENV_PYTHON: {venv_py}")
+        from bin import _path_display
+        _status.emit("ok", "venv.ensure", python=_path_display.display(venv_py))
 
     elif args.cmd == "pip-install-editable":
         try:
@@ -306,9 +308,9 @@ if __name__ == "__main__":
                 pathlib.Path(args.target) if args.target else None,
             )
         except RuntimeError as exc:
-            print(exc, file=sys.stderr)
+            _status.emit("error", "venv.pip_install", dest="stderr", reason=str(exc))
             sys.exit(1)
-        print("PIP_INSTALL_EDITABLE: ok")
+        _status.emit("info", "venv.pip_install", status="ok")
 
     elif args.cmd == "normalize":
         result = normalize_action(args.action, pathlib.Path(args.venv_python))

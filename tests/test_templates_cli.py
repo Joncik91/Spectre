@@ -39,28 +39,28 @@ class TestListCli:
 
     def test_list_empty_prints_zero_count(self, tmp_path):
         r = _run("list", env=_isolate_home(tmp_path))
-        assert "TEMPLATES_AVAILABLE: 0" in r.stdout
+        assert "count=0" in r.stdout
 
     def test_list_one_spec_shows_count_one(self, tmp_path):
         spec_dir = tmp_path / ".spectre" / "templates" / "specs"
         spec_dir.mkdir(parents=True)
         (spec_dir / "auth.spec.md").write_text("# auth")
         r = _run("list", env=_isolate_home(tmp_path))
-        assert "TEMPLATES_AVAILABLE: 1" in r.stdout
+        assert "count=1" in r.stdout
 
     def test_list_includes_spec_name(self, tmp_path):
         spec_dir = tmp_path / ".spectre" / "templates" / "specs"
         spec_dir.mkdir(parents=True)
         (spec_dir / "auth.spec.md").write_text("# auth")
         r = _run("list", env=_isolate_home(tmp_path))
-        assert "spec: auth" in r.stdout
+        assert "spec:auth" in r.stdout
 
     def test_list_includes_skill_name(self, tmp_path):
         skill_dir = tmp_path / ".spectre" / "templates" / "skills"
         skill_dir.mkdir(parents=True)
         (skill_dir / "review.md").write_text("# review")
         r = _run("list", env=_isolate_home(tmp_path))
-        assert "skill: review" in r.stdout
+        assert "skill:review" in r.stdout
 
     def test_list_limit_truncates(self, tmp_path):
         spec_dir = tmp_path / ".spectre" / "templates" / "specs"

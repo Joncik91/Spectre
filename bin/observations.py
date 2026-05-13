@@ -129,6 +129,7 @@ def find_recurrences(*, kind: str | None = None, threshold: int = 3) -> list[dic
 if __name__ == "__main__":
     import argparse
     import sys
+    from bin import _status
 
     parser = argparse.ArgumentParser(
         prog="observations",
@@ -200,14 +201,14 @@ if __name__ == "__main__":
                 classifier_label=args.label,
             )
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "observation.record", dest="stderr", reason=str(exc))
             sys.exit(1)
-        print(f"OBSERVED: {fp[:12]}...")
+        _status.emit("ok", "observation.record", fingerprint=fp[:12])
 
     elif args.cmd == "find-recurrences":
         try:
             recs = find_recurrences(kind=args.kind, threshold=args.threshold)
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "observation.find_recurrences", dest="stderr", reason=str(exc))
             sys.exit(1)
         print(json.dumps(recs, indent=2))

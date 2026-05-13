@@ -145,6 +145,7 @@ if __name__ == "__main__":
     import argparse
     import json
     import sys
+    from bin import _status
 
     parser = argparse.ArgumentParser(
         prog="templates",
@@ -178,11 +179,12 @@ if __name__ == "__main__":
         try:
             ts = list_templates()
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "templates.list", dest="stderr", reason=str(exc))
             sys.exit(1)
         if args.json:
             print(json.dumps(ts, indent=2))
         else:
-            print(f"TEMPLATES_AVAILABLE: {len(ts)}")
-            for t in ts[: max(0, args.limit)]:
-                print(f"  {t['kind']}: {t['name']}")
+            items = ",".join(f"{t['kind']}:{t['name']}" for t in ts[: max(0, args.limit)])
+            _status.emit("result", "templates.list",
+                         count=len(ts),
+                         items=items or "none")

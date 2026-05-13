@@ -41,13 +41,14 @@ class TestWriteCli:
         files = list(decisions.glob("*.md"))
         assert len(files) == 1
 
-    def test_write_emits_ADR_path(self, tmp_path):
+    def test_write_emits_adr_path(self, tmp_path):
         decisions = tmp_path / "decisions"
         r = _run(
             "write", "--dir", str(decisions),
             "--title", "Choose Vue", "--body", "Why",
         )
-        assert r.stdout.strip().startswith("ADR:")
+        assert "adr.write" in r.stdout
+        assert "path=" in r.stdout
 
     def test_write_uses_today_date_by_default(self, tmp_path):
         from datetime import date

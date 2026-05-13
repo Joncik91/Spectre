@@ -286,6 +286,7 @@ if __name__ == "__main__":
     import json
     import pathlib
     import sys
+    from bin import _status
 
     parser = argparse.ArgumentParser(
         prog="tier",
@@ -353,13 +354,12 @@ if __name__ == "__main__":
         try:
             t, reasons, na = classify(args.action)
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "tier.classify", dest="stderr", reason=str(exc))
             sys.exit(1)
-        print(f"TIER: {t}")
-        for r in reasons:
-            print(f"  reason: {r}")
-        if na:
-            print(f"NEVER_AUTONOMOUS: {na}")
+        _status.emit("result", "tier.classify",
+                     tier=t,
+                     reasons="|".join(reasons),
+                     never_autonomous=na or "none")
 
     elif args.cmd == "should-halt":
         try:
@@ -373,9 +373,10 @@ if __name__ == "__main__":
                 spec_locked_paths=locked,
             )
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "tier.should_halt", dest="stderr", reason=str(exc))
             sys.exit(1)
-        print(f"HALT: {'true' if halt else 'false'}")
+        _status.emit("result", "tier.gate",
+                     halt="true" if halt else "false")
 
     elif args.cmd == "evaluate-action":
         try:
@@ -389,7 +390,7 @@ if __name__ == "__main__":
                 spec_locked_paths=locked,
             )
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "tier.evaluate", dest="stderr", reason=str(exc))
             sys.exit(1)
 
         if args.json:
@@ -402,9 +403,8 @@ if __name__ == "__main__":
             }
             print(json.dumps(payload, indent=2))
         else:
-            print(f"TIER: {t}")
-            for r in reasons:
-                print(f"  reason: {r}")
-            if na:
-                print(f"NEVER_AUTONOMOUS: {na}")
-            print(f"HALT: {'true' if halt else 'false'}")
+            _status.emit("result", "tier.classify",
+                         tier=t,
+                         autonomous=("false" if na else "true"),
+                         halt="true" if halt else "false",
+                         reason="|".join(reasons))

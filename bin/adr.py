@@ -151,6 +151,7 @@ if __name__ == "__main__":
     import argparse
     import sys
     from datetime import date as _date
+    from bin import _status
 
     parser = argparse.ArgumentParser(
         prog="adr",
@@ -213,9 +214,10 @@ if __name__ == "__main__":
                 supersedes=args.supersedes,
             )
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "adr.write", dest="stderr", reason=str(exc))
             sys.exit(1)
-        print(f"ADR: {path}")
+        from bin import _path_display
+        _status.emit("ok", "adr.write", path=_path_display.display(path))
 
     elif args.cmd == "update-graph":
         try:
@@ -225,6 +227,6 @@ if __name__ == "__main__":
                 old_adr_id=args.old_id,
             )
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "adr.graph_update", dest="stderr", reason=str(exc))
             sys.exit(1)
-        print(f"GRAPH_UPDATED: {args.new_id} supersedes {args.old_id}")
+        _status.emit("ok", "adr.graph_updated", new=args.new_id, old=args.old_id)

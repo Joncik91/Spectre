@@ -63,7 +63,7 @@ class TestAcquireCli:
             "--track", "alpha",
             "--resources", "port:8002",
         )
-        assert "ACQUIRED: port:8002" in r.stdout
+        assert "track.acquire" in r.stdout and "port:8002" in r.stdout
 
     def test_acquire_multiple_resources(self, project):
         r = _run(
@@ -72,7 +72,7 @@ class TestAcquireCli:
             "--track", "alpha",
             "--resources", "port:8003,port:8004",
         )
-        assert "ACQUIRED: port:8003" in r.stdout and "ACQUIRED: port:8004" in r.stdout
+        assert "port:8003" in r.stdout and "port:8004" in r.stdout
 
     def test_acquire_queued_exits_one(self, project):
         # First acquisition by track alpha.
@@ -100,7 +100,7 @@ class TestAcquireCli:
             "acquire", "--project", str(project),
             "--track", "beta", "--resources", "port:8006",
         )
-        assert "QUEUED: port:8006" in r.stdout
+        assert "track.queue" in r.stdout and "port:8006" in r.stdout
 
     def test_acquire_empty_resources_exits_1(self, project):
         r = _run(
@@ -133,7 +133,7 @@ class TestReleaseCli:
             "release", "--project", str(project),
             "--track", "alpha", "--resources", "port:9002",
         )
-        assert "RELEASED: port:9002" in r.stdout
+        assert "track.release" in r.stdout and "port:9002" in r.stdout
 
     def test_release_then_reacquire_succeeds(self, project):
         _run(

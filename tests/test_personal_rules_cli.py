@@ -99,10 +99,11 @@ class TestAdoptCli:
             cwd=tmp_path,
             env=_isolate_home(tmp_path),
         )
-        assert "ADOPTED. (1/3 this session)" in r.stdout
+        assert "personal_rules.adopt" in r.stdout
+        assert "session_count=1" in r.stdout
 
     def test_adopt_brake_at_threshold(self, tmp_path):
-        """When persistent counter ≥ 3, the CLI must skip the write and emit BRAKE."""
+        """When persistent counter ≥ 3, the CLI must skip the write and emit brake."""
         sp = tmp_path / "scratchpad.json"
         # Pre-seed the counter to 3.
         sp.write_text(json.dumps({
@@ -118,7 +119,7 @@ class TestAdoptCli:
             cwd=tmp_path,
             env=_isolate_home(tmp_path),
         )
-        assert "BRAKE:" in r.stdout
+        assert "personal_rules.brake" in r.stdout
 
     def test_adopt_brake_does_not_write_toml(self, tmp_path):
         """When BRAKE fires, ~/.spectre/personal-rules.toml must not be created."""

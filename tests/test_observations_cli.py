@@ -115,7 +115,7 @@ class TestRecordHaltCli:
         rec = json.loads(target.read_text().splitlines()[0])
         assert rec["kind"] == "custom-kind"
 
-    def test_record_halt_stdout_starts_with_OBSERVED(self, tmp_path):
+    def test_record_halt_stdout_shows_observation_record(self, tmp_path):
         r = _run(
             "record-halt",
             "--action", "echo hi",
@@ -123,7 +123,8 @@ class TestRecordHaltCli:
             cwd=tmp_path,
             env=_isolate_home(tmp_path),
         )
-        assert r.stdout.strip().startswith("OBSERVED:")
+        assert "observation.record" in r.stdout
+        assert "fingerprint=" in r.stdout
 
     def test_record_halt_fingerprint_deterministic(self, tmp_path):
         """Same action + label → same fingerprint twice."""

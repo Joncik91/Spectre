@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# bin/spectre — Spectre CLI wrapper.
+#
+# Resolves CLAUDE_PLUGIN_ROOT, exports PYTHONPATH, then delegates to
+# python3 -m bin.<subcommand>. Skill bodies call `spectre walker init-or-resume …`
+# and never see PYTHONPATH or the module path.
+#
+# Usage: spectre <subcommand> [args…]
+#
+# CLAUDE_PLUGIN_ROOT defaults to the directory containing this script,
+# which is correct for both marketplace installs and dev checkouts.
+
+set -euo pipefail
+
+# Resolve the directory containing this script (follow symlinks)
+_SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+
+# The plugin root is the parent of bin/
+export CLAUDE_PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(dirname "$_SCRIPT_DIR")}"
+
+# Put the plugin root on PYTHONPATH so `python3 -m bin.X` works regardless
+# of the user's project cwd.
+export PYTHONPATH="${CLAUDE_PLUGIN_ROOT}${PYTHONPATH:+:$PYTHONPATH}"
+
+if [[ $# -eq 0 ]]; then
+    echo "Usage: spectre <subcommand> [args…]" >&2
+    echo "Available subcommands: walker, tier, hydrate, spec_evaluator, eval_metadata," >&2
+    echo "  auditor, fingerprint, adr, templates, track, observations, personal_rules," >&2
+    echo "  managed_venv, handoff_validator, compact, cdlc_ledger, setup_wizard," >&2
+    echo "  substrate_wizard" >&2
+    exit 1
+fi
+
+SUBCOMMAND="$1"
+shift
+
+exec python3 -m "bin.${SUBCOMMAND}" "$@"

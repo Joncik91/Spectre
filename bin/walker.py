@@ -1016,6 +1016,7 @@ def _drive_to_completeness_satisfied(
 if __name__ == "__main__":
     import argparse
     import sys
+    from bin import _status
 
     parser = argparse.ArgumentParser(
         prog="walker",
@@ -1178,7 +1179,7 @@ if __name__ == "__main__":
         try:
             state = load(state_path)
         except ValueError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc))
             sys.exit(1)
 
         if state is None:
@@ -1206,7 +1207,7 @@ if __name__ == "__main__":
             try:
                 persist(state, state_path)
             except OSError as exc:
-                print(f"ERROR: could not persist walk state: {exc}", file=sys.stderr)
+                _status.emit("error", "walker.persist", dest="stderr", reason=str(exc))
                 sys.exit(1)
 
         if args.json_mode:
@@ -1226,32 +1227,41 @@ if __name__ == "__main__":
         else:
             stop = state.stop_reason if state.stop_reason else "none"
             pending_count = sum(1 for c in state.pending if c.id not in state.stale)
-            print(f"WALK: {state.round_count} rounds, {pending_count} pending, stop={stop}")
+            _status.emit("ok", "walker.init",
+                         rounds=state.round_count,
+                         pending=pending_count,
+                         stop=stop)
 
     elif args.cmd == "peek-pending":
         state_path = pathlib.Path(args.state_path)
         try:
             state = load(state_path)
         except ValueError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc))
             sys.exit(1)
         if state is None:
-            print("ERROR: walk state not found", file=sys.stderr)
+            from bin import _path_display
+            _status.emit("error", "walker.state_missing", dest="stderr",
+                         path=_path_display.display(state_path))
             sys.exit(1)
 
         concern = next_concern(state)
         if concern is None:
-            print("EMPTY")
+            if args.json_mode:
+                print("null")
+            else:
+                _status.emit("ok", "walker.empty")
             sys.exit(0)
 
         if args.json_mode:
             print(json.dumps(_serialize_concern(concern), indent=2, sort_keys=True))
         else:
-            print(f"id: {concern.id}")
-            print(f"kind: {concern.kind}")
-            print(f"receiver: {', '.join(concern.receivers)}")
-            print(f"depends_on: {', '.join(concern.depends_on) if concern.depends_on else 'none'}")
-            print(f"summary: {concern.summary}")
+            _status.emit("result", "walker.peek",
+                         id=concern.id,
+                         kind=concern.kind,
+                         receiver=", ".join(concern.receivers),
+                         depends_on=", ".join(concern.depends_on) if concern.depends_on else "none",
+                         summary=concern.summary)
 
     elif args.cmd == "yield-check":
         from bin import spec_evaluator as _se  # lazy import — avoid cost on init-or-resume
@@ -1261,16 +1271,16 @@ if __name__ == "__main__":
         try:
             state = load(state_path)
         except ValueError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc))
             sys.exit(1)
         if state is None:
-            print("YIELD: skipped (no walk state)")
+            _status.emit("ok", "walker.yield_skipped", reason="no-walk-state")
             sys.exit(0)
         if not draft_path.exists():
-            print("YIELD: skipped (draft missing)")
+            _status.emit("ok", "walker.yield_skipped", reason="draft-missing")
             sys.exit(0)
         if state.round_count <= 0:
-            print("YIELD: skipped (round_count=0)")
+            _status.emit("ok", "walker.yield_skipped", reason="round_count=0")
             sys.exit(0)
 
         config_path = (
@@ -1286,7 +1296,7 @@ if __name__ == "__main__":
                 bundle_persist_dir=bundle_dir,
             )
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: evaluator failed: {exc}", file=sys.stderr)
+            _status.emit("error", "walker.evaluator_failed", dest="stderr", reason=str(exc))
             sys.exit(1)
 
         new_t3 = sum(
@@ -1296,22 +1306,22 @@ if __name__ == "__main__":
         try:
             persist(state, state_path)
         except OSError as exc:
-            print(f"ERROR: could not persist walk state: {exc}", file=sys.stderr)
+            _status.emit("error", "walker.persist", dest="stderr", reason=str(exc))
             sys.exit(1)
-        print(
-            f"YIELD: {new_t3} new T3 findings this round; "
-            f"history={state.yield_history[-5:]}"
-        )
+        _status.emit("ok", "walker.yield",
+                     new_t3=new_t3,
+                     history=str(state.yield_history[-5:]))
 
     elif args.cmd == "get-state":
         state_path = pathlib.Path(args.state_path)
         try:
             state = load(state_path)
         except ValueError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc))
             sys.exit(1)
         if state is None:
-            print("ERROR: no walk state at " + str(state_path), file=sys.stderr)
+            _status.emit("error", "walker.state_missing", dest="stderr",
+                         path=str(state_path))
             sys.exit(1)
 
         if args.json:
@@ -1332,32 +1342,34 @@ if __name__ == "__main__":
             stop = state.stop_reason if state.stop_reason else "none"
             pending_count = sum(1 for c in state.pending if c.id not in state.stale)
             answered_count = len(state.answered)
-            print(
-                f"WALK: rounds={state.round_count} answered={answered_count} "
-                f"pending={pending_count} stop={stop}"
-            )
+            _status.emit("result", "walker.state",
+                         rounds=state.round_count,
+                         answered=answered_count,
+                         pending=pending_count,
+                         stop=stop)
 
     elif args.cmd == "append-concern":
         state_path = pathlib.Path(args.state_path)
         try:
             state = load(state_path)
         except ValueError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc))
             sys.exit(1)
         if state is None:
-            print("ERROR: no walk state at " + str(state_path), file=sys.stderr)
+            _status.emit("error", "walker.state_missing", dest="stderr",
+                         path=str(state_path))
             sys.exit(1)
 
         # Validate kind (argparse choices already enforces this, but guard explicitly
         # in case the function is reused programmatically)
         if args.kind not in KNOWN_CONCERN_KINDS:
-            print(f"ERROR: unknown kind {args.kind!r}", file=sys.stderr)
+            _status.emit("error", "walker.unknown_kind", dest="stderr", kind=args.kind)
             sys.exit(1)
 
         # Reject duplicate id (in pending OR answered)
         existing_ids = {c.id for c in state.pending} | {c.id for c in state.asked} | set(state.answered)
         if args.id in existing_ids:
-            print(f"ERROR: concern id {args.id!r} already exists", file=sys.stderr)
+            _status.emit("error", "walker.duplicate_id", dest="stderr", id=args.id)
             sys.exit(1)
 
         receiver = args.receiver  # already validated by argparse choices
@@ -1372,49 +1384,51 @@ if __name__ == "__main__":
         try:
             persist(state, state_path)
         except OSError as exc:
-            print(f"ERROR: could not persist walk state: {exc}", file=sys.stderr)
+            _status.emit("error", "walker.persist", dest="stderr", reason=str(exc))
             sys.exit(1)
-        print(f"OK: appended concern {args.id!r} to pending")
+        _status.emit("ok", "walker.concern_appended", id=args.id)
 
     elif args.cmd == "answer-concern":
         state_path = pathlib.Path(args.state_path)
         try:
             state = load(state_path)
         except ValueError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc))
             sys.exit(1)
         if state is None:
-            print("ERROR: no walk state at " + str(state_path), file=sys.stderr)
+            _status.emit("error", "walker.state_missing", dest="stderr",
+                         path=str(state_path))
             sys.exit(1)
 
         try:
             record_answer(state, concern_id=args.id, answer=args.answer)
         except KeyError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "walker.answer_failed", dest="stderr", reason=str(exc))
             sys.exit(1)
 
         try:
             persist(state, state_path)
         except OSError as exc:
-            print(f"ERROR: could not persist walk state: {exc}", file=sys.stderr)
+            _status.emit("error", "walker.persist", dest="stderr", reason=str(exc))
             sys.exit(1)
-        print(f"OK: answered concern {args.id!r}; round_count={state.round_count}")
+        _status.emit("ok", "walker.answer", id=args.id, round_count=state.round_count)
 
     elif args.cmd == "stop":
         state_path = pathlib.Path(args.state_path)
         try:
             state = load(state_path)
         except ValueError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc))
             sys.exit(1)
         if state is None:
-            print("ERROR: no walk state at " + str(state_path), file=sys.stderr)
+            _status.emit("error", "walker.state_missing", dest="stderr",
+                         path=str(state_path))
             sys.exit(1)
 
         state.stop_reason = args.reason
         try:
             persist(state, state_path)
         except OSError as exc:
-            print(f"ERROR: could not persist walk state: {exc}", file=sys.stderr)
+            _status.emit("error", "walker.persist", dest="stderr", reason=str(exc))
             sys.exit(1)
-        print(f"OK: stop_reason set to {args.reason!r}")
+        _status.emit("ok", "walker.stop", reason=args.reason)

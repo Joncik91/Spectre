@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -7,11 +8,12 @@ from pathlib import Path
 def test_full_cycle(plugin_root):
     """Hydrate (no spec) -> create spec + .active -> hydrate (active) -> compact (success) -> compact (failure)."""
     bin_dir = Path(__file__).resolve().parent.parent / "bin"
+    base_env = os.environ.copy()
 
     # 1. Hydrate before any spec exists.
     r = subprocess.run([sys.executable, str(bin_dir / "hydrate.py")],
-                       cwd=plugin_root, capture_output=True, text=True)
-    assert "SIGNAL: No active spec" in r.stdout
+                       cwd=plugin_root, capture_output=True, text=True, env=base_env)
+    assert "hydrate.signal" in r.stdout
 
     # 2. Create a spec and flip .active (simulating /vision).
     (plugin_root / "specs" / "demo.spec.md").write_text("# Demo\n\nbody\n")
@@ -22,10 +24,12 @@ def test_full_cycle(plugin_root):
         "timestamp": None, "failed_hypotheses": [],
     }))
 
-    # 3. Hydrate with active spec.
+    # 3. Hydrate with active spec — use SPECTRE_VERBOSE to get expand body.
+    verbose_env = {**base_env, "SPECTRE_VERBOSE": "1"}
     r = subprocess.run([sys.executable, str(bin_dir / "hydrate.py")],
-                       cwd=plugin_root, capture_output=True, text=True)
-    assert "--- ACTIVE SPEC: specs/demo.spec.md ---" in r.stdout
+                       cwd=plugin_root, capture_output=True, text=True, env=verbose_env)
+    assert "hydrate.spec_summary" in r.stdout
+    assert "slug=specs/demo.spec.md" in r.stdout
     assert "body" in r.stdout
 
     # 4. Compact a successful command.

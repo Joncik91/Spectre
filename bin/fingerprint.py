@@ -135,6 +135,7 @@ def save_symbols(path: Path, symbols: list[dict[str, Any]]) -> None:
 
 
 def main() -> int:
+    from bin import _status
     root = Path.cwd()
     syms = walk_repo(root)
     out_path = root / "state" / "local-symbols.json"
@@ -142,9 +143,10 @@ def main() -> int:
     by_kind: dict[str, int] = {}
     for s in syms:
         by_kind[s["kind"]] = by_kind.get(s["kind"], 0) + 1
-    print(f"FINGERPRINT: {len(syms)} symbols across {len(by_kind)} kinds")
-    for kind, count in sorted(by_kind.items()):
-        print(f"  {kind}: {count}")
+    _status.emit("result", "fingerprint.scan",
+                 symbols=len(syms),
+                 kinds=len(by_kind),
+                 path="state/local-symbols.json")
     return 0
 
 

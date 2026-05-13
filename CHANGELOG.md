@@ -2,6 +2,55 @@
 
 All notable changes to the Spectre plugin.
 
+## v0.8.0 — 2026-05-13
+
+**Output discipline: skill phase names + CLI level/code grammar.**
+
+Design goals: eliminate 245 ad-hoc print sites; make CLI output shell-parseable; make skill prose maintainable without PYTHONPATH plumbing.
+
+Changes:
+
+- **`bin/_status.py`** — central emitter. Format: `<LEVEL> <code> key=value …`. Levels: ok, info, warn, halt, error, result, prompt. Env knobs: `SPECTRE_QUIET=1`, `SPECTRE_VERBOSE=1`, `SPECTRE_JSON=1`.
+- **`bin/_path_display.py`** — path normalization. Strips `${CLAUDE_PLUGIN_ROOT}`, resolves project-relative, replaces home with `~`.
+- **`bin/spectre`** — shell wrapper. Resolves `CLAUDE_PLUGIN_ROOT`, exports `PYTHONPATH`, delegates to `python3 -m bin.<subcommand>`. Skills call `spectre X` not `python3 -m bin.X`.
+- **All CLI modules migrated** — walker, tier, auditor, hydrate, _scratchpad, fingerprint, cdlc_ledger, adr, templates, observations, personal_rules, track, setup_wizard, handoff_validator, managed_venv, eval_metadata, spec_evaluator, substrate_wizard.
+- **skills/vision/SKILL.md rewritten** — phase names: Fingerprint, Wizard, Intent, Feasibility, Walker loop, Draft, Evaluator gate, Lock, Transition. All `PYTHONPATH=… python3 -m bin.X` → `spectre X`. PYTHONPATH note section removed.
+- **skills/implement/SKILL.md rewritten** — phase names: Mode routing, Track, Tier 0 envelope, Context read, Environment, Pre-flight, Check mode, Tier classifier, Resource acquire, Reasoning emit, Execute, Verify, Audit, Branch on verification, Drift, Resource release, Failure log, Finding capture.
+- **New tests**: `test_status_emit.py`, `test_skill_phase_names.py`, `test_skill_no_version_markers.py`. Inverted `test_skill_pythonpath_consistency.py` — now bans `python3 -m bin.` from skill code blocks.
+
+Tests: 1548 → 1555 (0 regressions).
+
+### Breaking Changes
+
+All legacy output prefixes are **removed** in v0.8.0. Scripts that grep for these strings must migrate to the new `LEVEL code key=value` grammar:
+
+| Old prefix | New grammar |
+|---|---|
+| `WALK:` | `OK walker.init rounds=N pending=M stop=…` |
+| `YIELD:` | `OK walker.yield new_t3=N history=[…]` |
+| `ANSWERED:` | `OK walker.answer id=… round_count=N` |
+| `ENVELOPE:` | `RESULT envelope.check status=ok\|missing\|tampered path=…` |
+| `FINGERPRINT:` | `RESULT fingerprint.result hash=…` |
+| `WIZARD:` | `OK wizard.setup result=… target=…` |
+| `MAX_SEVERITY:` | `max_severity` field in the evaluator's JSON output (read via `--output` or `print(output_text)`) |
+| `EVALUATOR HALT:` | Skill prose: check `max_severity == "block"` in the JSON; emit `RESULT eval.summary block=N warn=M info=K` |
+| `ADR:` | `OK adr.write path=…` |
+| `TEMPLATES_AVAILABLE:` | `RESULT templates.list count=N items=…` |
+| `OBSERVED:` | `OK observations.recorded …` |
+| `VENV_PYTHON:` | `OK venv.ensure python=…` |
+| `ACQUIRED:` | `OK resource.acquired …` |
+| `QUEUED:` | `OK resource.queued …` |
+| `RELEASED:` | `OK resource.released …` |
+| `SCRATCHPAD_RESET:` | `OK scratchpad.reset active_spec=…` |
+| `ENSURE_V2:` | `OK scratchpad.ensure_v2 result=migrated\|noop\|created` |
+| `PROMPT_CLEARED:` | `OK scratchpad.prompt_cleared` |
+| `NO_TRACK_TO_CLEAR:` | `OK scratchpad.no_track_to_clear` |
+| `NO_PENDING_PROMPT:` | `OK scratchpad.no_pending_prompt` |
+| `PENDING_ADOPTION_PROMPT_PERSISTED:` | `OK scratchpad.pending_adoption_set fingerprint=…` |
+| `BRAKE:` | `WARN personal_rules.brake session_count=N max=N remediation=…` |
+| `ADOPTED:` | `OK personal_rules.adopt session_count=N max=N` |
+| `PIP_INSTALL_EDITABLE:` | `INFO venv.pip_install status=ok` |
+
 ## v0.7.4 — 2026-05-12
 
 **Hygiene release: rename `sdl-vision-engine` → `spectre`, split API ref out of README, consolidate test fixtures, fix stale doc counts.**

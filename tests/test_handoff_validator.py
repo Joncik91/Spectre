@@ -318,6 +318,15 @@ class TestMalformedSchema:
 # ---------------------------------------------------------------------------
 
 _BIN_DIR = pathlib.Path(__file__).parent.parent / "bin"
+_REPO = pathlib.Path(__file__).parent.parent
+
+
+def _cli_env() -> dict:
+    """Return env with PYTHONPATH set so bin._status is importable."""
+    import os
+    e = os.environ.copy()
+    e["PYTHONPATH"] = str(_REPO)
+    return e
 
 
 class TestValidatorCLI:
@@ -328,10 +337,10 @@ class TestValidatorCLI:
         _lock_spec(project)
         result = subprocess.run(
             [sys.executable, str(_BIN_DIR / "handoff_validator.py"), "check", "--project-path", str(project)],
-            capture_output=True, text=True,
+            capture_output=True, text=True, env=_cli_env(),
         )
         assert result.returncode == 0
-        assert result.stdout.strip() == ""
+        assert "envelope.check" in result.stdout and "status=ok" in result.stdout
 
     def test_cli_check_tampered_exits_one(self, tmp_path):
         project = _make_project(tmp_path)
@@ -339,10 +348,10 @@ class TestValidatorCLI:
         spec.write_bytes(b"# tampered\n")
         result = subprocess.run(
             [sys.executable, str(_BIN_DIR / "handoff_validator.py"), "check", "--project-path", str(project)],
-            capture_output=True, text=True,
+            capture_output=True, text=True, env=_cli_env(),
         )
         assert result.returncode == 1
-        assert "envelope-tampered:" in result.stdout
+        assert "envelope.check" in result.stdout and "status=tampered" in result.stdout
 
     def test_cli_check_envelope_missing_exits_zero(self, tmp_path):
         """envelope-missing is warn-level — CLI exits 0."""
@@ -353,14 +362,22 @@ class TestValidatorCLI:
         _write_active(project, "specs/foo.spec.md")
         result = subprocess.run(
             [sys.executable, str(_BIN_DIR / "handoff_validator.py"), "check", "--project-path", str(project)],
-            capture_output=True, text=True,
+            capture_output=True, text=True, env=_cli_env(),
         )
         assert result.returncode == 0
-        assert "envelope-missing:" in result.stdout
+        assert "envelope.check" in result.stdout and "status=missing" in result.stdout
 
 
 class TestEvalMetadataCLIWriteEnvelope:
     """CLI smoke tests for `python3 -m bin.eval_metadata write-envelope`."""
+
+    @staticmethod
+    def _parse_envelope_path(stdout: str) -> pathlib.Path:
+        """Extract path= value from 'OK eval.envelope_written path=<path>' output."""
+        for part in stdout.split():
+            if part.startswith("path="):
+                return pathlib.Path(part[5:])
+        raise ValueError(f"No path= in output: {stdout!r}")
 
     def test_write_envelope_creates_envelope_file(self, tmp_path):
         specs_dir = tmp_path / "specs"
@@ -380,10 +397,11 @@ class TestEvalMetadataCLIWriteEnvelope:
         result = subprocess.run(
             [sys.executable, str(_BIN_DIR / "eval_metadata.py"), "write-envelope",
              "--spec", str(spec)],
-            capture_output=True, text=True,
+            capture_output=True, text=True, env=_cli_env(),
         )
         assert result.returncode == 0, result.stderr
-        envelope_path = pathlib.Path(result.stdout.strip())
+        assert "eval.envelope_written" in result.stdout
+        envelope_path = self._parse_envelope_path(result.stdout)
         assert envelope_path.exists()
         envelope = json.loads(envelope_path.read_text())
         assert "spec_sha256" in envelope
@@ -408,17 +426,18 @@ class TestEvalMetadataCLIWriteEnvelope:
         result = subprocess.run(
             [sys.executable, str(_BIN_DIR / "eval_metadata.py"), "write-envelope",
              "--spec", str(spec), "--sidecar", str(sidecar)],
-            capture_output=True, text=True,
+            capture_output=True, text=True, env=_cli_env(),
         )
         assert result.returncode == 0, result.stderr
-        envelope_path = pathlib.Path(result.stdout.strip())
+        assert "eval.envelope_written" in result.stdout
+        envelope_path = self._parse_envelope_path(result.stdout)
         assert envelope_path.exists()
 
     def test_write_envelope_missing_spec_exits_one(self, tmp_path):
         result = subprocess.run(
             [sys.executable, str(_BIN_DIR / "eval_metadata.py"), "write-envelope",
              "--spec", str(tmp_path / "nonexistent.spec.md")],
-            capture_output=True, text=True,
+            capture_output=True, text=True, env=_cli_env(),
         )
         assert result.returncode == 1
         assert "ERROR" in result.stderr

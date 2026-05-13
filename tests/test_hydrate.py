@@ -4,13 +4,18 @@ import sys
 from pathlib import Path
 
 
-def run_hydrate(cwd: Path) -> subprocess.CompletedProcess:
+def run_hydrate(cwd: Path, env: dict | None = None) -> subprocess.CompletedProcess:
+    import os
     script = Path(__file__).resolve().parent.parent / "bin" / "hydrate.py"
+    base_env = os.environ.copy()
+    if env:
+        base_env.update(env)
     return subprocess.run(
         [sys.executable, str(script)],
         cwd=cwd,
         capture_output=True,
         text=True,
+        env=base_env,
     )
 
 
@@ -18,8 +23,8 @@ def test_no_active_emits_signal_and_lists_specs(plugin_root):
     (plugin_root / "specs" / "foo.spec.md").write_text("# foo")
     result = run_hydrate(plugin_root)
     assert result.returncode == 0
-    assert "SIGNAL: No active spec" in result.stdout
-    assert "foo.spec.md" in result.stdout
+    assert "hydrate.signal" in result.stdout
+    assert "no-active-spec" in result.stdout
 
 
 def test_stale_pointer_emits_error_and_lists_specs(plugin_root):
@@ -27,19 +32,17 @@ def test_stale_pointer_emits_error_and_lists_specs(plugin_root):
     (plugin_root / "specs" / "other.spec.md").write_text("# other")
     result = run_hydrate(plugin_root)
     assert result.returncode == 0
-    assert "ERROR: stale .active pointer" in result.stdout
-    assert "other.spec.md" in result.stdout
+    assert "hydrate.stale_active" in result.stdout
 
 
 def test_valid_active_emits_full_body(plugin_root):
     spec = plugin_root / "specs" / "primary.spec.md"
     spec.write_text("# Primary\n\nbody line\n")
     (plugin_root / "specs" / ".active").write_text("specs/primary.spec.md\n")
-    result = run_hydrate(plugin_root)
+    result = run_hydrate(plugin_root, env={"SPECTRE_VERBOSE": "1"})
     assert result.returncode == 0
-    assert "--- ACTIVE SPEC: specs/primary.spec.md ---" in result.stdout
+    assert "hydrate.spec_summary" in result.stdout
     assert "body line" in result.stdout
-    assert "--- END ACTIVE SPEC ---" in result.stdout
 
 
 def test_valid_active_appends_state_line(plugin_root):
@@ -51,7 +54,8 @@ def test_valid_active_appends_state_line(plugin_root):
         "active_spec": "specs/p.spec.md", "failed_hypotheses": [],
     }))
     result = run_hydrate(plugin_root)
-    assert "STATE: step=4" in result.stdout
+    assert "hydrate.spec_summary" in result.stdout
+    assert "step=4" in result.stdout
     assert "exit_code=0" in result.stdout
 
 
@@ -63,7 +67,7 @@ def test_hydrate_auto_migrates_v1_scratchpad(plugin_root):
     result = run_hydrate(plugin_root)
     data = json.loads(target.read_text())
     assert data["version"] == 2
-    assert "MIGRATED:" in result.stdout
+    assert "hydrate.migrated" in result.stdout
 
 
 def test_hydrate_v2_scratchpad_no_migration_signal(plugin_root):
@@ -85,7 +89,7 @@ def test_hydrate_emits_pending_patches_signal_when_proposed_dir_has_files(tmp_pa
     from bin import hydrate
     hydrate.surface_pending_template_patches()
     out = capsys.readouterr().out
-    assert "PENDING_TEMPLATE_PATCHES: 1" in out
+    assert "hydrate.template_patches_pending" in out and "count=1" in out
 
 
 def test_hydrate_emits_zero_when_proposed_dir_empty(tmp_path, monkeypatch, capsys):
@@ -96,7 +100,7 @@ def test_hydrate_emits_zero_when_proposed_dir_empty(tmp_path, monkeypatch, capsy
     from bin import hydrate
     hydrate.surface_pending_template_patches()
     out = capsys.readouterr().out
-    assert "PENDING_TEMPLATE_PATCHES: 0" in out
+    assert "hydrate.template_patches_pending" in out and "count=0" in out
 
 
 def test_hydrate_emits_zero_when_proposed_dir_missing(tmp_path, monkeypatch, capsys):
@@ -105,7 +109,7 @@ def test_hydrate_emits_zero_when_proposed_dir_missing(tmp_path, monkeypatch, cap
     from bin import hydrate
     hydrate.surface_pending_template_patches()
     out = capsys.readouterr().out
-    assert "PENDING_TEMPLATE_PATCHES: 0" in out
+    assert "hydrate.template_patches_pending" in out and "count=0" in out
 
 
 def test_hydrate_proposes_new_patches_for_recurring_fingerprints(tmp_path, monkeypatch):

@@ -34,15 +34,15 @@ class TestClassifyCli:
 
     def test_silent_command_prints_tier_silent(self):
         r = _run("classify", "--action", "echo hi")
-        assert "TIER: silent" in r.stdout
+        assert "tier=silent" in r.stdout
 
     def test_host_path_prints_tier_host(self):
         r = _run("classify", "--action", "vim /etc/passwd")
-        assert "TIER: host" in r.stdout
+        assert "tier=host" in r.stdout
 
     def test_never_autonomous_sudo_emits_label(self):
         r = _run("classify", "--action", "sudo apt-get install foo")
-        assert "NEVER_AUTONOMOUS:" in r.stdout
+        assert "never_autonomous=" in r.stdout
 
     def test_missing_action_flag_exits_2(self):
         r = _run("classify")
@@ -54,11 +54,11 @@ class TestClassifyCli:
 class TestShouldHaltCli:
     def test_silent_action_halts_false(self):
         r = _run("should-halt", "--action", "echo hi")
-        assert "HALT: false" in r.stdout
+        assert "halt=false" in r.stdout
 
     def test_host_action_halts_true(self):
         r = _run("should-halt", "--action", "vim /etc/passwd")
-        assert "HALT: true" in r.stdout
+        assert "halt=true" in r.stdout
 
     def test_locked_path_action_halts_true(self, tmp_path):
         spec = tmp_path / "x.spec.md"
@@ -73,7 +73,7 @@ class TestShouldHaltCli:
             "--action", "vim /etc/hosts",
             "--spec", str(spec),
         )
-        assert "HALT: true" in r.stdout
+        assert "halt=true" in r.stdout
 
     def test_missing_action_flag_exits_2(self):
         r = _run("should-halt")
@@ -89,11 +89,11 @@ class TestEvaluateActionCli:
 
     def test_prose_output_contains_tier_line(self):
         r = _run("evaluate-action", "--action", "echo hi")
-        assert "TIER: silent" in r.stdout
+        assert "tier=silent" in r.stdout
 
     def test_prose_output_contains_halt_line(self):
         r = _run("evaluate-action", "--action", "echo hi")
-        assert "HALT: false" in r.stdout
+        assert "halt=false" in r.stdout
 
     def test_json_output_parses(self):
         r = _run("evaluate-action", "--action", "vim /etc/passwd", "--json")
