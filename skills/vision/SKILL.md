@@ -99,6 +99,26 @@ If `trust-profile` includes `untrusted-input` or `handles-secrets`, every step t
 
 The user has typed `/vision <free-form text>`. Treat the text as **intent**, not as a spec. Anchor cwd via `pwd` to capture `$PROJECT`. If `$PROJECT` looks like a plugin cache (`/root/.claude/plugins/...`), HALT.
 
+**Open-question markers.** The intent text may declare known unknowns in two formats:
+
+*YAML frontmatter (preferred):*
+```
+---
+open_questions:
+  - daemon lifecycle (start/stop/restart/owner)
+  - prompt failure-mode handling on malformed JSON
+---
+<rest of intent prose>
+```
+
+*Inline markers in prose:*
+```
+We need a code legibility daemon. open: should it run as systemd or pm2?
+The auth strategy is unresolved: OAuth or API key?
+```
+
+The walker parses these markers automatically when you pass the intent to `init-or-resume`. **Pass the raw intent text verbatim** — do NOT paraphrase first. The walker extracts markers and tracks them as `open_questions` in state. Each detected open question gets a stable `oq-N` id. The walker refuses `author-arbitrated` stop until every open question is resolved or deferred.
+
 ### Phase: Feasibility
 
 Refuse physically impossible requests; if multi-subsystem, ask which sub-problem to lock first. Do NOT draft or interrogate further until this is settled.
@@ -157,7 +177,14 @@ Repeat until the walker reports stop:
          --reason author-arbitrated \
          --state-path state/.walk.json
      ```
-     Jump to the Draft phase.
+     Jump to the Draft phase. If the walker emits `WARN walker.open-questions-unresolved count=K ids=...`, the gate fired — K open questions must be answered or deferred before you can stop. To defer an open question to a later ADR:
+     ```bash
+     spectre walker defer-open-question \
+         --id oq-2 \
+         --adr adr-0007 \
+         --state-path state/.walk.json
+     ```
+     Stdout: `OK walker.open-question-deferred id=oq-2 adr=adr-0007`.
    - **`revise <concern_id> <new_answer>`** — record the revised answer and ask the user about stale concerns:
      ```bash
      spectre walker answer-concern \
@@ -183,6 +210,16 @@ Repeat until the walker reports stop:
    ```
 
    Stdout: `OK walker.yield new_t3=N history=[...]` on a real evaluation, or `OK walker.yield_skipped reason=<reason>` when preconditions fail (no walk state, draft missing, `round_count=0`). The CLI uses `~/.spectre/reviewer.toml` and `state/` as the bundle dir by default; override with `--config` and `--bundle-dir` when needed.
+
+   **Recommend-stop transition.** If `answer-concern` emits `RESULT walker.recommend-stop reason=coverage-complete`, surface this to the operator inline:
+
+   > Walker recommends stopping: coverage is complete. Reply `stop` to lock, or continue answering to refine further.
+
+   This emission is idempotent — it fires exactly once when coverage transitions from incomplete to complete. It does NOT fire again if the user continues and coverage stays complete.
+
+   **Concern rendering with prefab options.** When a concern has non-empty `prefab_options`, display them as numbered choices before the open-answer prompt. Rules:
+   - If the concern's `kind` is NOT `receiver-clarification` and `"defer to later layer"` is not already in the list, append it as the last choice.
+   - Before displaying, drop any prefab option that contradicts a prior `state.answered` entry. Contradiction rule: the option shares ≥ 2 content tokens with an answered value that contains a negation word (`not`, `no`, `never`, `without`, `excluding`, `vendor-agnostic`). Example: if a prior answer says "vendor-agnostic, no DeepSeek-only options", drop a prefab containing "deepseek". Apply this in prose — the walker library exposes no helper for this in v0.8.2.
 
 5. **Check stop conditions.** Re-run `peek-pending` — if it returns `null`, the walk is exhausted; proceed to the Draft phase. Alternatively, check the `stop` field in the full state dump:
 
@@ -344,6 +381,20 @@ spectre adr update-graph \
 The CLI is a no-op when nodes are absent or the manifest is missing, so it is safe to always invoke after a supersede write.
 
 ### Phase: Lock
+
+Before invoking the evaluator (§6.4 prep), check coverage:
+
+```bash
+spectre walker coverage \
+    --state-path state/.walk.json \
+    --draft "$DRAFT_PATH"
+```
+
+Stdout: `RESULT walker.coverage answered=N pending=M deferred=K undefined-invariants=L recommended-stop=yes|no rounds=R`. Surface this line to the operator. If `recommended-stop=no`, ask:
+
+> Coverage incomplete. Continue to lock anyway? (yes / refine)
+
+On `refine`, re-enter the Walker loop. On `yes`, proceed.
 
 Now that the user confirmed and ADRs are written:
 
