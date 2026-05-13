@@ -435,6 +435,9 @@ def evaluate(
     tier2_findings = _coverage_gate.classify(
         draft_path, preview_adrs=bundle.preview_adrs
     )
+    # v1.0 — cross-view consistency checks (no-op for non-v1.0 specs)
+    from bin import cross_view_gate as _cross_view_gate
+    tier2_findings.extend(_cross_view_gate.classify(draft_path))
 
     # ── Step 5: Tier 3 (opt-in) ─────────────────────────────────────────────
     tier3_findings: list[_findings.Finding] = []
