@@ -52,7 +52,7 @@ class TestInitOrResumeCli:
         )
         assert state.exists()
 
-    def test_output_starts_with_WALK(self, tmp_path):
+    def test_output_starts_with_OK_walker_init(self, tmp_path):
         state = tmp_path / ".walk.json"
         draft = tmp_path / "foo.spec.md.draft"
         draft.write_text("# draft\n", encoding="utf-8")
@@ -62,7 +62,7 @@ class TestInitOrResumeCli:
             "--draft", str(draft),
             "--state-path", str(state),
         )
-        assert r.stdout.strip().startswith("WALK:")
+        assert r.stdout.strip().startswith("OK walker.init")
 
     def test_output_shows_zero_rounds_on_fresh_init(self, tmp_path):
         state = tmp_path / ".walk.json"
@@ -74,7 +74,7 @@ class TestInitOrResumeCli:
             "--draft", str(draft),
             "--state-path", str(state),
         )
-        assert "0 rounds" in r.stdout
+        assert "rounds=0" in r.stdout
 
     def test_output_shows_5_pending_on_fresh_init(self, tmp_path):
         """init_walk seeds 5 concerns by design."""
@@ -87,7 +87,7 @@ class TestInitOrResumeCli:
             "--draft", str(draft),
             "--state-path", str(state),
         )
-        assert "5 pending" in r.stdout
+        assert "pending=5" in r.stdout
 
     def test_output_shows_stop_none_initially(self, tmp_path):
         state = tmp_path / ".walk.json"
@@ -148,7 +148,7 @@ class TestInitOrResumeCli:
             "--draft", str(draft),
             "--state-path", str(state_path),
         )
-        assert "7 rounds" in r.stdout
+        assert "rounds=7" in r.stdout
 
     def test_missing_intent_flag_exits_2(self):
         r = _run("init-or-resume", "--draft", "specs/foo.spec.md.draft")
@@ -222,12 +222,12 @@ class TestInitOrResumeJsonMode:
         assert dataclass_fields.issubset(data.keys())
 
     def test_init_or_resume_json_mode_no_summary_line(self, tmp_path):
-        """--json replaces the WALK: line with JSON; no WALK: prefix expected."""
+        """--json replaces the status line with JSON; no OK walker.init prefix expected."""
         r, _, _ = self._init(tmp_path)
-        assert not r.stdout.startswith("WALK:")
+        assert not r.stdout.startswith("OK walker.init")
 
-    def test_init_or_resume_no_json_flag_unchanged(self, tmp_path):
-        """Without --json the original one-line summary is still emitted."""
+    def test_init_or_resume_no_json_flag_emits_status_line(self, tmp_path):
+        """Without --json the one-line status is emitted."""
         state = tmp_path / ".walk.json"
         draft = tmp_path / "foo.spec.md.draft"
         draft.write_text("# draft\n", encoding="utf-8")
@@ -237,7 +237,7 @@ class TestInitOrResumeJsonMode:
             "--draft", str(draft),
             "--state-path", str(state),
         )
-        assert r.stdout.strip().startswith("WALK:")
+        assert r.stdout.strip().startswith("OK walker.init")
 
 
 # ── peek-pending (issue #23) ──────────────────────────────────────────────────
@@ -257,10 +257,10 @@ class TestPeekPendingCli:
         state_path, _ = self._setup_state(tmp_path)
         r = _run("peek-pending", "--state-path", str(state_path))
         assert r.returncode == 0
-        assert "id: seed-1" in r.stdout
-        assert "kind: assumption-surface" in r.stdout
-        assert "receiver: human" in r.stdout
-        assert "summary:" in r.stdout
+        assert "id=seed-1" in r.stdout
+        assert "kind=assumption-surface" in r.stdout
+        assert "receiver=human" in r.stdout
+        assert "summary=" in r.stdout
 
     def test_peek_pending_json_mode_returns_concern_dict(self, tmp_path):
         state_path, _ = self._setup_state(tmp_path)
@@ -288,7 +288,7 @@ class TestPeekPendingCli:
         walker.persist(state, state_path)
         r = _run("peek-pending", "--state-path", str(state_path))
         assert r.returncode == 0
-        assert r.stdout.strip() == "EMPTY"
+        assert "walker.empty" in r.stdout
 
     def test_peek_pending_missing_state_file_exits_1(self, tmp_path):
         r = _run("peek-pending", "--state-path", str(tmp_path / "nonexistent.json"))
@@ -307,7 +307,7 @@ class TestPeekPendingCli:
         walker.persist(state, state_path)
         r = _run("peek-pending", "--state-path", str(state_path), "--json")
         assert r.returncode == 0
-        assert r.stdout.strip() == "EMPTY"
+        assert "walker.empty" in r.stdout
 
 
 # ── yield-check (Phase 2D) ────────────────────────────────────────────────────
@@ -322,7 +322,7 @@ class TestYieldCheckCli:
             "--draft", str(draft),
             "--state-path", str(tmp_path / ".walk.json"),
         )
-        assert "YIELD: skipped" in r.stdout
+        assert "walker.yield_skipped" in r.stdout
 
     def test_no_draft_skipped(self, tmp_path):
         from bin import walker
@@ -335,7 +335,8 @@ class TestYieldCheckCli:
             "--draft", str(tmp_path / "missing.draft"),
             "--state-path", str(sp),
         )
-        assert "YIELD: skipped (draft missing)" in r.stdout
+        assert "walker.yield_skipped" in r.stdout
+        assert "draft-missing" in r.stdout
 
     def test_zero_round_skipped(self, tmp_path):
         from bin import walker
@@ -350,7 +351,8 @@ class TestYieldCheckCli:
             "--draft", str(draft),
             "--state-path", str(sp),
         )
-        assert "YIELD: skipped (round_count=0)" in r.stdout
+        assert "walker.yield_skipped" in r.stdout
+        assert "round_count=0" in r.stdout
 
     def test_missing_draft_flag_exits_2(self):
         r = _run("yield-check", "--state-path", "state/.walk.json")

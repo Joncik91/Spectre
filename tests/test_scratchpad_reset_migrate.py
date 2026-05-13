@@ -132,7 +132,7 @@ class TestResetSubcommand:
     def test_reset_stdout_contains_marker(self, tmp_path):
         sp = tmp_path / "scratchpad.json"
         r = _run("reset", "--scratchpad", str(sp), "--active-spec", "specs/x.spec.md")
-        assert "SCRATCHPAD_RESET" in r.stdout
+        assert "scratchpad.reset" in r.stdout
 
     def test_reset_missing_active_spec_exits_2(self, tmp_path):
         sp = tmp_path / "scratchpad.json"
@@ -166,7 +166,7 @@ class TestEnsureV2Subcommand:
         original_bytes = sp.read_bytes()
         r = _run("ensure-v2", "--scratchpad", str(sp))
         assert r.returncode == 0, r.stderr
-        assert "ENSURE_V2: noop" in r.stdout
+        assert "scratchpad.ensure_v2" in r.stdout and "result=noop" in r.stdout
         # File must be semantically identical (content unchanged)
         data_after = json.loads(sp.read_text())
         assert data_after["version"] == 2
@@ -178,13 +178,13 @@ class TestEnsureV2Subcommand:
         _run("ensure-v2", "--scratchpad", str(sp))
         r2 = _run("ensure-v2", "--scratchpad", str(sp))
         assert r2.returncode == 0
-        assert "ENSURE_V2: noop" in r2.stdout
+        assert "scratchpad.ensure_v2" in r2.stdout and "result=noop" in r2.stdout
 
     def test_ensure_v2_writes_fresh_when_file_missing(self, tmp_path):
         sp = tmp_path / "scratchpad.json"
         r = _run("ensure-v2", "--scratchpad", str(sp))
         assert r.returncode == 0, r.stderr
-        assert "ENSURE_V2: created" in r.stdout
+        assert "scratchpad.ensure_v2" in r.stdout and "result=created" in r.stdout
         data = json.loads(sp.read_text())
         assert data["version"] == 2
         assert isinstance(data["tracks"], dict)
@@ -200,7 +200,7 @@ class TestEnsureV2Subcommand:
         sp = tmp_path / "scratchpad.json"
         sp.write_text(json.dumps(_V1_FIXTURE))
         r = _run("ensure-v2", "--scratchpad", str(sp))
-        assert "ENSURE_V2:" in r.stdout
+        assert "scratchpad.ensure_v2" in r.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +215,7 @@ class TestRoundTrip:
         data_after_reset = json.loads(sp.read_text())
         r = _run("ensure-v2", "--scratchpad", str(sp))
         assert r.returncode == 0
-        assert "ENSURE_V2: noop" in r.stdout
+        assert "scratchpad.ensure_v2" in r.stdout and "result=noop" in r.stdout
         data_after_ensure = json.loads(sp.read_text())
         assert data_after_reset == data_after_ensure
 
@@ -225,7 +225,7 @@ class TestRoundTrip:
         # Step 1: ensure-v2 migrates
         r1 = _run("ensure-v2", "--scratchpad", str(sp))
         assert r1.returncode == 0
-        assert "ENSURE_V2: migrated" in r1.stdout
+        assert "scratchpad.ensure_v2" in r1.stdout and "result=migrated" in r1.stdout
         mid = json.loads(sp.read_text())
         assert mid["version"] == 2
         # Step 2: reset to new spec

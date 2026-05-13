@@ -45,7 +45,7 @@ class TestProvisionCli:
             "provision", "--secrets-file", str(tmp_path / "missing.env"),
             env=_isolate(tmp_path),
         )
-        assert "WIZARD: setup-skipped" in r.stdout
+        assert "wizard.setup" in r.stdout and "result=setup-skipped" in r.stdout
 
     def test_provision_creates_reviewer_toml_no_key(self, tmp_path):
         target = tmp_path / "reviewer.toml"
@@ -84,7 +84,7 @@ class TestProvisionCli:
             "--secrets-file", str(tmp_path / "missing.env"),
             env=_isolate(tmp_path),
         )
-        assert "WIZARD: exists" in r.stdout
+        assert "wizard.setup" in r.stdout and "result=exists" in r.stdout
 
     def test_provision_with_env_key_enables(self, tmp_path):
         target = tmp_path / "reviewer.toml"
@@ -96,7 +96,7 @@ class TestProvisionCli:
             "--secrets-file", str(tmp_path / "missing.env"),
             env=env,
         )
-        assert "WIZARD: enabled" in r.stdout
+        assert "wizard.setup" in r.stdout and "result=enabled" in r.stdout
 
     def test_provision_with_secrets_file_enables(self, tmp_path):
         target = tmp_path / "reviewer.toml"
@@ -108,7 +108,7 @@ class TestProvisionCli:
             "--secrets-file", str(secrets),
             env=_isolate(tmp_path),
         )
-        assert "WIZARD: enabled" in r.stdout
+        assert "wizard.setup" in r.stdout and "result=enabled" in r.stdout
 
     def test_provision_writes_target_path_in_output(self, tmp_path):
         target = tmp_path / "reviewer.toml"

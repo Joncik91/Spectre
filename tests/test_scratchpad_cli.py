@@ -94,7 +94,7 @@ class TestSetPendingAdoptionCli:
             "--label", "lbl",
             "--action", "act",
         )
-        assert "PENDING_ADOPTION_PROMPT_PERSISTED:" in r.stdout
+        assert "scratchpad.pending_adoption_set" in r.stdout
 
     def test_set_promotes_v1_to_v2(self, tmp_path):
         """A pre-existing v1 scratchpad must auto-promote on set."""
@@ -144,7 +144,7 @@ class TestGetPendingAdoptionCli:
             "get-pending-adoption",
             "--scratchpad", str(sp),
         )
-        assert "NO_PENDING_PROMPT" in r.stdout
+        assert "scratchpad.no_pending_prompt" in r.stdout
 
     def test_get_after_set_shows_prompt_line(self, tmp_path):
         sp = tmp_path / "scratchpad.json"
@@ -156,7 +156,7 @@ class TestGetPendingAdoptionCli:
             "--action", "act",
         )
         r = _run("get-pending-adoption", "--scratchpad", str(sp))
-        assert "PROMPT: fp=abcdef012345" in r.stdout
+        assert "scratchpad.pending_prompt" in r.stdout and "fingerprint=abcdef012345" in r.stdout
 
     def test_get_json_returns_full_dict(self, tmp_path):
         sp = tmp_path / "scratchpad.json"
@@ -202,13 +202,13 @@ class TestClearPendingAdoptionCli:
             "--action", "act",
         )
         r = _run("clear-pending-adoption", "--scratchpad", str(sp))
-        assert "PROMPT_CLEARED" in r.stdout
+        assert "scratchpad.prompt_cleared" in r.stdout
 
     def test_clear_without_existing_track_prints_NO_TRACK(self, tmp_path):
         sp = tmp_path / "scratchpad.json"
         sp.write_text(json.dumps({"version": 2, "tracks": {}}))
         r = _run("clear-pending-adoption", "--scratchpad", str(sp), "--track", "default")
-        assert "NO_TRACK_TO_CLEAR" in r.stdout
+        assert "scratchpad.no_track_to_clear" in r.stdout
 
     def test_clear_idempotent_after_clear(self, tmp_path):
         sp = tmp_path / "scratchpad.json"

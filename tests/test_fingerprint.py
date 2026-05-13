@@ -210,8 +210,8 @@ def test_cli_emits_summary_to_stdout(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     fp.main()
     captured = capsys.readouterr()
-    assert "FINGERPRINT" in captured.out
-    assert "symbols" in captured.out.lower()
+    assert "fingerprint.scan" in captured.out
+    assert "symbols=" in captured.out
 
 
 def test_extract_python_symbols_finds_async_function(tmp_path):
