@@ -565,17 +565,15 @@ _EXEMPLAR_REF_RE = re.compile(r"exemplar:([a-z0-9][a-z0-9:_-]*)")
 
 
 def _check_v1_spec_version(body: str) -> list[_findings.Finding]:
-    """Reject specs whose Spec-version frontmatter is absent or non-1.0."""
+    """Reject specs whose Spec-version is explicitly non-1.0.
+
+    Pre-v1.0 specs (no Spec-version frontmatter) are treated as v0.9 and
+    skip the v1.0 Tier-1 checks. Going forward, /vision always emits
+    `**Spec-version:** 1.0` so any new draft enters the v1.0 check path.
+    """
     m = _SPEC_VERSION_RE.search(body)
     if m is None:
-        return [_findings.Finding(
-            tier=1,
-            kind="unsupported-spec-version",
-            severity="block",
-            location=_findings.FindingLocation(scope="spec-wide", ref="frontmatter"),
-            message="Spec-version frontmatter is absent. v1.0 requires `**Spec-version:** 1.0`.",
-            suggested_fix="Add `**Spec-version:** 1.0` to the frontmatter (after Slug:).",
-        )]
+        return []
     version = m.group(1).strip()
     if version != "1.0":
         return [_findings.Finding(
@@ -655,10 +653,17 @@ def _check_v1_view_sections(body: str) -> list[_findings.Finding]:
 
 
 def _v1_structural_checks(body: str) -> list[_findings.Finding]:
-    """Run all v1.0 structural checks. Aggregate entry point called from classify()."""
+    """Run all v1.0 structural checks. Aggregate entry point called from classify().
+
+    Non-v1.0 specs (no Spec-version frontmatter) short-circuit — the §§8.3-8.7
+    and §§9-13 checks only apply to specs explicitly opting into v1.0.
+    """
+    # Short-circuit when the spec is pre-v1.0 (no frontmatter declaration).
+    if _SPEC_VERSION_RE.search(body) is None:
+        return []
     results: list[_findings.Finding] = []
     results.extend(_check_v1_spec_version(body))
-    # If spec-version check fails, the rest of v1.0 checks are noise
+    # If spec-version check fails (non-1.0 value), the rest are noise
     if any(r.kind == "unsupported-spec-version" for r in results):
         return results
     results.extend(_check_v1_substrate_family(body))

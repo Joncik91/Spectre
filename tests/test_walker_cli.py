@@ -285,10 +285,16 @@ class TestPeekPendingCli:
             state.asked.append(c)
             state.answered[c.id] = "answer"
         state.pending.clear()
-        # Mark all dynamic-generator flags so _refresh_pending is a no-op
+        # Mark all dynamic-generator flags so _refresh_pending is a no-op.
+        # v1.0 adds five view-family flags alongside the v0.9 three.
         state.lifecycle_asked = True
         state.prompt_design_asked = True
         state.semantic_criteria_asked = True
+        state.product_input_asked = True
+        state.product_output_asked = True
+        state.human_user_asked = True
+        state.integrator_asked = True
+        state.operator_asked = True
         walker.persist(state, state_path)
         r = _run("peek-pending", "--state-path", str(state_path))
         assert r.returncode == 0
@@ -308,10 +314,15 @@ class TestPeekPendingCli:
             state.asked.append(c)
             state.answered[c.id] = "answer"
         state.pending.clear()
-        # Mark all dynamic-generator flags so _refresh_pending is a no-op
+        # Mark all v0.9 + v1.0 dynamic-generator flags so _refresh_pending is a no-op
         state.lifecycle_asked = True
         state.prompt_design_asked = True
         state.semantic_criteria_asked = True
+        state.product_input_asked = True
+        state.product_output_asked = True
+        state.human_user_asked = True
+        state.integrator_asked = True
+        state.operator_asked = True
         walker.persist(state, state_path)
         r = _run("peek-pending", "--state-path", str(state_path), "--json")
         assert r.returncode == 0

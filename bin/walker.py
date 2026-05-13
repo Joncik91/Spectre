@@ -2067,6 +2067,13 @@ if __name__ == "__main__":
                 "prompt_design_asked": state.prompt_design_asked,
                 "semantic_criteria_asked": state.semantic_criteria_asked,
                 "last_recommend_stop_emitted": state.last_recommend_stop_emitted,
+                # v1.0 — six-view scope + per-view family flags
+                "view_scope": dict(state.view_scope),
+                "product_input_asked": state.product_input_asked,
+                "product_output_asked": state.product_output_asked,
+                "human_user_asked": state.human_user_asked,
+                "integrator_asked": state.integrator_asked,
+                "operator_asked": state.operator_asked,
             }
             print(json.dumps(payload, indent=2, sort_keys=True))
         else:
@@ -2235,6 +2242,13 @@ if __name__ == "__main__":
                 "prompt_design_asked": state.prompt_design_asked,
                 "semantic_criteria_asked": state.semantic_criteria_asked,
                 "last_recommend_stop_emitted": state.last_recommend_stop_emitted,
+                # v1.0 — six-view scope + per-view family flags
+                "view_scope": dict(state.view_scope),
+                "product_input_asked": state.product_input_asked,
+                "product_output_asked": state.product_output_asked,
+                "human_user_asked": state.human_user_asked,
+                "integrator_asked": state.integrator_asked,
+                "operator_asked": state.operator_asked,
             }
             print(json.dumps(payload, indent=2, sort_keys=True))
         else:

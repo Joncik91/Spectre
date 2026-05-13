@@ -6,8 +6,8 @@ import pytest
 from bin import walker
 
 
-def test_walker_version_is_0_4_1():
-    assert walker.WALKER_VERSION == "0.4.1"
+def test_walker_version_is_1_0_0():
+    assert walker.WALKER_VERSION == "1.0.0"
 
 
 def test_known_receivers_includes_four_canonical_names():
@@ -1071,39 +1071,29 @@ class TestOpenQuestionStopGate:
 
 # ── TestPersistLoadBackwardsCompat ────────────────────────────────────────────
 
-class TestPersistLoadBackwardsCompat:
-    def test_v041_state_file_loads_with_new_fields(self, tmp_path):
-        """v0.8.1-shape state (walker_version=0.4.0) loads cleanly with defaults."""
+class TestPersistLoadV1:
+    """v1.0 — hard cutover. Pre-1.0 state files raise on load (no migration)."""
+
+    def test_pre_v1_state_file_rejected(self, tmp_path):
+        """v0.4.x state file rejected with a clear error (rm + restart)."""
         state_path = tmp_path / ".walk.json"
-        # Write a v0.4.0-style state file (no new fields)
         old_payload = {
             "walker_version": "0.4.0",
-            "spec_intent": "legacy intent",
+            "spec_intent": "legacy",
             "spec_draft_path": "specs/x.spec.md.draft",
-            "asked": [],
-            "answered": {},
-            "pending": [],
-            "stale": [],
-            "stop_reason": None,
-            "round_count": 3,
-            "yield_history": [],
+            "asked": [], "answered": {}, "pending": [], "stale": [],
+            "stop_reason": None, "round_count": 0, "yield_history": [],
         }
         import json as _json
         state_path.write_text(_json.dumps(old_payload), encoding="utf-8")
-        state = walker.load(state_path)
-        assert state is not None
-        assert state.open_questions == []
-        assert state.lifecycle_asked is False
-        assert state.prompt_design_asked is False
-        assert state.semantic_criteria_asked is False
-        assert state.last_recommend_stop_emitted is False
-        assert state.round_count == 3
+        with pytest.raises(ValueError, match="walker_version mismatch"):
+            walker.load(state_path)
 
     def test_concern_with_no_prefab_options_loads(self, tmp_path):
-        """Concern serialized without prefab_options gets empty list default."""
+        """v1.0 concern serialized without prefab_options gets empty list default."""
         state_path = tmp_path / ".walk.json"
-        old_payload = {
-            "walker_version": "0.4.0",
+        payload = {
+            "walker_version": "1.0.0",
             "spec_intent": "test",
             "spec_draft_path": "specs/x.spec.md.draft",
             "asked": [],
@@ -1118,7 +1108,7 @@ class TestPersistLoadBackwardsCompat:
             "yield_history": [],
         }
         import json as _json
-        state_path.write_text(_json.dumps(old_payload), encoding="utf-8")
+        state_path.write_text(_json.dumps(payload), encoding="utf-8")
         state = walker.load(state_path)
         assert state is not None
         assert state.pending[0].prefab_options == []
@@ -1157,11 +1147,17 @@ class TestRefreshPending:
         assert "seed-lifecycle" not in ids
 
     def test_refresh_idempotent_after_flags_set(self):
-        """Second refresh with flags set adds nothing new."""
+        """Second refresh with all family flags set adds nothing new."""
         state = self._base_state(intent="Build a daemon watches filesystem")
         state.lifecycle_asked = True
         state.prompt_design_asked = True
         state.semantic_criteria_asked = True
+        # v1.0 — must also set the five view-family flags
+        state.product_input_asked = True
+        state.product_output_asked = True
+        state.human_user_asked = True
+        state.integrator_asked = True
+        state.operator_asked = True
         walker._refresh_pending(state, "")
         assert state.pending == []
 

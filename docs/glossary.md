@@ -1047,7 +1047,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - related: term:view, term:receiver
 
 ## unsupported-spec-version
-- kind: status
+- kind: finding
 - dev: Spec frontmatter is missing or carries a non-1.0 version. Tier-1 block. Hard cutover from v0.9 — no version-dispatch logic, no migration tool.
 - pm: This spec uses a version Spectre no longer supports. Re-run /vision to regenerate it as a v1.0 spec.
 - triggered_by: Tier-1 spec_ast classify; spec frontmatter check.
@@ -1056,7 +1056,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - since: v1.0
 
 ## missing-view-section
-- kind: status
+- kind: finding
 - dev: One of §§9-13 is absent from a v1.0 spec. Tier-1 block. Each view must be present (with content) or explicitly marked `not-applicable`.
 - pm: A required perspective section is missing from this spec. Either fill it in or declare it not applicable.
 - triggered_by: Tier-1 spec_ast classify when scanning §§9-13.
@@ -1065,7 +1065,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - since: v1.0
 
 ## missing-substrate-block
-- kind: status
+- kind: finding
 - dev: One of §§8.3-8.7 is absent from a v1.0 spec. Tier-1 block. Each receiver-calibration block must be present.
 - pm: A required receiver-calibration block is missing. Add it (or mark the view not-applicable).
 - triggered_by: Tier-1 spec_ast classify when scanning §§8.3-8.7.
@@ -1074,7 +1074,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - since: v1.0
 
 ## excessive-not-applicable
-- kind: status
+- kind: finding
 - dev: More than two of the five non-agent views are marked not-applicable. Tier-1 warn. Likely the spec is under-specified rather than legitimately narrow-scope.
 - pm: This spec marks three or more views as not-applicable. That usually means something was overlooked rather than legitimately out of scope.
 - triggered_by: Tier-1 v1.0 structural check.
@@ -1083,7 +1083,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - since: v1.0
 
 ## malformed-view-contract
-- kind: status
+- kind: finding
 - dev: A view section (§§9-13) declares neither Mechanical contracts, Coverage contracts, nor Exemplar bindings subsections. Tier-1 block.
 - pm: A view section is empty — no contracts declared. Either add contracts or mark the view not-applicable.
 - triggered_by: Tier-1 v1.0 structural check.
@@ -1092,7 +1092,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - since: v1.0
 
 ## cross-view-string-unresolved
-- kind: status
+- kind: finding
 - dev: A §§9-13 reference like `<halt-hint from §8.2 ux-contract>` names a field that doesn't exist in the referenced substrate block. Tier-2 block.
 - pm: A view section references a field from another section that isn't there. Fix the reference or add the missing field.
 - triggered_by: Tier-2 cross_view_gate.
@@ -1101,7 +1101,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - since: v1.0
 
 ## exemplar-not-found
-- kind: status
+- kind: finding
 - dev: A spec binds to `exemplar:<key>` but no entry by that key exists in the plugin catalog (`docs/exemplars/`) or user overlay (`~/.spectre/exemplars/`). Tier-2 block.
 - pm: This spec names an exemplar that isn't in the catalog. Run `spectre exemplars list` to see valid options.
 - triggered_by: Tier-2 cross_view_gate.
@@ -1110,7 +1110,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - since: v1.0
 
 ## exemplar-taxonomy-mismatch
-- kind: status
+- kind: finding
 - dev: A spec binds to an exemplar whose taxonomy-version differs from the version pinned in the spec. Tier-2 block.
 - pm: This spec was locked against an older version of the design-choice list than the exemplar uses. Re-run /vision for the affected view, or pick an exemplar at the pinned version.
 - triggered_by: Tier-2 cross_view_gate.
@@ -1119,7 +1119,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - since: v1.0
 
 ## view-fingerprint-contradicts-hard-contract
-- kind: status
+- kind: finding
 - dev: A §8.x receiver-fingerprint is inconsistent with §8.1 hard contract (e.g. §8.5 declares gui-only human-user but §8.1 mutates includes stdout/stderr/tty). Tier-2 block.
 - pm: This spec's hard contract contradicts what one of its views claims. For example, declaring a graphical UI but allowing terminal-only output. Fix the contradiction in either section.
 - triggered_by: Tier-2 cross_view_gate.
@@ -1128,7 +1128,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - since: v1.0
 
 ## view-coverage-overlap
-- kind: status
+- kind: finding
 - dev: Two views' coverage contracts redundantly name the same content category. Tier-2 info — not a bug, but a hint the operator may want to consolidate.
 - pm: Two of this spec's views ask for the same content category. Not wrong, but you may want to consolidate.
 - triggered_by: Tier-2 cross_view_gate.
@@ -1137,7 +1137,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - since: v1.0
 
 ## taxonomy-version-stale
-- kind: status
+- kind: finding
 - dev: A spec pins a taxonomy version older than the catalog's current taxonomy for that view-type. Tier-1 warn. The spec can still evaluate against the pinned version, but new axes added post-lock are invisible to this spec.
 - pm: This spec uses an older version of a design-choice list. It still works, but newer design choices added since you locked the spec won't apply unless you upgrade.
 - triggered_by: Tier-1 v1.0 structural check.
