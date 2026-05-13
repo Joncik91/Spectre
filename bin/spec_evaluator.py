@@ -544,6 +544,9 @@ def evaluate(
     # overrides). config_dict stays {} when no config_path was supplied or the
     # path didn't exist, so the hash is stable for the no-config case.
     policy_hash = _eval_metadata.compute_policy_hash(config_dict, severity_overrides)
+    # `filtered` is already post-dismissal (Step 8 above strips dismissable findings
+    # whose fingerprints appear in the dismissals list). No second filter needed.
+    findings_inline = [f.to_dict() for f in filtered]
     sidecar_payload: dict = {
         "evaluator_version": EVALUATOR_VERSION,
         "tiers_run": tiers_run,
@@ -559,6 +562,7 @@ def evaluate(
         },
         "contract_resolution": _build_contract_resolution(bundle.spec_text),
         "substrate_resolution": _eval_metadata.build_substrate_resolution(bundle.spec_text, filtered),
+        "findings_inline": findings_inline,
     }
 
     return EvaluatorResult(

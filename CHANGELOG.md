@@ -2,6 +2,35 @@
 
 All notable changes to the Spectre plugin.
 
+## v0.8.2 — 2026-05-13
+
+### Added
+
+- **Open-question detection + enforcement.** Walker parses `open_questions:` YAML frontmatter and inline `open:`/`unresolved:` markers from intent text. Detected questions persist in `state.open_questions` with stable `oq-N` ids and are tracked for resolution via Jaccard token overlap or explicit `resolves: <oq-id>` prefix.
+- **Lifecycle / prompt-design / semantic-criteria concern families.** Three new seed concerns emitted when triggered: `seed-lifecycle` (daemon/service intent or draft action patterns), `seed-prompt-design` (LLM API calls in step actions), `seed-semantic-criteria` (always-once per walk). Each gates on a dedicated `*_asked` flag in state.
+- **`spectre walker coverage` subcommand.** Read-only coverage report: `RESULT walker.coverage answered=N pending=M deferred=K undefined-invariants=L recommended-stop=yes|no rounds=R`. Pass `--json` for pure JSON output.
+- **`spectre walker defer-open-question` subcommand.** Marks an open question as deferred to an ADR: `spectre walker defer-open-question --id oq-2 --adr adr-0007`. Emits `OK walker.open-question-deferred id=oq-2 adr=adr-0007`.
+- **`walker.recommend-stop` status code.** Emitted exactly once when coverage transitions from incomplete to complete. Fires in both quiet and verbose modes.
+- **`walker.coverage` status code.** Emitted on stop + `coverage` subcommand. Also emitted per-round under `--verbose` / `SPECTRE_VERBOSE=1`.
+- **`walker.open-questions-detected` status code.** Emitted after `init-or-resume` when open questions are found.
+- **`walker.open-questions-unresolved` warning.** Emitted when `author-arbitrated` stop is refused.
+- **`walker.open-question-deferred` status code.** Emitted after successful `defer-open-question`.
+- **Sidecar `findings` inline.** `write_sidecar` accepts `findings_inline: list[dict] | None`. When non-None, writes as top-level `"findings"` key in `.eval.json`. `spec_evaluator.evaluate` passes non-dismissed findings. `Finding.to_dict()` added.
+- **`Concern.prefab_options` field.** New field (default empty list) serialized in state JSON. Built-in generators leave it empty; skill is the producer.
+
+### Fixed
+
+- **Prefab contradiction filter.** `_check_prefab_contradiction` drops prefab options that share ≥ 2 content tokens with a prior answered value containing a negation token.
+- **`defer to later layer` always offered** for non-receiver-clarification concerns via `_attach_defer_option`.
+
+### Behavior change
+
+Walker refuses `author-arbitrated` stop until every detected open question is answered (`resolved=True`) or deferred (`deferred_by_adr` set). Remediation: answer the open questions during the walk, or run `spectre walker defer-open-question --id <oq-id> --adr <adr-slug>`.
+
+### Schema
+
+`WALKER_VERSION 0.4.0` → `0.4.1`. State file fields are additive; v0.8.1 state files (walker_version=0.4.0) load cleanly under v0.8.2 with new fields defaulted. `EVALUATOR_VERSION` stays `0.8.0` (sidecar `findings` key is additive).
+
 ## v0.8.1 — 2026-05-13
 
 ### Fixed

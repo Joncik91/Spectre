@@ -35,9 +35,14 @@ Every Spectre CLI subcommand (under `bin/`) emits structured status lines on std
 
 | Code | Level | Fields |
 |---|---|---|
-| `walker.init` | `ok` | `rounds=`, `pending=`, `stop=` |
+| `walker.init` | `ok` | `rounds=`, `pending=`, `open_questions=`, `stop=` |
 | `walker.answer` | `ok` | `id=`, `round_count=` |
 | `walker.yield` | `ok` | `new_t3=`, `history=` |
+| `walker.coverage` | `result` | `answered=N`, `pending=M`, `deferred=K`, `undefined-invariants=L`, `recommended-stop=yes\|no`, `rounds=R` — full coverage snapshot emitted on stop, `coverage` subcommand, and per-round under `--verbose`. |
+| `walker.recommend-stop` | `result` | `reason=coverage-complete` — emitted exactly once on the False→True transition; fires in both quiet and verbose modes. |
+| `walker.open-questions-detected` | `result` | `count=N`, `ids=oq-1,oq-2,...` — emitted after `init-or-resume` when open questions are parsed from intent. |
+| `walker.open-questions-unresolved` | `warn` | `count=K`, `ids=oq-1,...` — emitted when `author-arbitrated` stop is refused due to unresolved open questions. |
+| `walker.open-question-deferred` | `ok` | `id=oq-N`, `adr=<adr-slug>` — emitted after `defer-open-question` succeeds. |
 | `eval.summary` | `result` | `tier1=pass\|fail`, `tier2=pass\|fail`, `tier3=pass\|skip`, `block=N`, `warn=N` |
 | `tier.classify` | `result` | `tier=silent\|repo\|host\|network`, `halt=true\|false` |
 | `envelope.check` | `result` | `status=ok\|missing\|tampered`, `path=` |

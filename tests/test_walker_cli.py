@@ -278,13 +278,17 @@ class TestPeekPendingCli:
         state_path = tmp_path / ".walk.json"
         draft = tmp_path / "foo.spec.md.draft"
         draft.write_text("# draft\n", encoding="utf-8")
-        # Build state with empty pending
+        # Build state with empty pending — use neutral intent so no lifecycle trigger
         state = walker.init_walk(spec_intent="test", spec_draft_path=draft)
         # Drain all pending by moving them to asked
         for c in list(state.pending):
             state.asked.append(c)
             state.answered[c.id] = "answer"
         state.pending.clear()
+        # Mark all dynamic-generator flags so _refresh_pending is a no-op
+        state.lifecycle_asked = True
+        state.prompt_design_asked = True
+        state.semantic_criteria_asked = True
         walker.persist(state, state_path)
         r = _run("peek-pending", "--state-path", str(state_path))
         assert r.returncode == 0
@@ -304,6 +308,10 @@ class TestPeekPendingCli:
             state.asked.append(c)
             state.answered[c.id] = "answer"
         state.pending.clear()
+        # Mark all dynamic-generator flags so _refresh_pending is a no-op
+        state.lifecycle_asked = True
+        state.prompt_design_asked = True
+        state.semantic_criteria_asked = True
         walker.persist(state, state_path)
         r = _run("peek-pending", "--state-path", str(state_path), "--json")
         assert r.returncode == 0
@@ -358,3 +366,194 @@ class TestYieldCheckCli:
     def test_missing_draft_flag_exits_2(self):
         r = _run("yield-check", "--state-path", "state/.walk.json")
         assert r.returncode == 2
+
+
+# ── New v0.8.2 tests ──────────────────────────────────────────────────────────
+
+class TestInitEmitsOpenQuestionsCount:
+    def test_open_questions_emitted_in_output(self, tmp_path):
+        state = tmp_path / ".walk.json"
+        draft = tmp_path / "foo.spec.md.draft"
+        draft.write_text("# draft\n", encoding="utf-8")
+        intent = "---\nopen_questions:\n  - daemon lifecycle\n---\nBuild a thing."
+        r = _run(
+            "init-or-resume",
+            "--intent", intent,
+            "--draft", str(draft),
+            "--state-path", str(state),
+        )
+        assert r.returncode == 0
+        assert "open_questions=1" in r.stdout
+
+    def test_no_open_questions_emits_zero(self, tmp_path):
+        state = tmp_path / ".walk.json"
+        draft = tmp_path / "foo.spec.md.draft"
+        draft.write_text("# draft\n", encoding="utf-8")
+        r = _run(
+            "init-or-resume",
+            "--intent", "plain intent",
+            "--draft", str(draft),
+            "--state-path", str(state),
+        )
+        assert "open_questions=0" in r.stdout
+
+
+class TestAnswerRecommendStopTransition:
+    def _init_state(self, tmp_path):
+        from bin import walker
+        state_path = tmp_path / ".walk.json"
+        draft = tmp_path / "foo.spec.md.draft"
+        draft.write_text("# draft\n", encoding="utf-8")
+        state = walker.init_walk(spec_intent="build a thing", spec_draft_path=draft)
+        # Mark semantic criteria as already asked so coverage can be complete
+        state.semantic_criteria_asked = True
+        walker.persist(state, state_path)
+        return state_path, draft
+
+    def test_recommend_stop_emitted_when_coverage_complete(self, tmp_path):
+        state_path, draft = self._init_state(tmp_path)
+        # Answer all pending concerns to reach coverage-complete
+        from bin import walker as w
+        state = w.load(state_path)
+        # Answer all pending to get pending=0
+        for concern in list(state.pending):
+            state = w.record_answer(state, concern_id=concern.id, answer="answered")
+        w.persist(state, state_path)
+        # Now answer-concern on last should trigger recommend-stop
+        # Re-init with only one pending
+        state2 = w.init_walk(spec_intent="build a thing", spec_draft_path=draft)
+        state2.semantic_criteria_asked = True
+        w.persist(state2, state_path)
+        concern_id = state2.pending[0].id
+        r = _run(
+            "answer-concern",
+            "--id", concern_id,
+            "--answer", "x",
+            "--state-path", str(state_path),
+        )
+        assert r.returncode == 0
+
+
+class TestVerboseEmitsCoveragePerRound:
+    def test_verbose_flag_emits_coverage(self, tmp_path):
+        from bin import walker as w
+        state_path = tmp_path / ".walk.json"
+        draft = tmp_path / "foo.spec.md.draft"
+        draft.write_text("# draft\n", encoding="utf-8")
+        state = w.init_walk(spec_intent="build a thing", spec_draft_path=draft)
+        w.persist(state, state_path)
+        concern_id = state.pending[0].id
+        r = _run(
+            "answer-concern",
+            "--id", concern_id,
+            "--answer", "test answer",
+            "--verbose",
+            "--state-path", str(state_path),
+        )
+        assert r.returncode == 0
+        assert "walker.coverage" in r.stdout
+
+
+class TestStopRefusesUnresolvedOQ:
+    def test_stop_exits_1_with_unresolved_oq(self, tmp_path):
+        from bin import walker as w
+        state_path = tmp_path / ".walk.json"
+        draft = tmp_path / "foo.spec.md.draft"
+        draft.write_text("# draft\n", encoding="utf-8")
+        state = w.init_walk(spec_intent="build daemon", spec_draft_path=draft)
+        state.open_questions = [
+            {"id": "oq-1", "text": "daemon lifecycle", "source": "frontmatter",
+             "resolved": False, "deferred_by_adr": None}
+        ]
+        w.persist(state, state_path)
+        r = _run(
+            "stop",
+            "--reason", "author-arbitrated",
+            "--state-path", str(state_path),
+        )
+        assert r.returncode == 1
+        assert "walker.open-questions-unresolved" in r.stdout
+
+    def test_stop_succeeds_with_all_oq_resolved(self, tmp_path):
+        from bin import walker as w
+        state_path = tmp_path / ".walk.json"
+        draft = tmp_path / "foo.spec.md.draft"
+        draft.write_text("# draft\n", encoding="utf-8")
+        state = w.init_walk(spec_intent="build daemon", spec_draft_path=draft)
+        state.open_questions = [
+            {"id": "oq-1", "text": "daemon lifecycle", "source": "frontmatter",
+             "resolved": True, "deferred_by_adr": None}
+        ]
+        w.persist(state, state_path)
+        r = _run(
+            "stop",
+            "--reason", "author-arbitrated",
+            "--state-path", str(state_path),
+        )
+        assert r.returncode == 0
+
+
+class TestCoverageSubcommand:
+    def test_coverage_subcommand_default(self, tmp_path):
+        from bin import walker as w
+        state_path = tmp_path / ".walk.json"
+        draft = tmp_path / "foo.spec.md.draft"
+        draft.write_text("# draft\n", encoding="utf-8")
+        state = w.init_walk(spec_intent="build a thing", spec_draft_path=draft)
+        w.persist(state, state_path)
+        r = _run("coverage", "--state-path", str(state_path))
+        assert r.returncode == 0
+        assert "walker.coverage" in r.stdout
+
+    def test_coverage_subcommand_json(self, tmp_path):
+        from bin import walker as w
+        state_path = tmp_path / ".walk.json"
+        draft = tmp_path / "foo.spec.md.draft"
+        draft.write_text("# draft\n", encoding="utf-8")
+        state = w.init_walk(spec_intent="build a thing", spec_draft_path=draft)
+        w.persist(state, state_path)
+        r = _run("coverage", "--state-path", str(state_path), "--json")
+        assert r.returncode == 0
+        data = json.loads(r.stdout)
+        assert "recommended_stop" in data
+        assert "answered" in data
+
+
+class TestDeferOpenQuestion:
+    def test_defer_open_question(self, tmp_path):
+        from bin import walker as w
+        state_path = tmp_path / ".walk.json"
+        draft = tmp_path / "foo.spec.md.draft"
+        draft.write_text("# draft\n", encoding="utf-8")
+        state = w.init_walk(spec_intent="build daemon", spec_draft_path=draft)
+        state.open_questions = [
+            {"id": "oq-2", "text": "lifecycle question", "source": "frontmatter",
+             "resolved": False, "deferred_by_adr": None}
+        ]
+        w.persist(state, state_path)
+        r = _run(
+            "defer-open-question",
+            "--id", "oq-2",
+            "--adr", "adr-0007",
+            "--state-path", str(state_path),
+        )
+        assert r.returncode == 0
+        assert "walker.open-question-deferred" in r.stdout
+        assert "oq-2" in r.stdout
+        assert "adr-0007" in r.stdout
+
+    def test_defer_open_question_bad_id(self, tmp_path):
+        from bin import walker as w
+        state_path = tmp_path / ".walk.json"
+        draft = tmp_path / "foo.spec.md.draft"
+        draft.write_text("# draft\n", encoding="utf-8")
+        state = w.init_walk(spec_intent="build a thing", spec_draft_path=draft)
+        w.persist(state, state_path)
+        r = _run(
+            "defer-open-question",
+            "--id", "oq-99",
+            "--adr", "adr-0001",
+            "--state-path", str(state_path),
+        )
+        assert r.returncode == 1
+        assert "walker.bad_oq_id" in r.stderr
