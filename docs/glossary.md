@@ -26,10 +26,10 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 
 ## adr.write
 - kind: status
-- dev: ADR markdown file written to decisions/ at the given path.
+- dev: ADR markdown file written to decisions/ at the given path. On error, verify write permissions on decisions/ then retry.
 - pm: Your decision record has been saved.
 - triggered_by: `spectre adr write` after /vision or /implement decision capture.
-- user_action: None — the ADR is persisted.
+- user_action: If this emits as error, verify write permissions on decisions/ then retry.
 - related: adr.graph_updated
 - since: v0.5.0
 
@@ -74,7 +74,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - dev: One or more PBT-lite property checks failed for the current step; details in check= and reason= fields.
 - pm: A post-step check failed — one of the expected outcomes was not produced. See the reason for details.
 - triggered_by: `spectre auditor run` after a step's action, when a property assertion fails.
-- user_action: Investigate the failing check; fix the step output or adjust the spec's `properties:` block.
+- user_action: Investigate the failing check; fix the step output or adjust the spec's `properties:` block. Run `spectre auditor audit-action` to re-check.
 - related: audit.summary, audit.run
 - since: v0.6.0
 
@@ -119,7 +119,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - dev: Tier 0 envelope integrity check result; status=ok|missing|tampered.
 - pm: Spectre verified the handoff package from /vision to /implement. See status for the outcome.
 - triggered_by: `/implement` start — Tier 0 handoff_validator check.
-- user_action: If status=missing, re-run /vision. If status=tampered, the spec file was edited after lock — re-run /vision or restore the original.
+- user_action: If status=missing, run /vision and lock the spec to produce an envelope. If status=tampered, re-run /vision to regenerate the seal.
 - related: term:envelope
 - since: v0.7.0
 
@@ -191,7 +191,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - dev: Severity override config file (reviewer.toml) not found at expected path; using defaults.
 - pm: No custom review settings found — using built-in defaults.
 - triggered_by: `spectre eval_metadata` when ~/.spectre/reviewer.toml does not exist.
-- user_action: None if defaults are acceptable; create ~/.spectre/reviewer.toml to customize.
+- user_action: None if defaults are acceptable; create ~/.spectre/reviewer.toml (see docs/SETUP.md) to customize.
 - related: eval_metadata.bad_severity_json
 - since: v0.5.0
 
@@ -281,7 +281,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - dev: Unhandled exception in the SessionStart hydration hook; hook exits 0 to avoid blocking Claude.
 - pm: Spectre encountered an error loading your session state. Your session continues but Spectre context may be missing.
 - triggered_by: Unexpected exception in `bin/hydrate.py` during SessionStart.
-- user_action: Report the error field; check that state/scratchpad.json and specs/.active are intact.
+- user_action: Check that state/scratchpad.json and specs/.active are intact; report the error field if the problem persists.
 - related: hydrate.signal, hydrate.spec_summary
 - since: v0.4.0
 
@@ -317,7 +317,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - dev: specs/.active pointer exists but the referenced spec file no longer exists on disk.
 - pm: Your active project file appears to have been moved or deleted. Run /vision to start a new spec or restore the file.
 - triggered_by: SessionStart when specs/.active references a missing file.
-- user_action: Restore the missing spec file or run /vision to create a new one.
+- user_action: Run /vision to start a new spec or run `spectre _scratchpad reset` to clear the stale pointer.
 - related: hydrate.signal
 - since: v0.4.0
 
@@ -440,10 +440,10 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 
 ## scratchpad.ensure_v2
 - kind: status
-- dev: Scratchpad schema ensure-v2 operation completed; result= is created|exists|migrated.
+- dev: Scratchpad schema ensure-v2 operation completed; result= is created|exists|migrated. On error, delete state/scratchpad.json and re-run /vision.
 - pm: Spectre's progress file is ready.
 - triggered_by: `spectre _scratchpad ensure-v2` during setup or migration.
-- user_action: None — informational.
+- user_action: If this emits as error, delete state/scratchpad.json and re-run /vision.
 - related: hydrate.migrated
 - since: v0.4.0
 
@@ -503,10 +503,10 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 
 ## scratchpad.reset
 - kind: status
-- dev: Scratchpad reset to initial state with the given active_spec; all track progress cleared.
+- dev: Scratchpad reset to initial state with the given active_spec; all track progress cleared. On error, verify state/ exists and is writable.
 - pm: Spectre's progress has been reset. A new spec is now active.
 - triggered_by: `spectre _scratchpad reset` when a new spec is locked.
-- user_action: None — the new spec is now active.
+- user_action: If this emits as error, verify state/ exists and is writable.
 - related: term:scratchpad
 - since: v0.4.0
 
@@ -530,10 +530,10 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 
 ## tier.classify
 - kind: status
-- dev: Persistence-tier classification result; tier= is silent|repo|host|network, reasons= explains the match.
+- dev: Persistence-tier classification result; tier= is silent|repo|host|network, reasons= explains the match. On error, add the step's action to the spec and retry.
 - pm: The action has been classified. The tier field shows how risky it is.
 - triggered_by: `spectre tier classify` or `spectre tier evaluate-action` subcommands.
-- user_action: None — informational; the implement flow uses this to decide whether to halt.
+- user_action: None for ok result. If this emits as error, add the step's action to the spec and retry.
 - related: tier.gate, tier.should_halt, term:tier
 - since: v0.3.0
 
@@ -587,7 +587,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - dev: Resource lock request queued; another track holds resource= at position= in the wait list.
 - pm: Spectre is waiting for another track to finish using a shared resource. It will continue automatically when the resource is free.
 - triggered_by: `/implement` when another parallel track holds the requested resource lock.
-- user_action: None — Spectre will resume when the resource is released.
+- user_action: Wait for the holding track to release; or pass --skip-queue to bypass if urgent.
 - related: track.acquire, track.release
 - since: v0.5.0
 
@@ -641,7 +641,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - dev: answer-concern failed because the concern ID was not found in the pending or asked lists.
 - pm: Spectre could not record your answer — the question ID was not recognised. This is a Spectre internal error.
 - triggered_by: `walker answer-concern` with an unknown concern ID.
-- user_action: Report the id field; retry with the correct concern ID.
+- user_action: Run `spectre walker get-state --json` to list valid concern IDs then retry.
 - related: walker.answer
 - since: v0.4.0
 
@@ -650,7 +650,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - dev: defer-open-question called with an open-question ID that does not exist in the walk state.
 - pm: The open question ID to defer was not found. This is a Spectre internal error.
 - triggered_by: `walker defer-open-question` with an unknown oq-N ID.
-- user_action: Report the id field; use `spectre walker get-state` to list valid IDs.
+- user_action: Run `spectre walker get-state --json` to list valid IDs.
 - related: walker.open-question-deferred
 - since: v0.6.0
 
@@ -686,7 +686,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - dev: yield-check triggered a spec_evaluator run that raised an unhandled exception.
 - pm: The per-round spec review failed. This is a Spectre internal error.
 - triggered_by: `walker yield-check` when spec_evaluator.evaluate raises.
-- user_action: Report the error field; the yield-check step will be skipped.
+- user_action: Check spec syntax; run /vision to re-initialize if the spec is corrupt.
 - related: walker.yield, walker.yield_skipped
 - since: v0.4.0
 
@@ -731,7 +731,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - dev: Error persisting walker state to disk; the walk state may be lost.
 - pm: Spectre could not save the interview state. This is a Spectre internal error.
 - triggered_by: Any walker command that writes state, when the write fails.
-- user_action: Check filesystem permissions on the walk state file; retry the last command.
+- user_action: Verify write permissions on state/ then retry the last command.
 - related: walker.init
 - since: v0.4.0
 
@@ -758,7 +758,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - dev: Error loading walker state from disk; the state file may be missing or corrupted.
 - pm: Spectre could not load the interview state. This is a Spectre internal error.
 - triggered_by: Any walker command that reads state, when load fails with a ValueError.
-- user_action: Check that the walk state file exists and is valid JSON.
+- user_action: Run /vision to initialize a new walk; or check that the walk state file is valid JSON.
 - related: walker.state_missing
 - since: v0.4.0
 
@@ -767,7 +767,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - dev: Walker state file does not exist at the expected path; no active walk session.
 - pm: No active interview session found. Run /vision to start a new one.
 - triggered_by: Any walker command that requires existing state, when load returns None.
-- user_action: Run /vision to start a new interview session.
+- user_action: Run /vision to start a new walk.
 - related: walker.init
 - since: v0.4.0
 
@@ -821,7 +821,7 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - dev: author-arbitrated stop refused because open questions remain unresolved; count= and ids= listed.
 - pm: You cannot stop the interview yet — {count} open questions are still unresolved. Resolve or defer them first.
 - triggered_by: `walker stop --reason author-arbitrated` when unresolved open questions exist.
-- user_action: Resolve each listed open question or defer it to an ADR with `walker defer-open-question`.
+- user_action: Answer each question or run `spectre walker defer-open-question --id <oq-id> --adr <slug>` to defer to an ADR.
 - related: walker.open-questions-detected, walker.open-question-deferred
 - since: v0.6.0
 

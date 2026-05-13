@@ -214,7 +214,8 @@ if __name__ == "__main__":
                 supersedes=args.supersedes,
             )
         except Exception as exc:  # noqa: BLE001
-            _status.emit("error", "adr.write", dest="stderr", reason=str(exc))
+            _status.emit("error", "adr.write", dest="stderr", reason=str(exc),
+                         remediation="verify write permissions on decisions/ then retry")
             sys.exit(1)
         from bin import _path_display
         _status.emit("ok", "adr.write", path=_path_display.display(path))
@@ -227,6 +228,7 @@ if __name__ == "__main__":
                 old_adr_id=args.old_id,
             )
         except Exception as exc:  # noqa: BLE001
-            _status.emit("error", "adr.graph_update", dest="stderr", reason=str(exc))
+            _status.emit("error", "adr.graph_update", dest="stderr", reason=str(exc),
+                         remediation="re-run 'spectre adr update-graph' if needed")
             sys.exit(1)
         _status.emit("ok", "adr.graph_updated", new=args.new_id, old=args.old_id)

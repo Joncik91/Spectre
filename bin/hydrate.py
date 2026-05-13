@@ -55,7 +55,8 @@ def main() -> int:
     target_path = Path(target)
     if not target_path.exists():
         from bin import _path_display
-        _status.emit("warn", "hydrate.stale_active", path=_path_display.display(target))
+        _status.emit("warn", "hydrate.stale_active", path=_path_display.display(target),
+                     remediation="run /vision to start a new spec or 'spectre _scratchpad reset'")
         detect_and_propose_patches()
         surface_pending_template_patches()
         return 0
@@ -109,5 +110,6 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception as exc:
-        _status.emit("error", "hydrate.error", reason=f"{type(exc).__name__}: {exc}")
+        _status.emit("error", "hydrate.error", reason=f"{type(exc).__name__}: {exc}",
+                     remediation="check that state/scratchpad.json and specs/.active are intact")
         sys.exit(0)

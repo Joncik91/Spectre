@@ -296,7 +296,8 @@ if __name__ == "__main__":
             venv_py = ensure_venv(pathlib.Path(args.project_path))
             persist_venv_python(pathlib.Path(args.scratchpad), venv_py)
         except RuntimeError as exc:
-            _status.emit("error", "venv.ensure", dest="stderr", reason=str(exc))
+            _status.emit("error", "venv.ensure", dest="stderr", reason=str(exc),
+                         remediation="check Python availability or delete state/.venv and retry")
             sys.exit(1)
         from bin import _path_display
         _status.emit("ok", "venv.ensure", python=_path_display.display(venv_py))
@@ -308,7 +309,8 @@ if __name__ == "__main__":
                 pathlib.Path(args.target) if args.target else None,
             )
         except RuntimeError as exc:
-            _status.emit("error", "venv.pip_install", dest="stderr", reason=str(exc))
+            _status.emit("error", "venv.pip_install", dest="stderr", reason=str(exc),
+                         remediation="check pip availability then run 'spectre managed_venv ensure' to recreate the venv")
             sys.exit(1)
         _status.emit("info", "venv.pip_install", status="ok")
 

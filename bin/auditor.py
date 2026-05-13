@@ -343,13 +343,15 @@ if __name__ == "__main__":
         try:
             parsed = json.loads(raw)
         except json.JSONDecodeError as exc:
-            _status.emit("error", "audit.bad_properties_json", dest="stderr", reason=str(exc))
+            _status.emit("error", "audit.bad_properties_json", dest="stderr", reason=str(exc),
+                         remediation="verify spec § properties: JSON syntax")
             sys.exit(1)
         if parsed is None:
             return None
         if not isinstance(parsed, list):
             _status.emit("error", "audit.bad_properties_type", dest="stderr",
-                         reason="must be JSON array of dicts or null")
+                         reason="must be JSON array of dicts or null",
+                         remediation="open an issue with the full halt output")
             sys.exit(1)
         return parsed
 
@@ -357,11 +359,13 @@ if __name__ == "__main__":
         try:
             paths = json.loads(args.paths)
         except json.JSONDecodeError as exc:
-            _status.emit("error", "audit.bad_paths_json", dest="stderr", reason=str(exc))
+            _status.emit("error", "audit.bad_paths_json", dest="stderr", reason=str(exc),
+                         remediation="open an issue with the full halt output")
             sys.exit(1)
         if not isinstance(paths, list):
             _status.emit("error", "audit.bad_paths_type", dest="stderr",
-                         reason="must be JSON array of strings")
+                         reason="must be JSON array of strings",
+                         remediation="open an issue with the full halt output")
             sys.exit(1)
         properties = _parse_properties(args.properties)
 
@@ -370,7 +374,8 @@ if __name__ == "__main__":
                 args.action, paths_touched=paths, properties=properties
             )
         except Exception as exc:  # noqa: BLE001
-            _status.emit("error", "audit.run", dest="stderr", reason=str(exc))
+            _status.emit("error", "audit.run", dest="stderr", reason=str(exc),
+                         remediation="open an issue with the full halt output")
             sys.exit(1)
 
         summary = _results_to_summary(results)
@@ -382,7 +387,8 @@ if __name__ == "__main__":
             for failure in summary["failures"]:
                 _status.emit("warn", "audit.fail",
                              kind=failure["kind"],
-                             message=failure["message"])
+                             message=failure["message"],
+                             remediation="investigate the failing check then fix the step output or adjust the spec's properties: block")
         else:
             print(json.dumps(summary, indent=2))
 
@@ -394,7 +400,8 @@ if __name__ == "__main__":
         try:
             sp = _sp.load(sp_path)
         except Exception as exc:  # noqa: BLE001
-            _status.emit("error", "audit.scratchpad_load", dest="stderr", reason=str(exc))
+            _status.emit("error", "audit.scratchpad_load", dest="stderr", reason=str(exc),
+                         remediation="check that state/scratchpad.json exists and is valid JSON")
             sys.exit(1)
         paths = _sp.get_paths_touched(sp, track=args.track)
         properties = _parse_properties(args.properties)
@@ -404,7 +411,8 @@ if __name__ == "__main__":
                 args.action, paths_touched=paths, properties=properties
             )
         except Exception as exc:  # noqa: BLE001
-            _status.emit("error", "audit.run", dest="stderr", reason=str(exc))
+            _status.emit("error", "audit.run", dest="stderr", reason=str(exc),
+                         remediation="open an issue with the full halt output")
             sys.exit(1)
 
         summary = _results_to_summary(results)
@@ -423,7 +431,8 @@ if __name__ == "__main__":
         try:
             _sp.atomic_write(sp_path, sp)
         except Exception as exc:  # noqa: BLE001
-            _status.emit("error", "audit.scratchpad_write", dest="stderr", reason=str(exc))
+            _status.emit("error", "audit.scratchpad_write", dest="stderr", reason=str(exc),
+                         remediation="check filesystem permissions on state/scratchpad.json")
             sys.exit(1)
 
         if args.json:
@@ -436,4 +445,5 @@ if __name__ == "__main__":
             for failure in summary["failures"]:
                 _status.emit("warn", "audit.fail",
                              kind=failure["kind"],
-                             message=failure["message"])
+                             message=failure["message"],
+                             remediation="investigate the failing check then fix the step output or adjust the spec's properties: block")

@@ -157,7 +157,8 @@ if __name__ == "__main__":
     if args.cmd == "append":
         if args.payload is not None and args.payload_kv:
             _status.emit("error", "ledger.bad_args", dest="stderr",
-                         reason="--payload and --payload-kv are mutually exclusive")
+                         reason="--payload and --payload-kv are mutually exclusive",
+                         remediation="pass --payload OR --payload-kv, not both")
             sys.exit(1)
         payload: dict
         if args.payload is not None:
@@ -173,18 +174,21 @@ if __name__ == "__main__":
             try:
                 payload = json.loads(raw)
             except json.JSONDecodeError as exc:
-                _status.emit("error", "ledger.bad_payload_json", dest="stderr", reason=str(exc))
+                _status.emit("error", "ledger.bad_payload_json", dest="stderr", reason=str(exc),
+                         remediation="open an issue with the full halt output")
                 sys.exit(1)
             if not isinstance(payload, dict):
                 _status.emit("error", "ledger.bad_payload_type", dest="stderr",
-                             reason="must be JSON object")
+                             reason="must be JSON object",
+                             remediation="open an issue with the full halt output")
                 sys.exit(1)
         else:
             payload = {}
             for kv in args.payload_kv:
                 if "=" not in kv:
                     _status.emit("error", "ledger.bad_payload_kv", dest="stderr",
-                                 kv=kv, reason="expected KEY=VALUE")
+                                 kv=kv, reason="expected KEY=VALUE",
+                                 remediation="open an issue with the full halt output")
                     sys.exit(1)
                 k, _, v = kv.partition("=")
                 payload[k] = v
@@ -196,7 +200,8 @@ if __name__ == "__main__":
                 project_path=pathlib.Path(args.project),
             )
         except Exception as exc:  # noqa: BLE001
-            _status.emit("error", "ledger.append", dest="stderr", reason=str(exc))
+            _status.emit("error", "ledger.append", dest="stderr", reason=str(exc),
+                         remediation="check filesystem permissions on the project ledger file")
             sys.exit(1)
         _status.emit("ok", "ledger.append", kind=args.kind)
 
@@ -204,6 +209,7 @@ if __name__ == "__main__":
         try:
             txs = read_ledger(project_path=pathlib.Path(args.project))
         except Exception as exc:  # noqa: BLE001
-            _status.emit("error", "ledger.read", dest="stderr", reason=str(exc))
+            _status.emit("error", "ledger.read", dest="stderr", reason=str(exc),
+                         remediation="check that the ledger file exists and is valid JSON")
             sys.exit(1)
         print(json.dumps(txs, indent=2))

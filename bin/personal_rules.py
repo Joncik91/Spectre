@@ -380,7 +380,8 @@ if __name__ == "__main__":
         try:
             current = adoption_count_this_session_persistent(sp_path, track=args.track)
         except Exception as exc:  # noqa: BLE001
-            _status.emit("error", "personal_rules.adopt", dest="stderr", reason=str(exc))
+            _status.emit("error", "personal_rules.adopt", dest="stderr", reason=str(exc),
+                         remediation="verify state/scratchpad.json is valid JSON and writable")
             sys.exit(1)
         if current >= DEFAULT_BRAKE_THRESHOLD:
             _status.emit("warn", "personal_rules.brake",
@@ -398,7 +399,8 @@ if __name__ == "__main__":
             )
             new_count = adoption_count_this_session_persistent(sp_path, track=args.track)
         except Exception as exc:  # noqa: BLE001
-            _status.emit("error", "personal_rules.adopt", dest="stderr", reason=str(exc))
+            _status.emit("error", "personal_rules.adopt", dest="stderr", reason=str(exc),
+                         remediation="verify state/scratchpad.json is valid JSON and writable")
             sys.exit(1)
         _status.emit("ok", "personal_rules.adopt",
                      session_count=new_count,
@@ -410,6 +412,7 @@ if __name__ == "__main__":
                 pathlib.Path(args.scratchpad), track=args.track
             )
         except Exception as exc:  # noqa: BLE001
-            _status.emit("error", "personal_rules.session_count", dest="stderr", reason=str(exc))
+            _status.emit("error", "personal_rules.session_count", dest="stderr", reason=str(exc),
+                         remediation="verify state/scratchpad.json is valid JSON")
             sys.exit(1)
         print(n)

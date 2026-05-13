@@ -209,7 +209,8 @@ if __name__ == "__main__":
             _status.emit("result", "envelope.check", status="ok")
         else:
             for v in warn_only:
-                _status.emit("warn", "envelope.check", status="missing", detail=v)
+                _status.emit("warn", "envelope.check", status="missing", detail=v,
+                             remediation="run /vision and lock the spec to produce an envelope")
             for v in block:
                 _status.emit("halt", "envelope.check", status="tampered",
                              detail=v, remediation="re-lock spec via /vision")

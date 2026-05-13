@@ -426,7 +426,8 @@ if __name__ == "__main__":
             config_path = pathlib.Path(args.config)
             if not config_path.exists():
                 _status.emit("error", "eval_metadata.config_missing", dest="stderr",
-                             path=args.config)
+                             path=args.config,
+                             remediation="create ~/.spectre/reviewer.toml (see docs/SETUP.md)")
                 sys.exit(1)
             with config_path.open("rb") as _f:
                 config_dict = tomllib.load(_f)
@@ -436,7 +437,8 @@ if __name__ == "__main__":
                 severity_overrides = json.loads(args.severity_overrides)
             except json.JSONDecodeError as exc:
                 _status.emit("error", "eval_metadata.bad_severity_json", dest="stderr",
-                             reason=str(exc))
+                             reason=str(exc),
+                             remediation="fix ~/.spectre/reviewer.toml syntax or delete it to use defaults")
                 sys.exit(1)
         print(compute_policy_hash(config_dict, severity_overrides))
 
@@ -455,14 +457,16 @@ if __name__ == "__main__":
             payload_path = pathlib.Path(args.payload)
             if not payload_path.exists():
                 _status.emit("error", "eval_metadata.payload_missing", dest="stderr",
-                             path=args.payload)
+                             path=args.payload,
+                             remediation="open an issue with the full halt output")
                 sys.exit(1)
             raw = payload_path.read_text(encoding="utf-8")
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError as exc:
             _status.emit("error", "eval_metadata.bad_payload_json", dest="stderr",
-                         reason=str(exc))
+                         reason=str(exc),
+                         remediation="open an issue with the full halt output")
             sys.exit(1)
 
         # Map payload keys to write_sidecar kwargs.
@@ -489,11 +493,13 @@ if __name__ == "__main__":
             )
         except KeyError as exc:
             _status.emit("error", "eval_metadata.sidecar_missing_field", dest="stderr",
-                         field=str(exc))
+                         field=str(exc),
+                         remediation="run /vision to regenerate a complete sidecar")
             sys.exit(1)
         except OSError as exc:
             _status.emit("error", "eval_metadata.sidecar_write", dest="stderr",
-                         reason=str(exc))
+                         reason=str(exc),
+                         remediation="check filesystem permissions in the specs/ directory")
             sys.exit(1)
         from bin import _path_display
         _status.emit("ok", "eval.sidecar_written",
@@ -503,12 +509,14 @@ if __name__ == "__main__":
         spec_path = pathlib.Path(args.spec)
         if not spec_path.exists():
             _status.emit("error", "eval_metadata.spec_missing", dest="stderr",
-                         path=args.spec)
+                         path=args.spec,
+                         remediation="run /vision to lock a fresh spec")
             sys.exit(1)
         sidecar_path = pathlib.Path(args.sidecar) if args.sidecar else sidecar_path_for(spec_path)
         if not sidecar_path.exists():
             _status.emit("error", "eval_metadata.sidecar_missing", dest="stderr",
-                         path=str(sidecar_path))
+                         path=str(sidecar_path),
+                         remediation="run /vision to regenerate the evaluation sidecar")
             sys.exit(1)
         walk_path = pathlib.Path(args.walk) if args.walk else None
         decisions_dir = pathlib.Path(args.decisions_dir) if args.decisions_dir else None
@@ -516,7 +524,8 @@ if __name__ == "__main__":
             envelope_path = write_envelope_alongside_sidecar(spec_path, sidecar_path, walk_path, decisions_dir)
         except (OSError, KeyError, ValueError) as exc:
             _status.emit("error", "eval_metadata.envelope_write", dest="stderr",
-                         reason=str(exc))
+                         reason=str(exc),
+                         remediation="check filesystem permissions on the state/ directory")
             sys.exit(1)
         from bin import _path_display
         _status.emit("ok", "eval.envelope_written",
@@ -529,11 +538,13 @@ if __name__ == "__main__":
             fp = pathlib.Path(args.file)
             if not fp.exists():
                 _status.emit("error", "eval_metadata.file_missing", dest="stderr",
-                             path=args.file)
+                             path=args.file,
+                             remediation="re-run /vision to regenerate missing files")
                 sys.exit(1)
             data = fp.read_bytes()
         else:
             _status.emit("error", "eval_metadata.no_input", dest="stderr",
-                         reason="provide --file or --stdin")
+                         reason="provide --file or --stdin",
+                         remediation="open an issue with the full halt output")
             sys.exit(1)
         print(hashlib.sha256(data).hexdigest())

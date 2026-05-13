@@ -179,7 +179,8 @@ if __name__ == "__main__":
         try:
             ts = list_templates()
         except Exception as exc:  # noqa: BLE001
-            _status.emit("error", "templates.list", dest="stderr", reason=str(exc))
+            _status.emit("error", "templates.list", dest="stderr", reason=str(exc),
+                         remediation="open an issue with the full halt output")
             sys.exit(1)
         if args.json:
             print(json.dumps(ts, indent=2))

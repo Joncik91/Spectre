@@ -405,6 +405,7 @@ def _main() -> int:
                 dest="stderr",
                 reason="invalid_author_spec_hash",
                 value=args.author_spec_hash[:16],
+                remediation="author-spec-hash must be 64-char lowercase hex",
             )
             return 1
 
@@ -435,6 +436,7 @@ def _main() -> int:
                     dest="stderr",
                     reason=f"invalid_{exc.field}",
                     detail=exc.message,
+                    remediation="re-run with corrected flag value for the field listed above",
                 )
                 return 1
             sys.stdout.write(block)
@@ -449,6 +451,7 @@ def _main() -> int:
                 dest="stderr",
                 reason="missing_flags",
                 missing=",".join(f.lstrip("-") for f in missing),
+                remediation="re-run with all flags: --receiver, --trust-profile, --binding, --provenance",
             )
             return 1
 
@@ -462,13 +465,15 @@ def _main() -> int:
                     dest="stderr",
                     reason="missing_flags",
                     missing=",".join(f.lstrip("-") for f in all_flags),
+                    remediation="re-run with all flags: --receiver, --trust-profile, --binding, --provenance",
                 )
                 return 1
             try:
                 block = run(args.author_spec_hash, prompt_fn=_stdin_prompt)
             except RuntimeError as exc:
                 _status.emit(
-                    "error", "wizard.substrate", dest="stderr", reason=str(exc)
+                    "error", "wizard.substrate", dest="stderr", reason=str(exc),
+                    remediation="open an issue with the full halt output",
                 )
                 return 1
             sys.stdout.write(block)

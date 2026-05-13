@@ -4,6 +4,7 @@ AST-walks every .py file in bin/, extracts _status.emit(...) literal codes,
 and asserts:
 1. Every literal status code has a glossary entry (no undocumented emit).
 2. Every status-kind glossary entry has a corresponding emit site (no orphans).
+3. Every warn/halt/error emit code has a non-empty user_action: field in the glossary.
 """
 from __future__ import annotations
 
@@ -108,4 +109,60 @@ def test_no_orphan_entries():
     assert not orphans, (
         f"These glossary entries have no matching emit site in bin/*.py:\n"
         + "\n".join(f"  {c}" for c in sorted(orphans))
+    )
+
+
+def _warn_halt_error_codes() -> dict[str, set[str]]:
+    """Return mapping of code → set of levels for warn/halt/error emit sites."""
+    code_levels: dict[str, set[str]] = {}
+    for py_file in _iter_py_files():
+        try:
+            tree = ast.parse(py_file.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            is_emit_attr = isinstance(func, ast.Attribute) and func.attr == "emit"
+            is_emit_name = isinstance(func, ast.Name) and func.id == "emit"
+            if not (is_emit_attr or is_emit_name):
+                continue
+            args = node.args
+            if len(args) < 2:
+                continue
+            level_arg = args[0]
+            code_arg = args[1]
+            if not isinstance(level_arg, ast.Constant):
+                continue
+            if level_arg.value not in ("warn", "halt", "error"):
+                continue
+            if isinstance(code_arg, ast.Constant) and isinstance(code_arg.value, str):
+                code = code_arg.value
+                code_levels.setdefault(code, set()).add(level_arg.value)
+    return code_levels
+
+
+def test_warn_halt_error_codes_have_user_action_field():
+    """Every warn/halt/error emit code must have a non-empty user_action: in the glossary."""
+    import bin._glossary as _g
+    _g._GLOSSARY_CACHE = None
+    entries = _g.load_glossary()
+
+    code_levels = _warn_halt_error_codes()
+    missing_user_action: list[str] = []
+
+    for code in sorted(code_levels):
+        entry = entries.get(code)
+        if entry is None:
+            # Already caught by test_every_emit_code_has_glossary_entry.
+            continue
+        ua = (entry.user_action or "").strip()
+        if not ua:
+            levels = ",".join(sorted(code_levels[code]))
+            missing_user_action.append(f"  {code}  (level={levels})")
+
+    assert not missing_user_action, (
+        "These warn/halt/error codes have an empty user_action: in glossary.md:\n"
+        + "\n".join(missing_user_action)
     )
