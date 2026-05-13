@@ -261,6 +261,7 @@ def _ensure_v2(scratchpad_path: Path) -> str:
 if __name__ == "__main__":
     import argparse
     import sys
+    from bin import _status
 
     parser = argparse.ArgumentParser(
         prog="_scratchpad",
@@ -341,20 +342,20 @@ if __name__ == "__main__":
         try:
             _reset_scratchpad(sp_path, active_spec=args.active_spec)
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "scratchpad.reset", dest="stderr", reason=str(exc))
             sys.exit(1)
-        print(f"SCRATCHPAD_RESET: v2 written, active_spec={args.active_spec}")
+        _status.emit("ok", "scratchpad.reset", active_spec=args.active_spec)
 
     elif args.cmd == "ensure-v2":
         try:
             result = _ensure_v2(sp_path)
         except ValueError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "scratchpad.ensure_v2", dest="stderr", reason=str(exc))
             sys.exit(1)
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "scratchpad.ensure_v2", dest="stderr", reason=str(exc))
             sys.exit(1)
-        print(f"ENSURE_V2: {result}")
+        _status.emit("ok", "scratchpad.ensure_v2", result=result)
 
     elif args.cmd == "set-pending-adoption":
         try:
@@ -366,15 +367,16 @@ if __name__ == "__main__":
                 action=args.action,
             )
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "scratchpad.set_pending", dest="stderr", reason=str(exc))
             sys.exit(1)
-        print(f"PENDING_ADOPTION_PROMPT_PERSISTED: {args.fingerprint[:12]}...")
+        _status.emit("ok", "scratchpad.pending_adoption_set",
+                     fingerprint=args.fingerprint[:12])
 
     elif args.cmd == "get-pending-adoption":
         try:
             prompt = _get_pending_adoption_prompt(sp_path, track=args.track)
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "scratchpad.get_pending", dest="stderr", reason=str(exc))
             sys.exit(1)
         if args.json:
             import json as _json
@@ -382,19 +384,21 @@ if __name__ == "__main__":
             print(_json.dumps(prompt, indent=2))
         else:
             if not prompt:
-                print("NO_PENDING_PROMPT")
+                _status.emit("ok", "scratchpad.no_pending_prompt")
             else:
                 fp = prompt.get("fingerprint", "")
                 label = prompt.get("label", "")
-                print(f"PROMPT: fp={fp[:12]}... label={label}")
+                _status.emit("result", "scratchpad.pending_prompt",
+                             fingerprint=fp[:12],
+                             label=label)
 
     elif args.cmd == "clear-pending-adoption":
         try:
             wrote = _clear_pending_adoption_prompt(sp_path, track=args.track)
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "scratchpad.clear_pending", dest="stderr", reason=str(exc))
             sys.exit(1)
         if wrote:
-            print("PROMPT_CLEARED")
+            _status.emit("ok", "scratchpad.prompt_cleared")
         else:
-            print("NO_TRACK_TO_CLEAR")
+            _status.emit("ok", "scratchpad.no_track_to_clear")

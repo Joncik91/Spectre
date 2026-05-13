@@ -349,6 +349,7 @@ def write_envelope_alongside_sidecar(
 if __name__ == "__main__":
     import argparse
     import sys
+    from bin import _status
 
     parser = argparse.ArgumentParser(
         prog="eval_metadata",
@@ -420,7 +421,8 @@ if __name__ == "__main__":
         if args.config is not None:
             config_path = pathlib.Path(args.config)
             if not config_path.exists():
-                print(f"ERROR: config not found: {config_path}", file=sys.stderr)
+                _status.emit("error", "eval_metadata.config_missing", dest="stderr",
+                             path=args.config)
                 sys.exit(1)
             with config_path.open("rb") as _f:
                 config_dict = tomllib.load(_f)
@@ -429,13 +431,16 @@ if __name__ == "__main__":
             try:
                 severity_overrides = json.loads(args.severity_overrides)
             except json.JSONDecodeError as exc:
-                print(f"ERROR: bad --severity-overrides JSON: {exc}", file=sys.stderr)
+                _status.emit("error", "eval_metadata.bad_severity_json", dest="stderr",
+                             reason=str(exc))
                 sys.exit(1)
         print(compute_policy_hash(config_dict, severity_overrides))
 
     elif args.cmd == "sidecar-path":
         spec_path = pathlib.Path(args.spec)
-        print(str(sidecar_path_for(spec_path)))
+        # Use relative path to avoid absolute path leaks
+        from bin import _path_display
+        print(_path_display.display(sidecar_path_for(spec_path)))
 
     elif args.cmd == "write-sidecar":
         spec_path = pathlib.Path(args.spec)
@@ -445,13 +450,15 @@ if __name__ == "__main__":
         else:
             payload_path = pathlib.Path(args.payload)
             if not payload_path.exists():
-                print(f"ERROR: payload file not found: {payload_path}", file=sys.stderr)
+                _status.emit("error", "eval_metadata.payload_missing", dest="stderr",
+                             path=args.payload)
                 sys.exit(1)
             raw = payload_path.read_text(encoding="utf-8")
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError as exc:
-            print(f"ERROR: bad payload JSON: {exc}", file=sys.stderr)
+            _status.emit("error", "eval_metadata.bad_payload_json", dest="stderr",
+                         reason=str(exc))
             sys.exit(1)
 
         # Map payload keys to write_sidecar kwargs.
@@ -476,30 +483,39 @@ if __name__ == "__main__":
                 substrate_resolution=payload.get("substrate_resolution"),
             )
         except KeyError as exc:
-            print(f"ERROR: missing required payload field: {exc}", file=sys.stderr)
+            _status.emit("error", "eval_metadata.sidecar_missing_field", dest="stderr",
+                         field=str(exc))
             sys.exit(1)
         except OSError as exc:
-            print(f"ERROR: write failed: {exc}", file=sys.stderr)
+            _status.emit("error", "eval_metadata.sidecar_write", dest="stderr",
+                         reason=str(exc))
             sys.exit(1)
-        print(str(sidecar))
+        from bin import _path_display
+        _status.emit("ok", "eval.sidecar_written",
+                     path=_path_display.display(sidecar))
 
     elif args.cmd == "write-envelope":
         spec_path = pathlib.Path(args.spec)
         if not spec_path.exists():
-            print(f"ERROR: spec file not found: {spec_path}", file=sys.stderr)
+            _status.emit("error", "eval_metadata.spec_missing", dest="stderr",
+                         path=args.spec)
             sys.exit(1)
         sidecar_path = pathlib.Path(args.sidecar) if args.sidecar else sidecar_path_for(spec_path)
         if not sidecar_path.exists():
-            print(f"ERROR: sidecar not found: {sidecar_path}", file=sys.stderr)
+            _status.emit("error", "eval_metadata.sidecar_missing", dest="stderr",
+                         path=str(sidecar_path))
             sys.exit(1)
         walk_path = pathlib.Path(args.walk) if args.walk else None
         decisions_dir = pathlib.Path(args.decisions_dir) if args.decisions_dir else None
         try:
             envelope_path = write_envelope_alongside_sidecar(spec_path, sidecar_path, walk_path, decisions_dir)
         except (OSError, KeyError, ValueError) as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "eval_metadata.envelope_write", dest="stderr",
+                         reason=str(exc))
             sys.exit(1)
-        print(str(envelope_path))
+        from bin import _path_display
+        _status.emit("ok", "eval.envelope_written",
+                     path=_path_display.display(envelope_path))
 
     elif args.cmd == "sha256":
         if args.stdin:
@@ -507,10 +523,12 @@ if __name__ == "__main__":
         elif args.file is not None:
             fp = pathlib.Path(args.file)
             if not fp.exists():
-                print(f"ERROR: file not found: {fp}", file=sys.stderr)
+                _status.emit("error", "eval_metadata.file_missing", dest="stderr",
+                             path=args.file)
                 sys.exit(1)
             data = fp.read_bytes()
         else:
-            print("ERROR: provide --file <path> or --stdin", file=sys.stderr)
+            _status.emit("error", "eval_metadata.no_input", dest="stderr",
+                         reason="provide --file or --stdin")
             sys.exit(1)
         print(hashlib.sha256(data).hexdigest())

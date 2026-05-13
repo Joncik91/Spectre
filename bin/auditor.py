@@ -267,6 +267,7 @@ def _results_to_summary(results: list[AuditResult]) -> dict[str, Any]:
 if __name__ == "__main__":
     import argparse
     import sys
+    from bin import _status
 
     parser = argparse.ArgumentParser(
         prog="auditor",
@@ -342,15 +343,13 @@ if __name__ == "__main__":
         try:
             parsed = json.loads(raw)
         except json.JSONDecodeError as exc:
-            print(f"ERROR: bad --properties JSON: {exc}", file=sys.stderr)
+            _status.emit("error", "audit.bad_properties_json", dest="stderr", reason=str(exc))
             sys.exit(1)
         if parsed is None:
             return None
         if not isinstance(parsed, list):
-            print(
-                "ERROR: --properties must be a JSON array of dicts (or null).",
-                file=sys.stderr,
-            )
+            _status.emit("error", "audit.bad_properties_type", dest="stderr",
+                         reason="must be JSON array of dicts or null")
             sys.exit(1)
         return parsed
 
@@ -358,10 +357,11 @@ if __name__ == "__main__":
         try:
             paths = json.loads(args.paths)
         except json.JSONDecodeError as exc:
-            print(f"ERROR: bad --paths JSON: {exc}", file=sys.stderr)
+            _status.emit("error", "audit.bad_paths_json", dest="stderr", reason=str(exc))
             sys.exit(1)
         if not isinstance(paths, list):
-            print("ERROR: --paths must be a JSON array of strings.", file=sys.stderr)
+            _status.emit("error", "audit.bad_paths_type", dest="stderr",
+                         reason="must be JSON array of strings")
             sys.exit(1)
         properties = _parse_properties(args.properties)
 
@@ -370,14 +370,19 @@ if __name__ == "__main__":
                 args.action, paths_touched=paths, properties=properties
             )
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "audit.run", dest="stderr", reason=str(exc))
             sys.exit(1)
 
         summary = _results_to_summary(results)
         if args.prose:
-            print(f"AUDIT: {len(results)} checks, passed={summary['passed']}")
+            _status.emit("result", "audit.summary",
+                         checks=len(results),
+                         passed=str(summary["passed"]).lower(),
+                         failures=len(summary["failures"]))
             for failure in summary["failures"]:
-                print(f"  FAIL: {failure['kind']} — {failure['message']}")
+                _status.emit("warn", "audit.fail",
+                             kind=failure["kind"],
+                             message=failure["message"])
         else:
             print(json.dumps(summary, indent=2))
 
@@ -389,7 +394,7 @@ if __name__ == "__main__":
         try:
             sp = _sp.load(sp_path)
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: scratchpad load failed: {exc}", file=sys.stderr)
+            _status.emit("error", "audit.scratchpad_load", dest="stderr", reason=str(exc))
             sys.exit(1)
         paths = _sp.get_paths_touched(sp, track=args.track)
         properties = _parse_properties(args.properties)
@@ -399,7 +404,7 @@ if __name__ == "__main__":
                 args.action, paths_touched=paths, properties=properties
             )
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: {exc}", file=sys.stderr)
+            _status.emit("error", "audit.run", dest="stderr", reason=str(exc))
             sys.exit(1)
 
         summary = _results_to_summary(results)
@@ -418,12 +423,17 @@ if __name__ == "__main__":
         try:
             _sp.atomic_write(sp_path, sp)
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: scratchpad write failed: {exc}", file=sys.stderr)
+            _status.emit("error", "audit.scratchpad_write", dest="stderr", reason=str(exc))
             sys.exit(1)
 
         if args.json:
             print(json.dumps(summary, indent=2))
         else:
-            print(f"AUDIT: {len(results)} checks, passed={summary['passed']}")
+            _status.emit("result", "audit.summary",
+                         checks=len(results),
+                         passed=str(summary["passed"]).lower(),
+                         failures=len(summary["failures"]))
             for failure in summary["failures"]:
-                print(f"  FAIL: {failure['kind']} — {failure['message']}")
+                _status.emit("warn", "audit.fail",
+                             kind=failure["kind"],
+                             message=failure["message"])

@@ -9,6 +9,7 @@ sys.path.insert(0, str(ROOT))
 
 from bin import _scratchpad as sp  # noqa: E402
 from bin import migrate_scratchpad_v1_to_v2 as _mig  # noqa: E402
+from bin import _status  # noqa: E402
 
 SPECS = Path("specs")
 ACTIVE = SPECS / ".active"
@@ -22,31 +23,30 @@ def list_specs() -> str:
     return "\n".join(f"  - specs/{f}" for f in files) or "  (no spec files)"
 
 
-def state_line() -> str:
+def _state_fields() -> dict:
     data = sp.load(SCRATCH)
     # Handle both v1 (top-level fields) and v2 (tracks.default) formats.
     if data.get("version") == 2:
         track = data.get("tracks", {}).get("default", {})
     else:
         track = data
-    return (
-        f"STATE: step={track.get('step')} "
-        f"exit_code={track.get('exit_code')} "
-        f"last_command={track.get('last_command')!r}"
-    )
+    return {
+        "step": track.get("step"),
+        "exit_code": track.get("exit_code"),
+        "last_command": track.get("last_command"),
+    }
 
 
 def main() -> int:
     # Auto-migrate v1 scratchpad on SessionStart, regardless of .active state.
     _result = _mig.migrate(SCRATCH)
     if _result == "migrated":
-        print("MIGRATED: scratchpad v1 → v2 (existing track moved to 'default').")
+        _status.emit("ok", "hydrate.migrated",
+                     migration="scratchpad-v1-to-v2")
 
     if not ACTIVE.exists():
-        print("SIGNAL: No active spec. Run /vision to begin.")
-        print("Available specs:")
-        print(list_specs())
-        print(state_line())
+        _status.emit("info", "hydrate.signal", reason="no-active-spec",
+                     hint="run /vision to begin")
         detect_and_propose_patches()
         surface_pending_template_patches()
         return 0
@@ -54,41 +54,28 @@ def main() -> int:
     target = ACTIVE.read_text(encoding="utf-8").strip()
     target_path = Path(target)
     if not target_path.exists():
-        print(f"ERROR: stale .active pointer ({target})")
-        print("Available specs:")
-        print(list_specs())
-        print(state_line())
+        _status.emit("warn", "hydrate.stale_active", path=target)
         detect_and_propose_patches()
         surface_pending_template_patches()
         return 0
 
     body = target_path.read_text(encoding="utf-8")
-    print(f"--- ACTIVE SPEC: {target} ---")
-    print(body, end="")
-    if not body.endswith("\n"):
-        print()
-    print("--- END ACTIVE SPEC ---")
-    print(state_line())
+    fields = _state_fields()
+    _status.emit("result", "hydrate.spec_summary",
+                 slug=target,
+                 step=fields.get("step"),
+                 exit_code=fields.get("exit_code"),
+                 expand=body)
     detect_and_propose_patches()
     surface_pending_template_patches()
     return 0
 
 
 def surface_pending_template_patches() -> None:
-    """Emit a single-line signal at SessionStart if proposed patches exist.
-
-    v0.4.2: tells the user how many unaccepted template-patches are
-    queued in ~/.spectre/template-patches/proposed/. Manual review only —
-    no auto-merge.
-    """
+    """Emit a single-line signal at SessionStart if proposed patches exist."""
     from bin import template_patcher
     proposals = template_patcher.list_proposed_patches()
-    print(f"PENDING_TEMPLATE_PATCHES: {len(proposals)}")
-    if proposals:
-        print(
-            "Review with: cat ~/.spectre/template-patches/proposed/<file>; "
-            "then mv to .accepted/ or .rejected/."
-        )
+    _status.emit("info", "hydrate.template_patches_pending", count=len(proposals))
 
 
 def detect_and_propose_patches() -> None:
@@ -121,5 +108,5 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception as exc:
-        print(f"SIGNAL: hydrator error ({type(exc).__name__}): {exc}")
+        _status.emit("error", "hydrate.error", reason=f"{type(exc).__name__}: {exc}")
         sys.exit(0)
