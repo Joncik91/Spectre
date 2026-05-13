@@ -2,6 +2,21 @@
 
 All notable changes to the Spectre plugin.
 
+## v0.8.3 — 2026-05-13
+
+### Fixed
+
+- **Tier-3 reviewer no longer false-positives on `&&`-chained actions** (#59). DeepSeek was seeing a flat `action_summary` string and couldn't identify compilation/build tokens in non-first chain segments, producing spurious `missing-producer` dismissals.
+
+### Added
+
+- **`action_segments` in step table.** When `build_step_table` detects `&&`, `;`, or `||` chaining in a step action, it now includes an `action_segments: [str]` field alongside `action_summary`. Each element is one top-level segment (truncated individually via `_truncate_step_field`). Single-command steps and parse-error cases omit the field.
+- **System prompt rule #7.** Instructs DeepSeek to treat each `action_segments` element as a distinct sub-action when assessing completeness; any segment counts toward step ownership.
+
+### Changed
+
+- **`EVALUATOR_VERSION` bumped `0.8.0` → `0.8.3`.** Sidecar carries prompt-vintage info; JSON shape unchanged.
+
 ## v0.8.2 — 2026-05-13
 
 ### Added
