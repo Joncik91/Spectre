@@ -150,6 +150,18 @@ class Finding:
         if self.suggested_fix is not None and len(self.suggested_fix) > MAX_FIX_LEN:
             raise ValueError(f"suggested_fix exceeds 140 chars: {len(self.suggested_fix)}")
 
+    def to_dict(self) -> dict:
+        """Return all serializable fields as a plain dict."""
+        return {
+            "severity": self.severity,
+            "tier": self.tier,
+            "kind": self.kind,
+            "step": self.location.step,
+            "message": self.message,
+            "fingerprint": fingerprint(self),
+            "dismissable": self.dismissable,
+        }
+
 
 def fingerprint(f: Finding) -> str:
     """

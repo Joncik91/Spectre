@@ -239,6 +239,7 @@ def write_sidecar(
     findings_summary: dict | None = None,
     contract_resolution: dict | None = None,
     substrate_resolution: dict | None = None,
+    findings_inline: list[dict] | None = None,
 ) -> pathlib.Path:
     """Atomic write of <spec>.eval.json next to the spec file.
 
@@ -303,6 +304,9 @@ def write_sidecar(
 
     if substrate_resolution is not None:
         payload["substrate_resolution"] = substrate_resolution
+
+    if findings_inline is not None:
+        payload["findings"] = findings_inline
 
     # Atomic write: mkstemp + os.replace
     fd, tmp = tempfile.mkstemp(
@@ -481,6 +485,7 @@ if __name__ == "__main__":
                 findings_summary=payload.get("findings_summary"),
                 contract_resolution=payload.get("contract_resolution"),
                 substrate_resolution=payload.get("substrate_resolution"),
+                findings_inline=payload.get("findings_inline"),
             )
         except KeyError as exc:
             _status.emit("error", "eval_metadata.sidecar_missing_field", dest="stderr",

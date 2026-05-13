@@ -436,3 +436,72 @@ def test_evaluate_contract_spec_sidecar_contains_contract_resolution(tmp_path):
     )
     on_disk = json.loads(sidecar_path.read_text(encoding="utf-8"))
     assert "contract_resolution" in on_disk
+
+
+# ---------------------------------------------------------------------------
+# TestFindingsInline
+# ---------------------------------------------------------------------------
+
+class TestFindingsInline:
+    def test_findings_inline_omitted_when_none(self, tmp_path):
+        spec = tmp_path / "foo.spec.md"
+        spec.write_text("# spec\n", encoding="utf-8")
+        sidecar = eval_metadata.write_sidecar(
+            spec,
+            evaluator_version="0.8.0",
+            tiers_run=[1, 2],
+            findings=[],
+            dismissals=[],
+            config_path=None,
+            config_hash=None,
+            deepseek_model_version=None,
+            policy_hash="abc",
+            findings_inline=None,
+        )
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
+        assert "findings" not in data
+
+    def test_findings_inline_populated(self, tmp_path):
+        spec = tmp_path / "foo.spec.md"
+        spec.write_text("# spec\n", encoding="utf-8")
+        inline = [{"severity": "warn", "tier": 2, "kind": "missing-why", "step": 1,
+                   "message": "test", "fingerprint": "abc", "dismissable": False}]
+        sidecar = eval_metadata.write_sidecar(
+            spec,
+            evaluator_version="0.8.0",
+            tiers_run=[1, 2],
+            findings=[],
+            dismissals=[],
+            config_path=None,
+            config_hash=None,
+            deepseek_model_version=None,
+            policy_hash="abc",
+            findings_inline=inline,
+        )
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
+        assert "findings" in data
+        assert len(data["findings"]) == 1
+        assert data["findings"][0]["kind"] == "missing-why"
+
+    def test_dismissed_findings_excluded_from_inline(self, tmp_path):
+        """Caller is responsible for filtering; write_sidecar takes the list as-is."""
+        spec = tmp_path / "foo.spec.md"
+        spec.write_text("# spec\n", encoding="utf-8")
+        # Simulate caller pre-filtering dismissed findings
+        inline = [{"severity": "block", "tier": 1, "kind": "soft-verification", "step": 2,
+                   "message": "real block", "fingerprint": "xyz", "dismissable": False}]
+        sidecar = eval_metadata.write_sidecar(
+            spec,
+            evaluator_version="0.8.0",
+            tiers_run=[1, 2],
+            findings=[],
+            dismissals=[],
+            config_path=None,
+            config_hash=None,
+            deepseek_model_version=None,
+            policy_hash="abc",
+            findings_inline=inline,
+        )
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
+        assert len(data["findings"]) == 1
+        assert data["findings"][0]["severity"] == "block"
