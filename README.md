@@ -6,7 +6,7 @@
 
 > Spectre — a deterministic spec-driven Claude Code plugin. Vision → Spec → Evaluate → Lock → Implement → Verify, with three-tier pre-lock review and per-project resource locking.
 
-[![tests](https://img.shields.io/badge/tests-1512%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![tests](https://img.shields.io/badge/tests-1555%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## What it does
 
@@ -214,10 +214,14 @@ Full API reference — hooks, skills, spec step schema, sidecar format, and layo
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full breakdown: hook flow, skill protocols, evaluator pipeline, resource-lock supervisor, and the design rationale behind the three-tier defense.
 
+Skill invocations use the `spectre` shell wrapper (`bin/spectre`) — it resolves `${CLAUDE_PLUGIN_ROOT}`, exports `PYTHONPATH`, and delegates to `python3 -m bin.<subcommand>`. Skill prose shows `spectre walker init-or-resume …`; the `PYTHONPATH` plumbing never appears in runtime output.
+
+CLI status lines follow a single grammar: `<LEVEL> <code> key=value …` where `LEVEL ∈ {ok, info, warn, halt, error, result, prompt}` and `code` is a stable dot-namespaced identifier (`walker.init`, `eval.summary`, `tier.classify`, …). See [`docs/API.md`](docs/API.md#cli-output-grammar) for the full vocabulary.
+
 ## Tests
 
 ```bash
-pytest tests/                  # 1512 tests, all stdlib + pytest
+pytest tests/                  # 1555 tests, all stdlib + pytest
 pytest tests/ -v               # verbose
 pytest tests/test_spec_evaluator.py -v   # single module
 ```

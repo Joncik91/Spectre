@@ -2,6 +2,24 @@
 
 All notable changes to the Spectre plugin.
 
+## v0.8.0 — 2026-05-13
+
+**Output discipline: skill phase names + CLI level/code grammar.**
+
+Design goals: eliminate 245 ad-hoc print sites; make CLI output shell-parseable; make skill prose maintainable without PYTHONPATH plumbing.
+
+Changes:
+
+- **`bin/_status.py`** — central emitter. Format: `<LEVEL> <code> key=value …`. Levels: ok, info, warn, halt, error, result, prompt. Env knobs: `SPECTRE_QUIET=1`, `SPECTRE_VERBOSE=1`, `SPECTRE_JSON=1`.
+- **`bin/_path_display.py`** — path normalization. Strips `${CLAUDE_PLUGIN_ROOT}`, resolves project-relative, replaces home with `~`.
+- **`bin/spectre`** — shell wrapper. Resolves `CLAUDE_PLUGIN_ROOT`, exports `PYTHONPATH`, delegates to `python3 -m bin.<subcommand>`. Skills call `spectre X` not `python3 -m bin.X`.
+- **All CLI modules migrated** — walker, tier, auditor, hydrate, _scratchpad, fingerprint, cdlc_ledger, adr, templates, observations, personal_rules, track, setup_wizard, handoff_validator, managed_venv, eval_metadata, spec_evaluator, substrate_wizard.
+- **skills/vision/SKILL.md rewritten** — phase names: Fingerprint, Wizard, Intent, Feasibility, Walker loop, Draft, Evaluator gate, Lock, Transition. All `PYTHONPATH=… python3 -m bin.X` → `spectre X`. PYTHONPATH note section removed.
+- **skills/implement/SKILL.md rewritten** — phase names: Mode routing, Track, Tier 0 envelope, Context read, Environment, Pre-flight, Check mode, Tier classifier, Resource acquire, Reasoning emit, Execute, Verify, Audit, Branch on verification, Drift, Resource release, Failure log, Finding capture.
+- **New tests**: `test_status_emit.py`, `test_skill_phase_names.py`, `test_skill_no_version_markers.py`. Inverted `test_skill_pythonpath_consistency.py` — now bans `python3 -m bin.` from skill code blocks.
+
+Tests: 1548 → 1548+ (0 regressions).
+
 ## v0.7.4 — 2026-05-12
 
 **Hygiene release: rename `sdl-vision-engine` → `spectre`, split API ref out of README, consolidate test fixtures, fix stale doc counts.**

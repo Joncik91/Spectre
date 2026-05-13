@@ -51,35 +51,32 @@ The hooks **never read or write** the active spec body itself — only the point
 
 ## Skill protocols
 
-### `/vision <text>` (`skills/vision/SKILL.md`, ~410 lines)
+### `/vision <text>` (`skills/vision/SKILL.md`, ~340 lines)
 
 ```
-Step 0    Codebase fingerprint        → state/local-symbols.json + template surfacing
-Step 0.5  Cognitive-substrate wizard  4 mandatory §8.2 questions; cached by author-spec-hash
-Step 1    Receive intent              (user input)
-Step 2    Feasibility Audit (silent)  refuse if physically impossible
-Step 3    Initialize the walker       init-or-resume state/.walk.json
-Step 4    Walk loop (interrogation)   peek-pending → question → answer-concern → yield-check
-                                      Loop until: stop / Tier 3 yield-delta converged /
-                                      max-rounds / per-receiver exhausted
-Step 5    Materialize draft + confirm render from state.answered → .spec.md.draft
-                                      Confirm: yes / refine "<change>" / cancel
-Step 6    Draft-to-disk               atomic write <slug>.spec.md.draft
-Step 6.3a First-run setup wizard      ensure ~/.spectre/reviewer.toml exists
-Step 6.4  Pre-lock Evaluator          ── see "Evaluator pipeline" below ──
-          Tier 1 spec_ast (AST)
-          Tier 2 coverage_gate (structural)
-          Tier 3 llm_judge (DeepSeek, opt-in)
-          Halt on any block-severity finding.
-Step 6.5  ADR generation              decisions/<NNNN>-<slug>.md per Decision marker
-Step 6.6  Resource node inference     auto-detect port:N → res-port-<N> in .graph.md
-Step 6.7  Lock                        atomic rename .draft → .spec.md
-                                      flip specs/.active
-                                      reset state/scratchpad.json (v2 shape)
-                                      write <slug>.spec.md.eval.json sidecar
-                                      clear state/.eval-bundle.json
-                                      write <slug>.envelope.json handoff envelope
-Step 7    Print VISION LOCKED transition signal
+Phase: Fingerprint (silent, internal)    → state/local-symbols.json + template surfacing
+Phase: Wizard                            4 mandatory §8.2 questions; cached by author-spec-hash
+Phase: Intent                            (user input)
+Phase: Feasibility                       refuse if physically impossible
+Phase: Walker loop                       init-or-resume; peek-pending → question → answer-concern
+                                         → yield-check; loop until stop
+Phase: Draft                             render from state.answered → .spec.md.draft
+                                         atomic write; Confirm: yes / refine / cancel
+Phase: Evaluator gate — setup wizard     ensure ~/.spectre/reviewer.toml exists
+Phase: Evaluator gate — spec evaluation  ── see "Evaluator pipeline" below ──
+                                         Tier 1 spec_ast (AST)
+                                         Tier 2 coverage_gate (structural)
+                                         Tier 3 llm_judge (DeepSeek, opt-in)
+                                         Halt on any block-severity finding.
+Phase: Evaluator gate — ADR generation (conditional)
+                                         decisions/<NNNN>-<slug>.md per Decision marker
+Phase: Lock                              atomic rename .draft → .spec.md
+                                         flip specs/.active
+                                         reset state/scratchpad.json (v2 shape)
+                                         write <slug>.spec.md.eval.json sidecar
+                                         clear state/.eval-bundle.json
+                                         write <slug>.envelope.json handoff envelope
+Phase: Transition                        print VISION LOCKED signal
 ```
 
 Two architectural commitments shape the protocol:
@@ -87,39 +84,38 @@ Two architectural commitments shape the protocol:
 - **Draft → confirm → lock is explicit.** No silent locks. The user reads the draft on disk in their own editor before saying yes.
 - **The evaluator's bundle is materialized once.** §6.4 builds a `ReviewBundle` containing preview ADRs, preview Resources, and tier classifications, persists it to `state/.eval-bundle.json` keyed by the draft's SHA-256, and §6.5/§6.6/§6.7 read from it. No recomputation; if the draft changes between steps, the SHA mismatch forces a re-run.
 
-### `/implement [check | auto] [<track>]` (`skills/implement/SKILL.md`, ~520 lines)
+### `/implement [check | auto] [<track>]` (`skills/implement/SKILL.md`, ~400 lines)
 
 ```
-Step 0    Mode routing                parse check / auto / track args
-Step 0.5  Track selection             default = "default"
-Step 0.7  Tier 0 handoff integrity    validate <slug>.envelope.json before reading spec
-                                      Halt: ENVELOPE TAMPERED / schema violation
-Step 1    Read context                .active + scratchpad[track]
-                                      Halt: SPEC COMPLETE if all steps verified
-Step 1.5  Environment setup           ensure_venv + normalize_action rewrites
-                                      Halt: VENV CREATION FAILED (no fallback)
-Step 2    Pre-flight re-verify        re-run prior step's verification
-                                      Halt: ROOT-STATE DESYNC on fail
-Step 3    /implement check branch     verify-only, no scratchpad write
-Step 3.5  Persistence-tier classifier  bin/tier.py — silent/repo/host/network/NA
-                                      Halt+ask on host, network, or never-autonomous
-Step 3.5b Post-halt-success prompt    adopt / once-only / never-ask-again (v0.4.1+)
-                                      sandbox-paradox brake at 3 adoptions/session
-Step 3.6  Resource lock acquire        bin/track.acquire() via UDS to supervisor
-                                      Halt: RESOURCE QUEUED if at capacity
-Step 3.7  Reasoning-in-Public          print "WHY: <why text>"
-Step 4    Execute action               Bash → PostToolUse hook fires compact.py
-Step 5    Verification gate            run verification:; halt on non-zero
-Step 5.5  State Auditor                bin/auditor.py PBT-lite checks (informational)
-Step 6    Branch on result
-          Path A (pass):  advance step, CDLC ledger implement entry
-          Path B (fail):  one Option-B retry with diagnosis, then halt
-Step 6.5  Drift checkpoint             every 5 successful steps
-                                       re-read §1, audit next batch
-                                       Halt: DRIFT DETECTED on concern
-Step 6.7  Release locks                bin/track.release() on terminal step state
-Step 7    Failure logging              append to scratchpad.failed_hypotheses[]
-Step 7.5  Spectre-finding capture      Path B retry succeeded → prompt project/spectre
+Phase: Mode routing        parse check / auto / track args
+Phase: Track               default = "default"; create track if absent
+Phase: Tier 0 envelope     validate <slug>.envelope.json before reading spec
+                           Halt: status=tampered / schema violation
+Phase: Context read        .active + scratchpad[track]
+                           Halt: SPEC COMPLETE if all steps verified
+Phase: Environment         ensure_venv + normalize_action rewrites
+                           Halt: VENV CREATION FAILED (no fallback)
+Phase: Pre-flight          re-run prior step's verification
+                           Halt: ROOT-STATE DESYNC on fail
+Phase: Check mode          verify-only, no scratchpad write
+Phase: Tier classifier     spectre tier — silent/repo/host/network/NA
+                           Halt+ask on host, network, or never-autonomous
+                           Post-halt-success: adopt / once-only / never-ask-again
+                           Sandbox-paradox brake at 3 adoptions/session
+Phase: Resource acquire    spectre track acquire via UDS to supervisor
+                           Halt: RESOURCE QUEUED if at capacity
+Phase: Reasoning emit      print "WHY: <why text>"
+Phase: Execute             Bash → PostToolUse hook fires compact.py
+Phase: Verify              run verification:; halt on non-zero
+                           State Auditor: informational PBT-lite checks
+Phase: Branch on verification
+                           Path A (pass): advance step, CDLC ledger implement entry
+                           Path B (fail): one Option-B retry with diagnosis, then halt
+Phase: Drift               every 5 successful steps; re-read §1, audit next batch
+                           Halt: DRIFT DETECTED on concern
+Phase: Resource release    spectre track release on terminal step state
+Phase: Failure log         append to scratchpad.failed_hypotheses[]
+Phase: Finding capture     Path B retry succeeded → prompt project/spectre
 ```
 
 The persistence-tier gate (§3.5) is the single source of truth for halt-vs-execute. v1 used a regex risk-gate inline in the skill prose; v0.2.1 replaced it with `bin/tier.py` so the rule set is testable and project-overridable.

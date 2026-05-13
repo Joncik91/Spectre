@@ -1,7 +1,7 @@
 {
   "name": "spectre-marketplace",
   "metadata": {
-    "version": "0.7.4",
+    "version": "0.8.0",
     "description": "Spectre — deterministic spec-driven Claude Code plugin (vision → spec → evaluate → lock → implement → verify)."
   },
   "owner": {
@@ -11,7 +11,7 @@
     {
       "name": "spectre",
       "description": "Three-tier pre-lock spec evaluator + persistence-tier classifier. /vision, /implement, and /implement auto skills with action/verification gates and auto-routed Spectre-finding capture.",
-      "version": "0.7.4",
+      "version": "0.8.0",
       "source": "./"
     }
   ]
