@@ -962,9 +962,18 @@ class TestDeferOptionAttachment:
 
 class TestCoverageComputation:
     def _base_state(self, intent: str = "build a thing") -> walker.WalkState:
+        # v1.0 — the five view-family flags participate in recommended_stop.
+        # Pre-set them in coverage tests that aren't about view scoping so the
+        # tests exercise lifecycle/prompt-design/semantic + open-question
+        # behavior without being confounded by view-scope state.
         return walker.WalkState(
             spec_intent=intent,
             spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+            product_input_asked=True,
+            product_output_asked=True,
+            human_user_asked=True,
+            integrator_asked=True,
+            operator_asked=True,
         )
 
     def test_empty_state_recommended_stop_false(self):
@@ -1022,6 +1031,11 @@ class TestRecommendStopTransition:
         state = walker.WalkState(
             spec_intent="build a thing",
             spec_draft_path=pathlib.Path("specs/x.spec.md.draft"),
+            product_input_asked=True,
+            product_output_asked=True,
+            human_user_asked=True,
+            integrator_asked=True,
+            operator_asked=True,
         )
         state.semantic_criteria_asked = True
         # No pending, no OQs → coverage complete

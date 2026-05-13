@@ -537,15 +537,31 @@ _V1_VIEW_SECTIONS = {
 _V1_CONTRACT_TYPES = ("Mechanical contracts", "Coverage contracts", "Exemplar bindings")
 
 
+_FENCED_BLOCK_RE = re.compile(r"^```.*?^```", re.MULTILINE | re.DOTALL)
+
+
+def _strip_fenced_blocks(text: str) -> str:
+    """Remove ```fenced code/markdown blocks``` so heading-matching regexes
+    don't see headings embedded in example fragments inside the spec body.
+    """
+    return _FENCED_BLOCK_RE.sub("", text)
+
+
 def _extract_section_body(body: str, heading_pattern: str) -> str | None:
     """Find a section by its heading regex and return its body up to the next
-    top-level h2 heading. Returns None if heading not present."""
-    m = re.search(heading_pattern, body, re.MULTILINE)
+    top-level h2 heading. Returns None if heading not present.
+
+    Fenced code blocks are stripped before scanning so contract examples
+    inside ```markdown``` fences (template.spec.md) don't trigger false
+    positives.
+    """
+    cleaned = _strip_fenced_blocks(body)
+    m = re.search(heading_pattern, cleaned, re.MULTILINE)
     if not m:
         return None
     start = m.end()
-    next_h2 = re.search(r"^##\s", body[start:], re.MULTILINE)
-    return body[start : start + next_h2.start()] if next_h2 else body[start:]
+    next_h2 = re.search(r"^##\s", cleaned[start:], re.MULTILINE)
+    return cleaned[start : start + next_h2.start()] if next_h2 else cleaned[start:]
 
 
 def _extract_subsection_body(parent_body: str, subheading_pattern: str) -> str | None:
@@ -604,9 +620,10 @@ def _check_v1_spec_version(body: str) -> list[_findings.Finding]:
 def _check_v1_substrate_family(body: str) -> list[_findings.Finding]:
     """Verify §§8.3-8.7 are each present (with either content or not-applicable)."""
     results: list[_findings.Finding] = []
+    cleaned = _strip_fenced_blocks(body)
     for section, label in _V1_SUBSTRATE_BLOCKS.items():
         pattern = rf"^#{{2,3}}\s+{re.escape(section)}\b"
-        if not re.search(pattern, body, re.MULTILINE):
+        if not re.search(pattern, cleaned, re.MULTILINE):
             results.append(_findings.Finding(
                 tier=1,
                 kind="missing-substrate-block",

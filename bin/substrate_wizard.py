@@ -310,10 +310,21 @@ def _validate_view_trust_profile(view: str, raw: str) -> list[str]:
     tokens = [t.strip() for t in stripped.split(",") if t.strip()]
     for t in tokens:
         if t not in allowed:
+            # Disambiguation hint: when the token IS valid in another view,
+            # tell the operator instead of just listing the current view's
+            # allowed set. Saves an "is it misspelled?" detour.
+            other_views = sorted(
+                v for v, vocab in _VIEW_TRUST_TOKENS.items() if t in vocab
+            )
+            hint = (
+                f" (Note: {t!r} is valid in view {other_views[0]!r}, not {view!r}.)"
+                if other_views
+                else ""
+            )
             raise WizardValidationError(
                 "trust_profile",
                 f"unknown trust token for view {view!r}: {t!r}. Valid tokens: "
-                + ", ".join(sorted(allowed)),
+                + ", ".join(sorted(allowed)) + hint,
             )
     return tokens
 

@@ -511,7 +511,17 @@ def load(path: pathlib.Path) -> WalkState | None:
     """
     if not path.is_file():
         return None
-    data = json.loads(path.read_text(encoding="utf-8"))
+    raw = path.read_text(encoding="utf-8")
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        # Empty file, partial write, or hand-edit corruption all land here.
+        # Surface the same recovery hint as the version-mismatch path so
+        # operators don't have to read a stack trace to know what to do.
+        raise ValueError(
+            f"state file corrupt at {path}: {exc.msg} at line {exc.lineno}; "
+            f"rm {path} to restart the walk"
+        ) from exc
     ver = data.get("walker_version")
     # v1.0 — hard cutover. Pre-1.0 state files are rejected (no v0.9 specs
     # remain in the wild per the pre-flight checklist; first external users
@@ -1134,12 +1144,26 @@ def _compute_coverage(state: WalkState, draft_text: str) -> dict:
     # when seed-semantic-criteria is answered. No need to also check state.answered.
     semantic_satisfied = state.semantic_criteria_asked
 
+    # v1.0 — six-view family flags participate in recommended_stop. When all
+    # five views' scope-check + follow-ups are answered (or marked N/A), the
+    # corresponding *_asked flag flips. Convention: every family flag must be
+    # part of the stop predicate — future v1.1 families that emit concerns
+    # conditionally would otherwise let recommended_stop fire prematurely.
+    views_satisfied = (
+        state.product_input_asked
+        and state.product_output_asked
+        and state.human_user_asked
+        and state.integrator_asked
+        and state.operator_asked
+    )
+
     recommended_stop = (
         oq_all_resolved
         and undefined_invariants == 0
         and lifecycle_satisfied
         and prompt_design_satisfied
         and semantic_satisfied
+        and views_satisfied
         and pending_count == 0
     )
     recommended_stop_reason = "coverage-complete" if recommended_stop else None
