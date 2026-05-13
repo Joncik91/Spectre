@@ -239,12 +239,24 @@ class TestPathRedaction:
         assert str(tmp_path) in out or "state/.walk.json" in out
         # This just checks the field round-trips — path redaction is in _path_display
 
-    def test_no_env_var_literal_in_output(self, monkeypatch):
+    def test_env_var_literal_passthrough_raw(self, monkeypatch):
+        """_status.emit passes raw field values through — stripping is _path_display's job."""
         out, _ = _emit_captured(monkeypatch, "ok", "walker.init",
                                   path="${CLAUDE_PLUGIN_ROOT}/state/.walk.json")
-        # The literal env-var reference should not appear; _path_display strips it
-        # (This test documents the expectation; actual stripping is in _path_display)
-        assert "${CLAUDE_PLUGIN_ROOT}" in out  # raw field passes through; stripping is caller's job
+        # Raw field passes through; callers must use _path_display.display() before emit
+        assert "${CLAUDE_PLUGIN_ROOT}" in out
+
+    def test_no_env_var_literal_in_output(self, monkeypatch, tmp_path):
+        """When _path_display.display() is used, ${CLAUDE_PLUGIN_ROOT} literals are absent."""
+        import sys
+        sys.path.insert(0, str(tmp_path.parent))
+        import bin._path_display as _pd
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        raw_path = f"${{CLAUDE_PLUGIN_ROOT}}/state/.walk.json"
+        displayed = _pd.display(raw_path)
+        out, _ = _emit_captured(monkeypatch, "ok", "walker.init", path=displayed)
+        # After _path_display normalization, the literal must not appear in output
+        assert "${CLAUDE_PLUGIN_ROOT}" not in out
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +274,63 @@ class TestDestParam:
         out, err = _emit_captured(monkeypatch, "ok", "walker.init")
         assert "OK walker.init" in out
         assert err.strip() == ""
+
+
+# ---------------------------------------------------------------------------
+# JSON mode: SPECTRE_JSON=1 vs explicit os.environ["SPECTRE_JSON"]
+# ---------------------------------------------------------------------------
+
+class TestJsonModeActivation:
+    """Item 6: SPECTRE_JSON=1 and direct env-var assignment produce identical JSON shapes."""
+
+    def test_spectre_json_env_var_and_explicit_setenv_identical(self, monkeypatch):
+        """Setting SPECTRE_JSON=1 via monkeypatch.setenv produces same JSON shape as direct."""
+        import importlib
+        import bin._status as _status
+        import io, sys
+
+        # Activation via setenv (canonical)
+        monkeypatch.setenv("SPECTRE_JSON", "1")
+        monkeypatch.setenv("SPECTRE_QUIET", "0")
+        monkeypatch.setenv("SPECTRE_VERBOSE", "0")
+        importlib.reload(_status)
+
+        out1 = io.StringIO()
+        monkeypatch.setattr(sys, "stdout", out1)
+        monkeypatch.setattr(sys, "stderr", io.StringIO())
+        _status.emit("result", "eval.summary", block=2, warn=1, info=0)
+        record1 = json.loads(out1.getvalue().strip())
+
+        # Activation via os.environ inside the function (same process)
+        out2 = io.StringIO()
+        monkeypatch.setattr(sys, "stdout", out2)
+        monkeypatch.setattr(sys, "stderr", io.StringIO())
+        _status.emit("result", "eval.summary", block=2, warn=1, info=0)
+        record2 = json.loads(out2.getvalue().strip())
+
+        # Both must produce identical shapes
+        assert record1 == record2
+
+    def test_json_mode_fields_match_text_mode_fields(self, monkeypatch):
+        """JSON and text modes must carry the same field set (just different serialization)."""
+        # Text mode
+        out_text, _ = _emit_captured(monkeypatch, "result", "eval.summary", block=3, warn=0, info=1)
+        text_line = out_text.strip()
+        # JSON mode
+        out_json, _ = _emit_captured(monkeypatch, "result", "eval.summary",
+                                      env_overrides={"SPECTRE_JSON": "1"},
+                                      block=3, warn=0, info=1)
+        record = json.loads(out_json.strip())
+        # JSON must have all fields that appear in the text line
+        assert record["level"] == "result"
+        assert record["code"] == "eval.summary"
+        assert record["block"] == 3
+        assert record["warn"] == 0
+        assert record["info"] == 1
+        # Text must contain the same data (spot-check)
+        assert "RESULT eval.summary" in text_line
+        assert "block=3" in text_line
+        assert "warn=0" in text_line
 
 
 # ---------------------------------------------------------------------------

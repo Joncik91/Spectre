@@ -18,7 +18,38 @@ Changes:
 - **skills/implement/SKILL.md rewritten** — phase names: Mode routing, Track, Tier 0 envelope, Context read, Environment, Pre-flight, Check mode, Tier classifier, Resource acquire, Reasoning emit, Execute, Verify, Audit, Branch on verification, Drift, Resource release, Failure log, Finding capture.
 - **New tests**: `test_status_emit.py`, `test_skill_phase_names.py`, `test_skill_no_version_markers.py`. Inverted `test_skill_pythonpath_consistency.py` — now bans `python3 -m bin.` from skill code blocks.
 
-Tests: 1548 → 1548+ (0 regressions).
+Tests: 1548 → 1555 (0 regressions).
+
+### Breaking Changes
+
+All legacy output prefixes are **removed** in v0.8.0. Scripts that grep for these strings must migrate to the new `LEVEL code key=value` grammar:
+
+| Old prefix | New grammar |
+|---|---|
+| `WALK:` | `OK walker.init rounds=N pending=M stop=…` |
+| `YIELD:` | `OK walker.yield new_t3=N history=[…]` |
+| `ANSWERED:` | `OK walker.answer id=… round_count=N` |
+| `ENVELOPE:` | `RESULT envelope.check status=ok\|missing\|tampered path=…` |
+| `FINGERPRINT:` | `RESULT fingerprint.result hash=…` |
+| `WIZARD:` | `OK wizard.setup result=… target=…` |
+| `MAX_SEVERITY:` | `max_severity` field in the evaluator's JSON output (read via `--output` or `print(output_text)`) |
+| `EVALUATOR HALT:` | Skill prose: check `max_severity == "block"` in the JSON; emit `RESULT eval.summary block=N warn=M info=K` |
+| `ADR:` | `OK adr.write path=…` |
+| `TEMPLATES_AVAILABLE:` | `RESULT templates.list count=N items=…` |
+| `OBSERVED:` | `OK observations.recorded …` |
+| `VENV_PYTHON:` | `OK venv.ensure python=…` |
+| `ACQUIRED:` | `OK resource.acquired …` |
+| `QUEUED:` | `OK resource.queued …` |
+| `RELEASED:` | `OK resource.released …` |
+| `SCRATCHPAD_RESET:` | `OK scratchpad.reset active_spec=…` |
+| `ENSURE_V2:` | `OK scratchpad.ensure_v2 result=migrated\|noop\|created` |
+| `PROMPT_CLEARED:` | `OK scratchpad.prompt_cleared` |
+| `NO_TRACK_TO_CLEAR:` | `OK scratchpad.no_track_to_clear` |
+| `NO_PENDING_PROMPT:` | `OK scratchpad.no_pending_prompt` |
+| `PENDING_ADOPTION_PROMPT_PERSISTED:` | `OK scratchpad.pending_adoption_set fingerprint=…` |
+| `BRAKE:` | `WARN personal_rules.brake session_count=N max=N remediation=…` |
+| `ADOPTED:` | `OK personal_rules.adopt session_count=N max=N` |
+| `PIP_INSTALL_EDITABLE:` | `INFO venv.pip_install status=ok` |
 
 ## v0.7.4 — 2026-05-12
 

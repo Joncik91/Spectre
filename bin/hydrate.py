@@ -45,7 +45,7 @@ def main() -> int:
                      migration="scratchpad-v1-to-v2")
 
     if not ACTIVE.exists():
-        _status.emit("info", "hydrate.signal", reason="no-active-spec",
+        _status.emit("result", "hydrate.signal", reason="no-active-spec",
                      hint="run /vision to begin")
         detect_and_propose_patches()
         surface_pending_template_patches()
@@ -54,7 +54,8 @@ def main() -> int:
     target = ACTIVE.read_text(encoding="utf-8").strip()
     target_path = Path(target)
     if not target_path.exists():
-        _status.emit("warn", "hydrate.stale_active", path=target)
+        from bin import _path_display
+        _status.emit("warn", "hydrate.stale_active", path=_path_display.display(target))
         detect_and_propose_patches()
         surface_pending_template_patches()
         return 0

@@ -307,7 +307,8 @@ class TestPeekPendingCli:
         walker.persist(state, state_path)
         r = _run("peek-pending", "--state-path", str(state_path), "--json")
         assert r.returncode == 0
-        assert "walker.empty" in r.stdout
+        # --json emits "null" on empty (callers expect valid JSON, not a status line)
+        assert r.stdout.strip() == "null"
 
 
 # ── yield-check (Phase 2D) ────────────────────────────────────────────────────

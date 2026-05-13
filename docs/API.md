@@ -8,7 +8,7 @@ Registered by `.claude-plugin/plugin.json`.
 
 | Event | Matcher | Command | Output |
 |---|---|---|---|
-| `SessionStart` | — | `python3 bin/hydrate.py` | `RESULT hydrate.spec_summary slug=… step=N exit_code=N last_command=…` — one line per active spec. `SIGNAL hydrate.signal result=no-active-spec` if none. `INFO hydrate.migrated` on v1→v2 upgrade. `WARN hydrate.stale_active` if `.active` pointer is broken. |
+| `SessionStart` | — | `python3 bin/hydrate.py` | `RESULT hydrate.spec_summary slug=… step=N exit_code=N last_command=…` — one line per active spec. `RESULT hydrate.signal reason=no-active-spec hint=…` if none. `OK hydrate.migrated` on v1→v2 upgrade. `WARN hydrate.stale_active` if `.active` pointer is broken. |
 | `PostToolUse` | `Bash` | `python3 bin/compact.py` | JSON `{"additionalContext": "<Delta + Anchor block>"}`. Capped under ~500 chars. |
 
 ## CLI output grammar
@@ -35,16 +35,16 @@ Every Spectre CLI subcommand (under `bin/`) emits structured status lines on std
 
 | Code | Level | Fields |
 |---|---|---|
-| `walker.init` | `ok` | `slug=`, `rounds=`, `step=` |
-| `walker.answer` | `ok` | `question=`, `answer=` |
-| `walker.yield` | `result` | `spec_path=`, `rounds=` |
+| `walker.init` | `ok` | `rounds=`, `pending=`, `stop=` |
+| `walker.answer` | `ok` | `id=`, `round_count=` |
+| `walker.yield` | `ok` | `new_t3=`, `history=` |
 | `eval.summary` | `result` | `tier1=pass\|fail`, `tier2=pass\|fail`, `tier3=pass\|skip`, `block=N`, `warn=N` |
 | `tier.classify` | `result` | `tier=silent\|repo\|host\|network`, `halt=true\|false` |
 | `envelope.check` | `result` | `status=ok\|missing\|tampered`, `path=` |
 | `hydrate.spec_summary` | `result` | `slug=`, `step=N`, `exit_code=N`, `last_command=` |
-| `hydrate.signal` | `signal` | `result=no-active-spec` |
+| `hydrate.signal` | `result` | `reason=no-active-spec`, `hint=` |
 | `scratchpad.pending_prompt` | `result` | `fingerprint=`, `label=` |
-| `personal_rules.brake` | `halt` | `session_count=N`, `max=N`, `remediation=` |
+| `personal_rules.brake` | `warn` | `session_count=N`, `max=N`, `remediation=` |
 | `audit.summary` | `result` | `checks=N`, `passed=true\|false` |
 | `wizard.setup` | `ok` | `result=enabled\|exists\|setup-skipped`, `target=` |
 

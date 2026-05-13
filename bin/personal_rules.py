@@ -383,7 +383,7 @@ if __name__ == "__main__":
             _status.emit("error", "personal_rules.adopt", dest="stderr", reason=str(exc))
             sys.exit(1)
         if current >= DEFAULT_BRAKE_THRESHOLD:
-            _status.emit("halt", "personal_rules.brake",
+            _status.emit("warn", "personal_rules.brake",
                          session_count=current,
                          max=DEFAULT_BRAKE_THRESHOLD,
                          remediation="~/.spectre/personal-rules.toml")

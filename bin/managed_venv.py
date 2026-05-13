@@ -298,7 +298,8 @@ if __name__ == "__main__":
         except RuntimeError as exc:
             _status.emit("error", "venv.ensure", dest="stderr", reason=str(exc))
             sys.exit(1)
-        _status.emit("ok", "venv.ensure", python="state/.venv/bin/python")
+        from bin import _path_display
+        _status.emit("ok", "venv.ensure", python=_path_display.display(venv_py))
 
     elif args.cmd == "pip-install-editable":
         try:

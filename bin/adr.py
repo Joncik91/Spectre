@@ -216,7 +216,8 @@ if __name__ == "__main__":
         except Exception as exc:  # noqa: BLE001
             _status.emit("error", "adr.write", dest="stderr", reason=str(exc))
             sys.exit(1)
-        _status.emit("ok", "adr.write", path=str(path))
+        from bin import _path_display
+        _status.emit("ok", "adr.write", path=_path_display.display(path))
 
     elif args.cmd == "update-graph":
         try:

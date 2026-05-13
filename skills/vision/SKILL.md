@@ -250,12 +250,12 @@ Reasons for SKIPPED come from the `tier3-unavailable` finding's `message` field:
 
 The banner must precede the `tier 1/2/3` lines and be visible regardless of how many other findings the evaluator emitted.
 
-Interpret the result:
+Interpret the result (read `max_severity` from the JSON):
 
-- **`MAX_SEVERITY: block`** — list every `block`-severity finding to the user. The spec CANNOT lock until refine resolves them. Halt with:
+- **`max_severity == "block"`** — list every `block`-severity finding to the user. The spec CANNOT lock until refine resolves them. Halt with:
 
   ```
-  EVALUATOR HALT: <N> block findings, <M> warn, <K> info.
+  RESULT eval.summary block=N warn=M info=K
     [1] tier <X> · <kind> · step <S> · <message>
     [2] tier <X> · <kind> · step <S> · <message>
     ...
@@ -264,9 +264,9 @@ Interpret the result:
 
   Do NOT proceed to Lock. The bundle stays persisted at `state/.eval-bundle.json` keyed by the current draft hash; on `refine`, the rewritten draft will produce a new bundle automatically.
 
-- **`MAX_SEVERITY: warn`** — surface warnings to the user, ask once: `Proceed to lock with N warn findings? (yes / refine / cancel)`. On `yes`, continue to Lock.
+- **`max_severity == "warn"`** — surface warnings to the user, ask once: `Proceed to lock with N warn findings? (yes / refine / cancel)`. On `yes`, continue to Lock.
 
-- **`MAX_SEVERITY: info`** — surface findings briefly (≤3 lines) and proceed to Lock silently.
+- **`max_severity == "info"` or `"none"`** — surface findings briefly (≤3 lines) and proceed to Lock silently.
 
 **Tier 3 false-positive dismissal:** if a Tier 3 finding has `dismissable: true` and the user wants to accept the risk, they can append a block at the bottom of the spec body:
 

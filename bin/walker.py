@@ -1240,13 +1240,17 @@ if __name__ == "__main__":
             _status.emit("error", "walker.state_load", dest="stderr", reason=str(exc))
             sys.exit(1)
         if state is None:
+            from bin import _path_display
             _status.emit("error", "walker.state_missing", dest="stderr",
-                         path=str(state_path))
+                         path=_path_display.display(state_path))
             sys.exit(1)
 
         concern = next_concern(state)
         if concern is None:
-            _status.emit("ok", "walker.empty")
+            if args.json_mode:
+                print("null")
+            else:
+                _status.emit("ok", "walker.empty")
             sys.exit(0)
 
         if args.json_mode:
