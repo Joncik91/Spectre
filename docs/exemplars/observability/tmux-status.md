@@ -9,8 +9,8 @@ conventions:
   - "Counter values (e.g. window count, pane count) are rendered as an integer with no decimal point; non-integer rendering of a counter is a violation"
   - "The current window indicator in `window-status-current-format` must be visually distinct from inactive windows via at least one of: bold attribute, differing foreground color, or enclosing brackets — not via text content alone"
   - "Session name, window index, and window name are available via `#{session_name}`, `#{window_index}`, and `#{window_name}` respectively; hardcoded substitutes for these tokens are a violation"
-axes: {metric-model: counters-plus-gauges, cardinality: low-fixed-labels, collection: sidecar-export}
-taxonomy-version: 1
+axes: {metric-model: counters-plus-gauges, cardinality: low-fixed-labels, collection: local-direct-read}
+taxonomy-version: 2
 source-url: https://github.com/tmux/tmux/wiki/Formats
 last-reviewed: 2026-05-13
 ---

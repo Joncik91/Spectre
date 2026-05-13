@@ -1,4 +1,4 @@
-taxonomy-version: 1
+taxonomy-version: 2
 axes:
   metric-model:
     values: [counters-only, counters-plus-gauges, prometheus-four-types, opentelemetry-full]
@@ -7,5 +7,5 @@ axes:
     values: [low-fixed-labels, bounded-labels, high-cardinality-traces, unlimited]
     description: How label dimensions are controlled. Low-fixed-labels = service-level dimensions only (env, region); bounded-labels = enumerable label sets (status_code, method); high-cardinality-traces = per-request labels offloaded to traces, not metrics; unlimited = labels include user-id or other unbounded values (expensive, generally an anti-pattern).
   collection:
-    values: [push, pull-scrape, agent-relay, sidecar-export]
-    description: How metrics reach the collector. Push = service POSTs to a gateway; pull-scrape = collector GETs from a service-exposed endpoint; agent-relay = local daemon batches and forwards; sidecar-export = co-located process owned by the platform reads from the service.
+    values: [push, pull-scrape, agent-relay, sidecar-export, local-direct-read]
+    description: How metrics reach the collector or display. Push = service POSTs to a gateway; pull-scrape = collector GETs from a service-exposed endpoint; agent-relay = local daemon batches and forwards; sidecar-export = co-located process owned by the platform reads from the service; local-direct-read = standalone reader pulls from kernel/OS interfaces (/proc, /sys, ioctl) without a separate exporter — typical for TUI tools.

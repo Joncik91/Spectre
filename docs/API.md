@@ -66,6 +66,14 @@ Every Spectre CLI subcommand (under `bin/`) emits structured status lines on std
 
 **Path display rule.** All paths emitted by CLIs are project-relative (`specs/foo.spec.md`, `state/scratchpad.json`). Absolute paths, `${CLAUDE_PLUGIN_ROOT}`, and `$HOME` literals never appear in user-facing output. The `bin/_path_display.py` helper enforces this at the emit boundary.
 
+**Tier-3 budget instrumentation (v1.0).** Every `llm_judge.evaluate()` call emits one JSON line to **stderr**:
+
+```
+INFO tier3.budget {"calls": 1, "exemplars_injected": N, "dismissals_by_fp": {...}}
+```
+
+`calls` is always `1` — exemplar context is injected into the single existing contradiction call, not multiplied across calls. The ship-gate harness parses this line with `json.loads` to confirm Tier-3 call volume stays within budget.
+
 ## Skills
 
 | Skill | Trigger | Purpose |
@@ -74,6 +82,40 @@ Every Spectre CLI subcommand (under `bin/`) emits structured status lines on std
 | **implement** | `/implement [check \| auto] [<track>]` | Runs the active spec's next step: tier-classifies the action, acquires the resource lock, prints the justification, executes, and gates on the verification command. Halts on missing-binary errors, spec gaps, root-state desync, or elevated tier without consent. Full flow in `skills/implement/SKILL.md`. |
 | **implement check** | `/implement check [<track>]` | Re-runs the current step's verification only — no execution, no state advance. |
 | **implement auto** | `/implement auto [<track>]` | Walks consecutive silent/repo-tier steps without re-prompting; halts at the first elevated-tier step, queued lock, verification fail, or drift trigger. |
+
+## CLI commands
+
+In addition to the hook-driven modules, the `spectre` shell wrapper exposes user-facing subcommands:
+
+| Command | Subcommands | Purpose |
+|---|---|---|
+| `spectre glossary` | `[--filter PREFIX] [--audience dev\|pm] [--json]` | List all glossary entries. |
+| `spectre explain` | `<code-or-term>` | Pretty-print a single glossary entry or term. |
+| `spectre templates` | `list \| import \| export \| import-builtin` | Per-user template store management. |
+| `spectre walker` | `coverage \| defer-open-question` | Read-only coverage report; defer open questions to an ADR. |
+| `spectre exemplars` | `list \| show \| axes \| validate` | Inspect the v1.0 metis catalog of exemplars and axis taxonomies. |
+
+### `spectre exemplars` subcommands
+
+```
+spectre exemplars list [--view-type TYPE] [--json]
+```
+List all catalog entries (plugin + user overlay). `--view-type` filters to one view type (e.g. `help-text`, `error-text`, `log-format`, `api-shape`, `observability`). `--json` emits a JSON array with full fields per entry.
+
+```
+spectre exemplars show <slug>
+```
+Render full body and frontmatter for one exemplar. `<slug>` may be a bare slug (unambiguous) or a fully-qualified `<view-type>:<slug>` key.
+
+```
+spectre exemplars axes <view-type>
+```
+Show the axis taxonomy for one view type — axis names, allowed values, and descriptions.
+
+```
+spectre exemplars validate
+```
+Check all catalog entries for structural conformance: required fields present, axis values in taxonomy, taxonomy-version match, no supersedes cycles. Exits non-zero on any error; surfaces user-overlay shadowing as warnings.
 
 ## Spec step schema
 
@@ -167,11 +209,40 @@ When `SPECTRE_JSON=1` and `SPECTRE_GLOSSARY=1` (or `SPECTRE_AUDIENCE=pm`), every
 {"level":"ok","code":"walker.init","rounds":3,"pending":5,"stop":"none","pm":"The interview has started. There are 5 open questions for you to answer."}
 ```
 
+## Finding kinds
+
+Every finding has a `kind` field drawn from `KNOWN_KINDS` in `bin/findings.py`. The list below groups kinds by emitting tier and version. Full bodies (severity, triggered_by, user_action) are in `docs/glossary.md`.
+
+**Tier 1 (deterministic AST):**
+`missing-why`, `soft-verification`, `action-not-probed`, `missing-receiver-calibration`, `runuser-no-cd`, `unsafe-heredoc`, `unowned-requirement`, `missing-contract`, `malformed-contract`, `verification-syntax-error`, `action-invokes-uncreated-artifact`, `unowned-requirement-heuristic`, `self-cycle-produces`, `implicit-precondition-missing`, `stub-producer-invoked`, `verification-not-anchored-to-produces`, `verification-upstream-only`
+
+**Tier 1 — substrate AST (§8.2):**
+`substrate-incomplete`, `trust-annotation-required`, `untrusted-flow-unguarded`, `secret-leak-suspected`, `judgment-claim-overused`, `assumptions-walk-empty`, `provenance-broken`, `provenance-weak-binding`, `receiver-mismatch`, `cognitive-substrate-stale`, `malformed-trust-annotation`, `substrate-parse-error`
+
+**Tier 1 — v1.0 structural checks (new in v1.0; emitted by `spec_ast._v1_structural_checks`):**
+`unsupported-spec-version`, `missing-view-section`, `missing-substrate-block`, `excessive-not-applicable`, `malformed-view-contract`
+
+**Tier 2 (structural):**
+`undeclared-resource`, `undeclared-host-path`, `decision-without-adr`, `calibration-hard-violation`, `missing-negative-path`, `malformed-negative-path`
+
+**Tier 2b — v1.0 cross-view gate (new in v1.0; emitted by `cross_view_gate.classify`):**
+`cross-view-string-unresolved`, `exemplar-not-found`, `exemplar-taxonomy-mismatch`, `view-fingerprint-contradicts-hard-contract`, `view-coverage-overlap`, `taxonomy-version-stale`
+
+Full bodies (severity, triggered_by, user_action) are in `docs/glossary.md` for all 11 v1.0 kinds.
+
+**Tier 3 (LLM contradiction tuples):**
+`missing-producer`, `shallow-ownership`, `ambiguous-contract`, `negative-path-omission`, `idempotency-risk`, `migration-on-existing-state`, `partial-failure-window`, `concurrency-race`, `verification-false-positive`, `adversarial-pathway`, `tier3-context-gap`, `tier3-attacker-view`, `tier3-spec-asserts-wrong`, `tier3-contradiction-unrecognized`, `tier3-malformed-response`, `tier3-unfaithful-contradiction`, `tier3-faithfulness-malformed`, `tier3-filter-applied`, `tier3-unavailable`
+
+**Tier 0 (envelope integrity):**
+`envelope-missing`, `envelope-tampered`, `envelope-malformed`, `envelope-missing-substrate`
+
 ## §8 Receiver Calibration
 
 Every spec declares two contracts: §8.1 hard-contract (what the technical implementer is allowed to touch) and §8.2 cognitive-substrate contract (who the spec is for, what it implies about trust and judgment, and what assumptions were killed).
 
-The Tier 2 coverage gate and Tier 1 substrate AST enforce these contracts before lock. A step that writes to a `never-touches` path is a block-severity `calibration-hard-violation`; a missing trust annotation or untrusted-input-to-sink flow without `sanitizes:` is caught by the substrate checker. The schema:
+**v1.0 addition:** §§8.3-8.7 add five per-view substrate-calibration blocks, one for each non-agent view (product-input, product-output, human-user, integrator, operator). A view can be marked `not-applicable: <reason>` to degenerate to a single field and skip all follow-up checks.
+
+The Tier 2 coverage gate, Tier 2 cross-view gate, and Tier 1 substrate AST enforce these contracts before lock. A step that writes to a `never-touches` path is a block-severity `calibration-hard-violation`; a missing trust annotation or untrusted-input-to-sink flow without `sanitizes:` is caught by the substrate checker. The schema:
 
 ```yaml
 # §8.1 — hard contract
@@ -189,9 +260,41 @@ ux-contract: { on-success, on-failure, log-target }
 assumptions-killed: [<rejected alternatives + why>]
 requires-situated-judgment: [<step numbers>]
 roi-budget: <when this spec's payoff goes positive>
+
+# §8.3 — product-input substrate (v1.0; auto-prompted by substrate wizard per-view)
+receiver-fingerprint: programmatic-trusted   # vocabulary: human-typed | programmatic-trusted | programmatic-untrusted | streamed-event | not-applicable
+trust-profile: validated-schema              # vocabulary: validated-schema | signed-payload | rate-limited | untrusted
+contextual-binding: <one-line description for this view>
+
+# §8.4 — product-output substrate (receiver vocabulary: human-reader | programmatic-consumer | streaming-sink | log-aggregator | not-applicable)
+# §8.5 — human-user substrate (receiver vocabulary: cli-power-user | cli-novice | gui-only | no-human-user | not-applicable)
+# §8.6 — integrator substrate (receiver vocabulary: library-consumer | api-consumer | webhook-subscriber | sdk-author | no-integrator | not-applicable)
+# §8.7 — operator substrate (receiver vocabulary: on-call-engineer | sre-team | self-operated | no-operator | not-applicable)
 ```
 
+Trust tokens are per-view and isolated: a token valid in one view's vocabulary is rejected if specified in another. Cross-vocabulary trust tokens are rejected by design.
+
+**v1.0 frontmatter requirement:** all v1.0 specs must open with `**Spec-version:** 1.0`. Specs without this frontmatter are treated as pre-v1.0 and skip the v1.0 Tier-1 structural checks.
+
 Severity overrides in `~/.spectre/reviewer.toml` can raise severities (warn → block) but never lower them.
+
+## §§9-13 View Sections (v1.0)
+
+v1.0 specs include five view sections (§§9-13), one per non-agent receiver. Each view section declares contracts from a three-type taxonomy:
+
+- **mechanical** — deterministic, machine-enforceable invariants (e.g. output schema, error code set).
+- **coverage** — completeness claims (e.g. all error classes handled, all paths exercised).
+- **exemplar-bindings** — references to named catalog entries whose conventions the view must satisfy (e.g. `exemplar:error-text:git`).
+
+```
+§9  Product-Input View    contracts for how the product accepts input
+§10 Product-Output View   contracts for what the product emits
+§11 Human-User View       contracts governing the end-user experience
+§12 Integrator View       contracts for library/API consumers
+§13 Operator View         contracts for on-call and SRE audiences
+```
+
+Cross-view string references (e.g. `<halt-hint from §8.2 ux-contract>`) are resolved by the Tier-2 cross-view gate at lock time. Unresolved references → block-severity `cross-view-string-unresolved`.
 
 ## Scratchpad schema
 
@@ -262,10 +365,12 @@ bin/
   migrate_scratchpad_v1_to_v2.py one-shot, idempotent migration
   fingerprint.py                /vision Step 0 codebase symbol walker
   spec_evaluator.py             /vision §6.4 review-bundle orchestrator
-  spec_ast.py                   Tier 1 deterministic AST classifier
+  spec_ast.py                   Tier 1 deterministic AST classifier + v1.0 structural checks (is_v1_spec, _v1_structural_checks, _strip_fenced_blocks)
   coverage_gate.py              Tier 2 structural coverage gate
-  llm_judge.py                  Tier 3 DeepSeek deepseek-v4-flash adversarial reviewer — contradiction-tuple protocol (single API call, 10 kinds + unrecognized fallback) + CoT faithfulness cite-and-verify pass + adversarial-pathway rubric
+  cross_view_gate.py            Tier 2 cross-view consistency gate (v1.0) — resolves §§9-13 references, validates exemplar bindings, enforces taxonomy-version match, flags fingerprint↔hard-contract contradictions; short-circuits on non-v1.0 specs
+  llm_judge.py                  Tier 3 DeepSeek deepseek-v4-flash adversarial reviewer — contradiction-tuple protocol (single API call, 10 kinds + unrecognized fallback) + CoT faithfulness cite-and-verify pass + adversarial-pathway rubric + exemplar context injection (_build_exemplar_context) for v1.0 specs
   findings.py                   Finding dataclass + stable fingerprint
+  _catalog.py                   stdlib-only YAML-frontmatter loader for the v1.0 metis catalog; merges plugin catalog (docs/exemplars/) with user overlay (~/.spectre/exemplars/); exposes Catalog dataclass (exemplars, taxonomies, parse_errors, shadowed)
   eval_metadata.py              .eval.json sidecar + policy hash + substrate_resolution
   adr.py                        ADR writer + graph supersedes-edge update
   graph.py                      .graph.md manifest parser/serializer
@@ -279,8 +384,9 @@ bin/
   personal_rules.py             per-user halt-override TOML store + sandbox-paradox brake
   cdlc_ledger.py                per-project CDLC transition log
   templates.py                  template store import/export + list CLI
-  walker.py                     interrogation-walk state machine + yield countdown + negative-path concerns
-  substrate_wizard.py           §8.2 cognitive-substrate wizard (auto-fires at /vision Step 0.5)
+  walker.py                     interrogation-walk state machine + yield countdown + negative-path concerns + v1.0 view-concern families (generate_product_input/output/human_user/integrator/operator_concerns)
+  exemplars.py                  spectre exemplars CLI — list | show | axes | validate for the v1.0 metis catalog
+  substrate_wizard.py           §8.2 cognitive-substrate wizard (auto-fires at /vision Step 0.5) + v1.0 run_per_view() for §§8.3-8.7
   substrate_ast.py              Tier 1 substrate-completeness + per-step taint flow classifier
   handoff_envelope.py           JSON-Schema-validated vision→implement handoff with bytewise integrity
   handoff_validator.py          Tier 0 envelope check on implement start
@@ -288,7 +394,7 @@ skills/
   vision/SKILL.md               /vision protocol (phase-named: Fingerprint → Wizard → Intent → Feasibility → Walker loop → Draft → Evaluator gate → Lock → Transition)
   implement/SKILL.md            /implement protocol (phase-named: Mode routing → Track → Tier 0 envelope → Context read → … → Finding capture)
 specs/
-  template.spec.md              canonical spec structure (§1–§8.2)
+  template.spec.md              canonical spec structure (§1–§8.2 pre-v1.0; §§1-13 in v1.0, including §§8.3-8.7 per-view substrate blocks and §§9-13 view contract sections); requires `**Spec-version:** 1.0` frontmatter for v1.0
   .active                       instruction pointer (atomic-flipped)
   .graph.md                     decision/resource graph manifest
 state/
@@ -298,6 +404,7 @@ decisions/                      ADR landing zone (NNNN-<slug>.md)
 docs/
   ARCHITECTURE.md               internal architecture overview
   API.md                        this file — hooks, skills, schemas, layout
+  exemplars/                    17 seed exemplars + 5 axes.yml files (help-text, error-text, log-format, api-shape, observability)
   superpowers/                  design specs + implementation plans (archival)
-tests/                          1555 pytest tests, stdlib + pytest only
+tests/                          1760 pytest tests, stdlib + pytest only
 ```
