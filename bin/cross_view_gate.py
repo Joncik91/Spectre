@@ -38,6 +38,10 @@ _CROSS_VIEW_REF_RE = re.compile(
     re.IGNORECASE,
 )
 _EXEMPLAR_REF_RE = re.compile(r"exemplar:([a-z0-9][a-z0-9:_-]*)")
+# Detects the post-ship-iteration sentinel written by the walker when an operator
+# defers exemplar selection (no compatible catalog entry for the view's fingerprint).
+# Matches lines like: `- help-text-style: post-ship-iteration`
+_POST_SHIP_RE = re.compile(r"^\s*-?\s*[a-z][a-z0-9_-]*-style\s*:\s*post-ship-iteration\s*$", re.MULTILINE)
 _TAXONOMY_VERSION_RE = re.compile(
     r"taxonomy-version:\s*([a-z][a-z0-9_-]*):(\d+)",
     re.IGNORECASE,
@@ -195,6 +199,26 @@ def _check_exemplar_bindings(
             except ValueError:
                 continue
             spec_taxonomies[view_type] = version
+        # Check for post-ship-iteration sentinel.  The sentinel is written as
+        # `<aspect>-style: post-ship-iteration` (no `exemplar:` prefix) so it
+        # doesn't match _EXEMPLAR_REF_RE — detect it with its own regex.
+        for _m in _POST_SHIP_RE.finditer(block):
+            results.append(_findings.Finding(
+                tier=2,
+                kind="post-ship-iteration-deferral",
+                severity="info",
+                location=_findings.FindingLocation(
+                    scope="spec-wide", ref=f"section-{section}"
+                ),
+                message=(
+                    f"§{section} deferred exemplar selection to post-ship iteration — "
+                    f"no catalog exemplar matched the view's receiver-fingerprint."
+                ),
+                suggested_fix=(
+                    f"Add a compatible exemplar to ~/.spectre/exemplars/ or the plugin catalog, "
+                    f"then re-run the walker to bind §{section}."
+                ),
+            ))
         # Find exemplar bindings
         for m in _EXEMPLAR_REF_RE.finditer(block):
             raw_ref = m.group(1).strip()
@@ -402,6 +426,38 @@ def _check_fingerprint_vs_exemplar(
 
 
 # ---------------------------------------------------------------------------
+# Check 6: excessive post-ship-iteration deferral (catalog structural gap)
+# ---------------------------------------------------------------------------
+
+def _check_excessive_post_ship_iteration(
+    findings: list[_findings.Finding],
+) -> list[_findings.Finding]:
+    """Emit a warning when more than one view deferred exemplar selection.
+
+    A single deferral is expected when the catalog has a gap for one view's
+    fingerprint. More than one suggests a broader catalog structural gap —
+    the operator should file a catalog issue rather than deferring silently.
+    """
+    count = sum(1 for f in findings if f.kind == "post-ship-iteration-deferral")
+    if count > 1:
+        return [_findings.Finding(
+            tier=2,
+            kind="excessive-post-ship-iteration",
+            severity="warn",
+            location=_findings.FindingLocation(scope="spec-wide"),
+            message=(
+                f"{count} views deferred exemplar selection — "
+                f"likely catalog structural gap, not just per-view mismatch."
+            ),
+            suggested_fix=(
+                "Add fingerprint-calibrated exemplars to the catalog so future "
+                "specs can bind without deferring."
+            ),
+        )]
+    return []
+
+
+# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
@@ -423,4 +479,6 @@ def classify(spec_path: pathlib.Path) -> list[_findings.Finding]:
     results.extend(_check_exemplar_bindings(view_blocks))
     results.extend(_check_fingerprint_vs_hard_contract(body, substrate_blocks))
     results.extend(_check_fingerprint_vs_exemplar(view_blocks, substrate_blocks))
+    # Aggregation pass — must run after all per-view checks have emitted.
+    results.extend(_check_excessive_post_ship_iteration(results))
     return results

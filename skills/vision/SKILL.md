@@ -256,6 +256,16 @@ Repeat until the walker reports stop:
 
    The operator's answer becomes the spec's exemplar binding (e.g. `help-text-style: exemplar:help-text:curl`). Tier-2 cross_view_gate validates the binding against the catalog at lock time; Tier-3 llm_judge injects the chosen exemplar's conventions into its contradiction prompt during implementation review.
 
+   **v1.1 — fingerprint-filtered exemplar options.** The walker automatically filters catalog options by the view's receiver-fingerprint (via `calibrated_for` metadata). If zero compatible exemplars exist, `prefab_options` switches to:
+   - the full unfiltered list with each entry annotated `[fingerprint-mismatch]`
+   - a final option `post-ship-iteration` for catalog-gap deferral
+
+   Render annotated options without the `[fingerprint-mismatch]` suffix in the display (it's metadata for the operator's awareness). If the operator picks `post-ship-iteration`, write the spec field as `<aspect>-style: post-ship-iteration` (not an `exemplar:` binding). At lock time, cross_view_gate emits `post-ship-iteration-deferral` (info, tier 2) for that view.
+
+   When to pick `post-ship-iteration`: the catalog has a *structural gap* — no exemplar exists for this view's fingerprint type. Do NOT pick it to avoid choosing; pick it only when the catalog genuinely lacks a compatible entry.
+
+   If more than one view is deferred via `post-ship-iteration`, lock emits `excessive-post-ship-iteration` (warn, tier 2) — a signal that the catalog needs new exemplars, not that individual mismatches should be tolerated.
+
    **v1.0 — view-scope concerns.** Concern IDs `scope-product-input`, `scope-product-output`, `scope-human-user`, `scope-integrator`, `scope-operator` ask the operator to declare whether a view applies. When the operator answers `not-applicable`, the corresponding §8.x substrate block degenerates to `not-applicable: <reason>` and the §9-13 section body is omitted. The walker short-circuits follow-up concerns for that view.
 
    Append on the same turn:
