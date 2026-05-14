@@ -57,6 +57,22 @@ _DEV_STREAMS: frozenset[str] = frozenset({
 # a stream redirect (preceded by `/dev` so the original token was /dev/<name>).
 _DEV_REDIRECT_RE = re.compile(r"/dev/(null|stdout|stderr)\b")
 
+# ── v1.1 Fix 3: behavioral-claim vs structural-only verification ──────────────
+# Matches a why-clause that names behavioral semantics (the "does it do X" claim).
+_BEHAVIORAL_VERB_RE = re.compile(
+    r"\b(trigger|prevent|ensure|validate|enforce|coalesce|refuse|halt|debounce|atomic)\b",
+    re.IGNORECASE,
+)
+
+# Anchored: line is ONLY a structural probe, no piped behavioral test.
+# Matches "test -f X", "test -d Y", "grep -q PATTERN FILE" alone or chained
+# with && between structural probes. Disqualified by pipes (|), backgrounding (&),
+# or semicolons (;) which would introduce a behavioral check.
+_STRUCTURAL_ONLY_VERIFICATION_RE = re.compile(
+    r"^\s*(test\s+-[fd]\s+\S+|grep\s+-q\s+\S+(\s+\S+)?)"
+    r"(\s+&&\s+(test\s+-[fd]\s+\S+|grep\s+-q\s+\S+(\s+\S+)?))*\s*$"
+)
+
 
 def _is_soft_verification(value: str) -> bool:
     """Return True if value matches any tautology pattern."""
@@ -2123,6 +2139,40 @@ def _check_verification_anchored(steps: list[dict]) -> list[_findings.Finding]:
     return results
 
 
+def _check_verification_depth(step: dict, step_n: int) -> list[_findings.Finding]:
+    """Tier-1: warn if a behavioral why-clause is paired with structural-only verification.
+
+    An implementing agent could satisfy a structural check (test -f, grep -q) with
+    a no-op symbol matching the claimed name; the load-bearing behavior never gets
+    tested. When the why-clause names behavioral semantics, the verification must
+    exercise that behavior.
+    """
+    why = step.get("why", "") or ""
+    verification = step.get("verification", "") or ""
+    if not why or not verification:
+        return []
+    if not _BEHAVIORAL_VERB_RE.search(why):
+        return []
+    if not _STRUCTURAL_ONLY_VERIFICATION_RE.match(verification):
+        return []
+    verb = _BEHAVIORAL_VERB_RE.search(why).group(1)  # type: ignore[union-attr]
+    return [_findings.Finding(
+        tier=1,
+        kind="verification-too-shallow-for-claim",
+        severity="warn",
+        location=_findings.FindingLocation(scope="step", step=step_n, ref="verification"),
+        message=(
+            f"Step {step_n} why-clause names behavioral semantics "
+            f"({verb!r}) but verification is "
+            f"structural-only — agent could satisfy with a no-op."
+        ),
+        suggested_fix=(
+            "Add a runtime test (e.g. `pnpm exec vitest run <module>.test.ts`) "
+            "that exercises the claimed behavior, not just the symbol's existence."
+        ),
+    )]
+
+
 def classify(spec_path: pathlib.Path) -> list[_findings.Finding]:
     """Tier 1 deterministic classifier. Returns Finding list (possibly empty).
 
@@ -2194,6 +2244,9 @@ def classify(spec_path: pathlib.Path) -> list[_findings.Finding]:
             results.extend(_check_python_c_syntax(action, step_n, "action"))
         if verification:
             results.extend(_check_python_c_syntax(verification, step_n, "verification"))
+
+        # Check 6 (v1.1 Fix 3): behavioral claim with structural-only verification
+        results.extend(_check_verification_depth(step, step_n))
 
     # ── Check 4: missing-receiver-calibration ────────────────────────────────
     results.extend(_check_receiver_calibration(body))

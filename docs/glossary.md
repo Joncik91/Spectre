@@ -645,6 +645,15 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - related: venv.ensure
 - since: v0.6.0
 
+## verification-too-shallow-for-claim
+- kind: finding
+- dev: Tier-1 warn. Step why-clause names behavioral semantics (trigger, prevent, ensure, validate, enforce, coalesce, refuse, halt, debounce, atomic) but verification is structural-only (test -f / grep -q / test -d possibly chained with &&). An implementing agent could ship a no-op symbol with the claimed name and pass the check. Augment the verification to exercise the behavior.
+- pm: The step claims something will happen, but the test only checks that a file or symbol exists — not whether it actually does the thing.
+- triggered_by: `spec_ast._check_verification_depth` during Tier-1 evaluation.
+- user_action: Replace or augment verification with a runtime test that exercises the named behavior.
+- related: soft-verification, term:tier-1
+- since: v1.1.0
+
 ## walker.answer
 - kind: status
 - dev: Concern answer recorded; id= identifies the concern, round_count= is the current round number.

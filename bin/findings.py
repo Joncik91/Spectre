@@ -93,6 +93,8 @@ KNOWN_KINDS = {
     # v1.1 Fix 2 — no-compatible-exemplar handling
     "post-ship-iteration-deferral",
     "excessive-post-ship-iteration",
+    # v1.1 Fix 3 — behavioral claim with structural-only verification
+    "verification-too-shallow-for-claim",
 }
 
 # Severity mapping for Tier 3 contradiction tuple kinds (v0.5.2).
