@@ -2,6 +2,59 @@
 
 All notable changes to the Spectre plugin.
 
+## v1.1.0 — 2026-05-14
+
+Coverage and verification fixes from the v1.0 Vidence `/vision` dogfooding cycle. Five fixes across three classes: three walker/cross-view coverage holes (Class A) + two non-blocking friction items (Class B). No spec contract changes — v1.0/v1.0.2 locked specs are valid as-is; v1.1 evaluator surfaces additional warn/info findings on existing specs where new checks apply.
+
+**Test count:** 1790 (v1.0.2) → 1822 (v1.1.0). +32 new tests, 0 regressions. v1.1 acceptance gate (`tests/test_v1_1_e2e.py`) exercises every new finding kind plus Fix 4's regression in a single synthetic spec.
+
+### Added — fingerprint↔exemplar contradiction check (Fix 1, #71)
+
+- New `Exemplar.calibrated_for: list[str]` frontmatter field declares which receiver-fingerprints an exemplar's conventions are calibrated for. Validated strict-at-load against the flattened union of `substrate_wizard._VIEW_FINGERPRINTS`; unknown values raise `CatalogError` at reviewer boot.
+- 17 seed exemplars backfilled with `calibrated-for:` per view-type: `api-shape/` → integrator fingerprints; `error-text/` + `help-text/` → CLI fingerprints; `log-format/` + `observability/` → operator fingerprints (htop + tmux-status also `cli-power-user` — interactive TUI surfaces).
+- New finding kind `view-fingerprint-contradicts-exemplar-binding` (Tier-2 warn): emitted when a view's §8.x receiver-fingerprint is not in the bound exemplar's `calibrated_for` (empty list = any-match escape hatch). Closes the v1.0 dogfood gap where Vidence locked clean with §8.5 `gui-only` + §11 bound to CLI-calibrated `gh` exemplars.
+- `cross_view_gate._HUMAN_USER_FP_RE` (§8.5-only) generalized to `_extract_receiver_fingerprints(substrate_blocks) -> dict[view_key, fingerprint]`. `_check_fingerprint_vs_hard_contract` migrated to the new extractor.
+
+### Added — first-class no-compatible-exemplar handling (Fix 2, #72)
+
+- Walker's per-view concern generators (`bin/walker.py`) now call `_catalog.by_view_type(...)` and filter by the view's fingerprint from `state.answered["scope-<view>"]`. Empty filter → full unfiltered list with `[fingerprint-mismatch]` annotation + a final `post-ship-iteration` option (sentinel for catalog-gap deferral).
+- New finding kinds:
+  - `post-ship-iteration-deferral` (Tier-2 info) — one view bound to the sentinel; signals a per-view catalog gap.
+  - `excessive-post-ship-iteration` (Tier-2 warn) — more than one view deferred; signals a structural catalog gap.
+- `cross_view_gate._check_exemplar_bindings` recognizes the `post-ship-iteration` sentinel and emits the info finding instead of `exemplar-not-found`. New `_check_excessive_post_ship_iteration` aggregator counts deferrals across the spec.
+- `skills/vision/SKILL.md` documents the new prefab options and when operators should pick `post-ship-iteration`.
+- **Design note (plan override):** the plan called for a separate `fingerprint-mismatch` finding distinct from `view-fingerprint-contradicts-exemplar-binding`. The implementation collapsed them: walker annotations don't round-trip into spec text, so a separate kind is unreachable. The existing v1.0 finding (now Fix 1's check) fires deterministically for any binding mismatch in the locked spec.
+
+### Added — verification-too-shallow-for-claim (Fix 3, #73)
+
+- New Tier-1 step check (`bin/spec_ast.py`) flags steps whose `why:` clause names behavioral semantics (`trigger`, `prevent`, `ensure`, `validate`, `enforce`, `coalesce`, `refuse`, `halt`, `debounce`, `atomic`) but whose `verification:` is structural-only (`test -f`/`-d`, `grep -q`, possibly chained with `&&`). An implementing agent could ship a no-op symbol matching the claimed name and pass; the load-bearing behavior never gets tested.
+- New finding kind `verification-too-shallow-for-claim` (Tier-1 warn). Recovery: replace or augment verification with a unit-test invocation that exercises the named behavior.
+- 12 unit tests + 1 e2e acceptance test in `tests/test_v1_1_e2e.py` that exercises all four new v1.1 finding kinds in one synthetic spec.
+
+### Fixed — `self-cycle-produces` over-paranoid on CLI output flags (Fix 4, #69)
+
+- `_action_authored_path` in `bin/spec_ast.py` now recognizes a new frozenset of canonical output flags (`-o`, `--out`, `--output`, `-O`, `--outfile`, `--out-file`, `--target`, `--dest`, `--destination`) and treats the token after any of them as an authored output destination — same exclusion path as cp/tee/install/redirect. Handles `--out=path` equals-form and POSIX `--` end-of-flags. Exact-match (no prefix collision with `-O2`-style optimization flags).
+- Vidence step 19 (`node scripts/scaffold-github-action.mjs --out X` with `X` in `produces:`) no longer requires hiding the output path inside the script body to satisfy Tier 1.
+- 10 new regression tests in `tests/test_spec_ast_self_cycle.py`.
+
+### Changed — `tier3.budget` log channel (Fix 5, #70)
+
+- `bin/llm_judge.py`'s `INFO tier3.budget` emission moved from bare `print(... json.dumps(...))` to `_status.emit("info", "tier3.budget", ...)`. Gains `SPECTRE_QUIET=1` suppression for free and structural consistency with every other reviewer status line.
+- **Observable line-format change** (breaking-but-internal): JSON object → key=value pairs. Old: `INFO tier3.budget {"calls": 1, "exemplars_injected": N, "dismissals_by_fp": {...}}`. New: `INFO tier3.budget calls=1 exemplars_injected=N dismissals_by_fp={...}`. Parsers should split on whitespace + key=value rather than `json.loads` the tail.
+- `docs/API.md`, `docs/ARCHITECTURE.md` updated to reflect the new format. Existing test in `tests/test_v1_review_followups.py` rewritten; new test confirms `SPECTRE_QUIET=1` suppression.
+
+### Glossary
+
+New entries in `docs/glossary.md`: `tier3.budget` (Fix 5), `view-fingerprint-contradicts-exemplar-binding` (Fix 1), `post-ship-iteration-deferral` (Fix 2), `excessive-post-ship-iteration` (Fix 2), `verification-too-shallow-for-claim` (Fix 3). Each entry follows the established `dev/pm/triggered_by/user_action/related/since` shape so `spectre glossary` and `spectre explain <kind>` pick them up automatically.
+
+### Not-shipped
+
+- `fingerprint-mismatch` as a separate finding kind (collapsed into Fix 1's check — see Fix 2 design note).
+- `reviewer.toml` allowlist for Fix 4's output flags — hardcoded list ships; extensibility deferred to v1.2 if a missing flag actually surfaces.
+- Multi-line `verification:` parsing — known v0.9-era limitation; Fix 3 inherits the single-line constraint cleanly.
+
+---
+
 ## v1.0.2 — 2026-05-14
 
 Skill-protocol hotfix. v1.0/v1.0.1 shipped two protocol-conformance bugs where the published `/vision` skill body invoked commands the wrapper couldn't fully serve. Discovered during the Vidence v1.0 dogfooding run; worked around manually in that session, but external users wouldn't have the context to do so. No spec contract changes — the locked v1.0/v1.0.1 specs are valid as-is; only the published interface is realigned.

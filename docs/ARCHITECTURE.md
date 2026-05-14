@@ -170,8 +170,9 @@ draft.spec.md.draft
                   No additional API calls — context appended to the single call.
                 CoT faithfulness cite-and-verify pass (zero extra API calls
                   when no block tuples exist).
-                Budget instrumentation: emits one JSON line to stderr per call:
-                  INFO tier3.budget {"calls":1,"exemplars_injected":N,"dismissals_by_fp":{…}}
+                Budget instrumentation: emits one _status.emit("info", "tier3.budget", ...)
+                  per call: `INFO tier3.budget calls=1 exemplars_injected=N dismissals_by_fp={…}`
+                  (v1.1: suppressible via SPECTRE_QUIET=1).
                 Never raises. All failures become a single
                 tier3-unavailable info-severity sentinel finding.
         │
@@ -261,13 +262,13 @@ When a v1.0 spec binds exemplars in §§9-13, `_build_exemplar_context()` append
 3. Formats the conventions list per binding and appends to the user-message portion of the API call. Capped at 5 violation tuples per call — same single API call, no multiplied requests.
 4. DeepSeek is instructed to identify steps whose output would violate a bound exemplar's conventions.
 
-**Budget instrumentation.** Every `evaluate()` call emits one JSON line to stderr, regardless of whether exemplars were injected:
+**Budget instrumentation.** Every `evaluate()` call emits one `_status.emit("info", "tier3.budget", ...)` line, regardless of whether exemplars were injected:
 
 ```
-INFO tier3.budget {"calls": 1, "exemplars_injected": N, "dismissals_by_fp": {...}}
+INFO tier3.budget calls=1 exemplars_injected=N dismissals_by_fp={...}
 ```
 
-`calls` is always `1`. The ship-gate harness uses this line to confirm Tier-3 call volume stays within budget. Parse with `json.loads`, not regex, since the payload is structured JSON.
+`calls` is always `1`. The ship-gate harness uses this line to confirm Tier-3 call volume stays within budget. **v1.1 format change:** emission moved from raw `print(... json.dumps(...))` to `_status.emit("info", ...)`, gaining `SPECTRE_QUIET=1` suppression for free and consistency with every other reviewer status line. Parsers should split on whitespace + `key=value` rather than `json.loads` the tail.
 
 ## Hard cutover: v1.0 breaks walker_version backwards compatibility
 

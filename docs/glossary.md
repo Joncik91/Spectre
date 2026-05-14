@@ -1145,6 +1145,33 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - related: term:view
 - since: v1.0
 
+## view-fingerprint-contradicts-exemplar-binding
+- kind: finding
+- dev: A view binds to an exemplar whose `calibrated-for` set doesn't include the view's §8.x receiver-fingerprint (e.g. §8.5 fingerprint `gui-only` bound to a `help-text:gh` exemplar calibrated for `[cli-power-user, cli-novice]`). Tier-2 warn. Empty `calibrated-for` = any-match escape hatch.
+- pm: This view binds to an example whose audience doesn't match the view's audience. For instance, declaring a graphical interface but borrowing conventions from a command-line tool. Pick a different exemplar or update its `calibrated-for` set.
+- triggered_by: Tier-2 cross_view_gate.
+- user_action: Re-run `/vision` and pick an exemplar whose `calibrated-for` matches the view's fingerprint; or, if the catalog has no compatible exemplar, declare the binding as `post-ship-iteration`.
+- related: view-fingerprint-contradicts-hard-contract, post-ship-iteration-deferral
+- since: v1.1
+
+## post-ship-iteration-deferral
+- kind: finding
+- dev: Operator picked the `post-ship-iteration` sentinel for a view's exemplar binding because no shipped exemplar matched the view's fingerprint. Tier-2 info — not a bug, signals catalog gap to be filled post-ship.
+- pm: One of this spec's views has no example to follow in the catalog, so the operator deferred picking one until after shipping. Acceptable signal; not a defect.
+- triggered_by: Tier-2 cross_view_gate when `<aspect>-style: post-ship-iteration` appears in a view section.
+- user_action: None for ship. Post-ship, contribute a new exemplar to the catalog that matches this view's fingerprint, then re-bind.
+- related: excessive-post-ship-iteration, view-fingerprint-contradicts-exemplar-binding
+- since: v1.1
+
+## excessive-post-ship-iteration
+- kind: finding
+- dev: More than one view in the same spec is bound to the `post-ship-iteration` sentinel. Tier-2 warn — signals a structural catalog gap (not just an individual mismatch).
+- pm: This spec has multiple views with no matching examples in the catalog. The catalog likely has a structural gap that should be filled before more specs of this shape ship.
+- triggered_by: Tier-2 cross_view_gate aggregator after counting `post-ship-iteration-deferral` findings.
+- user_action: Audit which view types lack matching exemplars; contribute the missing exemplars to the catalog (or update existing exemplars' `calibrated-for` sets); re-run `/vision`.
+- related: post-ship-iteration-deferral, view-fingerprint-contradicts-exemplar-binding
+- since: v1.1
+
 ## view-coverage-overlap
 - kind: finding
 - dev: Two views' coverage contracts redundantly name the same content category. Tier-2 info — not a bug, but a hint the operator may want to consolidate.
