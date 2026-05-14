@@ -66,13 +66,13 @@ Every Spectre CLI subcommand (under `bin/`) emits structured status lines on std
 
 **Path display rule.** All paths emitted by CLIs are project-relative (`specs/foo.spec.md`, `state/scratchpad.json`). Absolute paths, `${CLAUDE_PLUGIN_ROOT}`, and `$HOME` literals never appear in user-facing output. The `bin/_path_display.py` helper enforces this at the emit boundary.
 
-**Tier-3 budget instrumentation (v1.0).** Every `llm_judge.evaluate()` call emits one JSON line to **stderr**:
+**Tier-3 budget instrumentation (v1.1).** Every `llm_judge.evaluate()` call emits one `_status.emit("info", "tier3.budget", ...)` line:
 
 ```
-INFO tier3.budget {"calls": 1, "exemplars_injected": N, "dismissals_by_fp": {...}}
+INFO tier3.budget calls=1 exemplars_injected=N dismissals_by_fp={...}
 ```
 
-`calls` is always `1` — exemplar context is injected into the single existing contradiction call, not multiplied across calls. The ship-gate harness parses this line with `json.loads` to confirm Tier-3 call volume stays within budget.
+`calls` is always `1` — exemplar context is injected into the single existing contradiction call, not multiplied. Format changed in v1.1 from JSON-object to `_status` key=value (suppressible via `SPECTRE_QUIET=1`, consistent with every other reviewer emission). Parsers should split on whitespace and key=value rather than `json.loads` the tail.
 
 ## Skills
 
