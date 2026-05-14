@@ -10,6 +10,7 @@ conventions:
   - "The current window indicator in `window-status-current-format` must be visually distinct from inactive windows via at least one of: bold attribute, differing foreground color, or enclosing brackets — not via text content alone"
   - "Session name, window index, and window name are available via `#{session_name}`, `#{window_index}`, and `#{window_name}` respectively; hardcoded substitutes for these tokens are a violation"
 axes: {metric-model: counters-plus-gauges, cardinality: low-fixed-labels, collection: local-direct-read}
+calibrated-for: [on-call-engineer, sre-team, self-operated, cli-power-user]
 taxonomy-version: 2
 source-url: https://github.com/tmux/tmux/wiki/Formats
 last-reviewed: 2026-05-13

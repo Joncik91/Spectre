@@ -11,6 +11,7 @@ conventions:
   - "List responses are JSON objects with `apiVersion`, `kind` ending in `List` (e.g. `PodList`), `metadata.resourceVersion`, and an `items` array; they are never bare JSON arrays"
   - "All timestamps in resource metadata (`creationTimestamp`, `deletionTimestamp`) are RFC 3339 UTC strings (e.g. `2026-05-13T12:00:00Z`); epoch integers are not accepted"
 axes: {style: rest-resource, error-model: status-plus-body, versioning: url-path}
+calibrated-for: [library-consumer, api-consumer, webhook-subscriber, sdk-author]
 taxonomy-version: 1
 source-url: https://kubernetes.io/docs/reference/using-api/api-concepts/
 last-reviewed: 2026-05-13

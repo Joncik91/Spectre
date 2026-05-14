@@ -10,6 +10,7 @@ conventions:
   - "The `exc_info` key, when present, contains the formatted exception traceback as a single string with embedded `\\n` characters — it does not span multiple JSON records"
   - "Log level is changeable per-logger at runtime without process restart via `structlog`'s stdlib `logging` integration and `logging.setLevel()` calls"
 axes: {structure: json-lines, identification: timestamp-level-source, verbosity-gradient: dynamic-runtime}
+calibrated-for: [on-call-engineer, sre-team, self-operated]
 taxonomy-version: 1
 source-url: https://www.structlog.org/en/stable/
 last-reviewed: 2026-05-13

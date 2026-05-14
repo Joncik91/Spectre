@@ -10,6 +10,7 @@ conventions:
   - "Access log (combined format) timestamp is enclosed in brackets: `[DD/Mon/YYYY:HH:MM:SS +ZZZZ]`"
   - "The `error_log` directive `level` parameter controls the minimum severity emitted; levels are: debug, info, notice, warn, error, crit, alert, emerg"
 axes: {structure: plaintext, identification: timestamp-level, verbosity-gradient: debug-warn-error}
+calibrated-for: [on-call-engineer, sre-team, self-operated]
 taxonomy-version: 1
 source-url: https://nginx.org/en/docs/ngx_core_module.html#error_log
 last-reviewed: 2026-05-13

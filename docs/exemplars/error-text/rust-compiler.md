@@ -11,6 +11,7 @@ conventions:
   - "Warnings use the `warning:` prefix without a code when they cannot be suppressed; lints carry codes of the form `[lint-name]` in square brackets"
   - "Multiple diagnostics are separated by a blank line; a summary line `error: aborting due to N previous errors` closes the output block"
 axes: {tone: didactic, structure: annotated-source, link-to-docs: error-code-only}
+calibrated-for: [cli-power-user, cli-novice]
 taxonomy-version: 1
 source-url: https://doc.rust-lang.org/error-index.html
 last-reviewed: 2026-05-13

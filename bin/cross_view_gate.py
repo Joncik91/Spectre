@@ -261,7 +261,26 @@ def _check_exemplar_bindings(
 # ---------------------------------------------------------------------------
 
 _MUTATES_RE = re.compile(r"^\s*-?\s*mutates\s*:\s*(.+)$", re.MULTILINE)
-_HUMAN_USER_FP_RE = re.compile(r"^\s*-?\s*receiver-fingerprint\s*:\s*(\S+)", re.MULTILINE)
+_RECEIVER_FP_RE = re.compile(r"^\s*-?\s*receiver-fingerprint:\s*(\S+)\s*$", re.MULTILINE)
+
+_VIEW_KEY_BY_SECTION: dict[str, str] = {
+    "8.2": "implementing-agent",
+    "8.3": "product-input",
+    "8.4": "product-output",
+    "8.5": "human-user",
+    "8.6": "integrator",
+    "8.7": "operator",
+}
+
+
+def _extract_receiver_fingerprints(substrate_blocks: dict[str, str]) -> dict[str, str]:
+    """Return {view-key: fingerprint} for every §8.x block that has one."""
+    out: dict[str, str] = {}
+    for section, body in substrate_blocks.items():
+        m = _RECEIVER_FP_RE.search(body)
+        if m:
+            out[_VIEW_KEY_BY_SECTION.get(section, section)] = m.group(1)
+    return out
 
 
 def _check_fingerprint_vs_hard_contract(
@@ -278,10 +297,10 @@ def _check_fingerprint_vs_hard_contract(
     block_85 = substrate_blocks.get("8.5")
     if block_85 is None or _is_not_applicable(block_85):
         return results
-    fp_match = _HUMAN_USER_FP_RE.search(block_85)
-    if fp_match is None:
+    human_user_fp = _extract_receiver_fingerprints(substrate_blocks).get("human-user")
+    if human_user_fp is None:
         return results
-    if fp_match.group(1).strip() != "gui-only":
+    if human_user_fp != "gui-only":
         return results
     # Find §8.1 mutates
     block_81_match = re.search(r"^#{2,3}\s+8\.1\b.*$", body, re.MULTILINE)
@@ -310,6 +329,79 @@ def _check_fingerprint_vs_hard_contract(
 
 
 # ---------------------------------------------------------------------------
+# Check 5: exemplar calibrated-for vs view receiver-fingerprint
+# ---------------------------------------------------------------------------
+
+# Map view section numbers (§§9-13) to the substrate view-key whose fingerprint governs it.
+_VIEW_SECTION_TO_SUBSTRATE_KEY: dict[str, str] = {
+    "9": "product-input",
+    "10": "product-output",
+    "11": "human-user",
+    "12": "integrator",
+    "13": "operator",
+}
+
+
+def _check_fingerprint_vs_exemplar(
+    view_blocks: dict[str, str],
+    substrate_blocks: dict[str, str],
+) -> list[_findings.Finding]:
+    """Emit a finding when a view binds an exemplar whose calibrated-for set
+    doesn't include the view's receiver-fingerprint.
+
+    Empty calibrated_for on an exemplar = any-match (skip the check).
+    """
+    results: list[_findings.Finding] = []
+    fingerprints = _extract_receiver_fingerprints(substrate_blocks)
+
+    for section, block in view_blocks.items():
+        if _is_not_applicable(block):
+            continue
+        substrate_key = _VIEW_SECTION_TO_SUBSTRATE_KEY.get(section)
+        if substrate_key is None:
+            continue
+        view_fp = fingerprints.get(substrate_key)
+        if view_fp is None:
+            # No fingerprint declared for this view — nothing to check.
+            continue
+
+        for m in _EXEMPLAR_REF_RE.finditer(block):
+            raw_ref = m.group(1).strip()
+            # Skip template angle-bracket placeholders and sentinel values.
+            if raw_ref.startswith("<") or raw_ref in ("slug", "name"):
+                continue
+            # post-ship-iteration is a Fix-2 sentinel; skip gracefully.
+            if raw_ref == "post-ship-iteration":
+                continue
+            status, matches = _catalog.lookup_status(raw_ref)
+            if status != "found":
+                # exemplar-not-found / ambiguous is already caught by Check 2.
+                continue
+            ex = matches[0]
+            if not ex.calibrated_for:
+                # Empty calibrated_for = any-match escape hatch.
+                continue
+            if view_fp not in ex.calibrated_for:
+                results.append(_findings.Finding(
+                    tier=2,
+                    kind="view-fingerprint-contradicts-exemplar-binding",
+                    severity="warn",
+                    location=_findings.FindingLocation(
+                        scope="spec-wide", ref=f"section-{section}"
+                    ),
+                    message=(
+                        f"§{section} fingerprint {view_fp!r} not in exemplar:{raw_ref} "
+                        f"calibrated-for {ex.calibrated_for}."
+                    ),
+                    suggested_fix=(
+                        f"Use an exemplar calibrated for {view_fp!r}, or update §{section} "
+                        f"fingerprint to match."
+                    ),
+                ))
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
@@ -330,4 +422,5 @@ def classify(spec_path: pathlib.Path) -> list[_findings.Finding]:
     results.extend(_check_cross_view_references(view_blocks, substrate_blocks))
     results.extend(_check_exemplar_bindings(view_blocks))
     results.extend(_check_fingerprint_vs_hard_contract(body, substrate_blocks))
+    results.extend(_check_fingerprint_vs_exemplar(view_blocks, substrate_blocks))
     return results

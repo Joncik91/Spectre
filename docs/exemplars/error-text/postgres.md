@@ -10,6 +10,7 @@ conventions:
   - "Error severity is one of: `DEBUG`, `INFO`, `NOTICE`, `WARNING`, `ERROR`, `FATAL`, `PANIC` — exactly these tokens, uppercase, no variants"
   - "Object names in error messages are always double-quoted when they are case-sensitive or contain special characters (e.g. `relation \"MyTable\"` not `relation MyTable`)"
 axes: {tone: terse, structure: what-why-how, link-to-docs: error-code-only}
+calibrated-for: [cli-power-user, cli-novice]
 taxonomy-version: 1
 source-url: https://www.postgresql.org/docs/current/errcodes-appendix.html
 last-reviewed: 2026-05-13
