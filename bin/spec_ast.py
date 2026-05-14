@@ -824,6 +824,9 @@ def _action_authored_path(action: str) -> list[str]:
     - heredoc targets: `cat > /path <<EOF` or `tee /path <<EOF`
     - explicit cp/install destination: last path arg
     - Any > /path or >> /path redirects (file writes)
+    - CLI output flags: a token in _SELF_CYCLE_OUTPUT_OPTS means the next
+      non-flag token is an authored output destination. Also handles the
+      equals-form (--out=path).
 
     Note: mkdir is intentionally excluded — it creates directories, NOT files
     within them. Keeping mkdir paths out prevents false "authored" matches
@@ -847,6 +850,41 @@ def _action_authored_path(action: str) -> list[str]:
     # install ... /dest
     for m in re.finditer(r"\binstall\b[^&|;]*\s(/[a-zA-Z0-9_/.-]+)(?:\s|$)", action):
         created.append(m.group(1))
+    # CLI output flags: -o path, --out path, --out=path, etc.
+    # Tokenise the action to find flag → next-token pairs.
+    tokens: list[str] | None = None
+    for attempt in [action, action + "'", action + '"']:
+        try:
+            tokens = shlex.split(attempt)
+            break
+        except ValueError:
+            continue
+    if tokens is not None:
+        posix_end = False  # True after a bare '--' token
+        i = 0
+        while i < len(tokens):
+            tok = tokens[i]
+            if tok == "--":
+                posix_end = True
+                i += 1
+                continue
+            if not posix_end:
+                # Equals-form: --out=path or --output=path
+                if "=" in tok:
+                    opt, _, val = tok.partition("=")
+                    if opt in _SELF_CYCLE_OUTPUT_OPTS and val:
+                        created.append(val)
+                    i += 1
+                    continue
+                # Space-separated form: --out path
+                if tok in _SELF_CYCLE_OUTPUT_OPTS:
+                    if i + 1 < len(tokens):
+                        created.append(tokens[i + 1])
+                        i += 2
+                    else:
+                        i += 1
+                    continue
+            i += 1
     return created
 
 
@@ -1372,6 +1410,14 @@ def _check_negative_paths(
 # Option-name values that carry input file paths (not output/target paths).
 _SELF_CYCLE_INPUT_OPTS: frozenset[str] = frozenset({
     "--manifest", "--config", "--from", "--input", "--source", "--file", "--from-file",
+})
+
+# Option-name values that carry output file paths (the destination/target of the action).
+# A path following one of these flags is an authored output, not a consumed input,
+# so it must NOT trigger a self-cycle-produces finding.
+_SELF_CYCLE_OUTPUT_OPTS: frozenset[str] = frozenset({
+    "-o", "--out", "--output", "-O", "--outfile",
+    "--out-file", "--target", "--dest", "--destination",
 })
 
 # File suffixes that make a bare token look like a file path.
