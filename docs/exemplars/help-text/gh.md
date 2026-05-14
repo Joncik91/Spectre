@@ -11,6 +11,7 @@ conventions:
   - "The `LEARN MORE` or `See also` block at the end of every help page contains at least one URL pointing to the official gh manual or GitHub documentation"
   - "Subcommand groups that have aliases list them explicitly under an `ALIASES` label in the help output"
 axes: {verbosity: verbose, structure: subcommand-tree, example-density: runnable-blocks}
+calibrated-for: [cli-power-user, cli-novice]
 taxonomy-version: 1
 source-url: https://cli.github.com/manual/
 last-reviewed: 2026-05-13

@@ -11,6 +11,7 @@ conventions:
   - "The EXAMPLES section appears after all OPTIONS sections; each example is a bare `curl` invocation on its own line with no expected-output annotation below it"
   - "The manual URL `https://curl.se/docs/manpage.html` or equivalent reference line appears at or near the end of the help output"
 axes: {verbosity: balanced, structure: sectioned, example-density: separate-section}
+calibrated-for: [cli-power-user, cli-novice]
 taxonomy-version: 1
 source-url: https://curl.se/docs/manual.html
 last-reviewed: 2026-05-13

@@ -12,6 +12,7 @@ conventions:
   - "Successful responses use 200 for GET/POST/DELETE; 204 is not used — deletions return a `{id, object, deleted: true}` JSON body with 200"
   - "All monetary amounts are integers in the smallest currency unit (e.g. cents for USD); floating-point amounts are never accepted"
 axes: {style: rest-resource, error-model: error-code-taxonomy, versioning: header}
+calibrated-for: [library-consumer, api-consumer, webhook-subscriber, sdk-author]
 taxonomy-version: 1
 source-url: https://docs.stripe.com/api
 last-reviewed: 2026-05-13

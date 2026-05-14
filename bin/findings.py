@@ -87,6 +87,7 @@ KNOWN_KINDS = {
     "exemplar-not-found",
     "exemplar-taxonomy-mismatch",
     "view-fingerprint-contradicts-hard-contract",
+    "view-fingerprint-contradicts-exemplar-binding",
     "view-coverage-overlap",
     "taxonomy-version-stale",
 }

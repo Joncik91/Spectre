@@ -10,6 +10,7 @@ conventions:
   - "Multi-line responses from the GitHub API (e.g. validation errors on multiple fields) are printed one error per line, each prefixed with `- `"
   - "Exit code 1 is used for operational failures (API errors, network failures); exit code 2 is used for misuse (bad arguments, missing required flags)"
 axes: {tone: conversational, structure: what-why-how, link-to-docs: full-url}
+calibrated-for: [cli-power-user, cli-novice]
 taxonomy-version: 1
 source-url: https://cli.github.com/manual/
 last-reviewed: 2026-05-13

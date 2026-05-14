@@ -10,6 +10,7 @@ conventions:
   - "No URLs, man-page references, or exit-code identifiers appear in error output — the message is self-contained"
   - "Object references in error messages use the canonical form git accepts as input (e.g. full ref paths like `refs/heads/main`, not friendly aliases)"
 axes: {tone: terse, structure: what-why-how, link-to-docs: none}
+calibrated-for: [cli-power-user, cli-novice]
 taxonomy-version: 1
 source-url: https://git-scm.com/docs
 last-reviewed: 2026-05-13

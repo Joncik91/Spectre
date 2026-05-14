@@ -10,6 +10,7 @@ conventions:
   - "The `--explain <ERROR_CODE>` flag appears in the OPTIONS section and its description references the error index; no URL is required but the mechanism for extended help is described inline"
   - "Lints are not listed in `--help` output; the flag `--warn`, `--deny`, `--allow`, `--forbid` appear with a generic `<LINT>` placeholder and a reference directing users to `rustc -W help` for the full lint list"
 axes: {verbosity: verbose, structure: sectioned, example-density: inline}
+calibrated-for: [cli-power-user, cli-novice]
 taxonomy-version: 1
 source-url: https://doc.rust-lang.org/rustc/command-line-arguments.html
 last-reviewed: 2026-05-13

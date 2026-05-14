@@ -11,6 +11,7 @@ conventions:
   - "The scrape endpoint is exposed at `/metrics` on a dedicated port (default 9090 for Prometheus itself; exporters conventionally use the port registered in the Prometheus default port allocations list)"
   - "Timestamps are omitted from exposition output unless the metric source is a batch job; real-time scraped metrics must not include per-sample timestamps"
 axes: {metric-model: prometheus-four-types, cardinality: bounded-labels, collection: pull-scrape}
+calibrated-for: [on-call-engineer, sre-team, self-operated]
 taxonomy-version: 2
 source-url: https://prometheus.io/docs/practices/naming/
 last-reviewed: 2026-05-13

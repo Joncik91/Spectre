@@ -41,6 +41,13 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from bin import substrate_wizard as _sw
+
+# Flattened set of all known fingerprint values across all views.
+_ALL_FINGERPRINTS: frozenset[str] = frozenset(
+    fp for fps in _sw._VIEW_FINGERPRINTS.values() for fp in fps
+)
+
 
 # ---------------------------------------------------------------------------
 # Plugin/user paths
@@ -90,6 +97,7 @@ class Exemplar:
     body: str = ""
     origin: str = "plugin"   # "plugin" or "user"
     path: str = ""
+    calibrated_for: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -265,6 +273,13 @@ def _parse_exemplar_file(path: pathlib.Path, origin: str) -> Exemplar:
     except (ValueError, TypeError) as exc:
         raise CatalogError(path, f"taxonomy-version must be an integer: {exc}")
 
+    raw_calibrated = fm.pop("calibrated-for", [])
+    if not isinstance(raw_calibrated, list):
+        raise CatalogError(path, f"calibrated-for must be a list, got {type(raw_calibrated).__name__}")
+    for fp in raw_calibrated:
+        if fp not in _ALL_FINGERPRINTS:
+            raise CatalogError(path, f"calibrated-for value {fp!r} not in known fingerprint vocabulary")
+
     return Exemplar(
         slug=path.stem,
         view_types=view_types,
@@ -277,6 +292,7 @@ def _parse_exemplar_file(path: pathlib.Path, origin: str) -> Exemplar:
         body=body.strip(),
         origin=origin,
         path=str(path),
+        calibrated_for=list(raw_calibrated),
     )
 
 

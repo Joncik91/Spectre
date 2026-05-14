@@ -12,6 +12,7 @@ conventions:
   - "Each field is a `KEY=value` pair; multi-line binary values encoded as `KEY\n<uint64-le-length><raw-bytes>`"
   - "Kernel messages carry `_TRANSPORT=kernel`; userspace journal messages carry `_TRANSPORT=journal`"
 axes: {structure: key-value, identification: full-correlation, verbosity-gradient: six-syslog-levels}
+calibrated-for: [on-call-engineer, sre-team, self-operated]
 taxonomy-version: 1
 source-url: https://www.freedesktop.org/software/systemd/man/systemd.journal-fields.html
 last-reviewed: 2026-05-13
