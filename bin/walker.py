@@ -16,6 +16,8 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Any
 
+from bin import _catalog
+
 WALKER_VERSION = "1.0.0"
 
 DEFAULT_MAX_ROUNDS = 30
@@ -801,6 +803,59 @@ _VIEW_SCOPE_CONCERN_IDS = {
     "scope-operator": "operator",
 }
 
+# Map from view name to the catalog view-type(s) used for exemplar selection.
+# When a view has multiple view-types (e.g. human-user binds help-text AND
+# error-text), this map lists them in priority order; each concern that needs
+# exemplar options passes the specific view-type it's filtering against.
+_VIEW_TO_CATALOG_VIEW_TYPE: dict[str, str] = {
+    "product-input": "help-text",    # placeholder; input-shape lands in v1.1
+    "product-output": "help-text",   # placeholder; output-shape lands in v1.1
+    "human-user": "help-text",       # error-text handled separately per concern
+    "integrator": "api-shape",
+    "operator": "log-format",        # observability handled separately per concern
+}
+
+# Map from the scope-check concern ID to the view name (inverse of
+# _VIEW_SCOPE_CONCERN_IDS, kept alongside for co-location).
+_SCOPE_CONCERN_TO_VIEW: dict[str, str] = {v: k for k, v in _VIEW_SCOPE_CONCERN_IDS.items()}
+
+
+def _exemplar_options_for(
+    fingerprint: str | None,
+    view_type: str,
+) -> tuple[list[str], bool]:
+    """Return (option_labels, has_mismatch).
+
+    Filters the catalog by view_type, then filters by fingerprint compatibility:
+    - exemplars with empty calibrated_for match any fingerprint
+    - exemplars with non-empty calibrated_for must include the fingerprint
+
+    has_mismatch=True when the filtered list is empty (no compatible exemplar
+    exists for this view_type + fingerprint combination).
+
+    When no compatible exemplar exists, returns the full unfiltered list with
+    each slug annotated "[fingerprint-mismatch]" plus a final sentinel
+    "post-ship-iteration".
+    """
+    all_for_type = _catalog.by_view_type(view_type)
+    if not all_for_type:
+        return ([], False)
+    if fingerprint is None or fingerprint in ("not-applicable", "no-human-user",
+                                               "no-integrator", "no-operator"):
+        # Defensive: view shouldn't be generating exemplar concerns when N/A.
+        # Return full list without annotation (no fingerprint to filter on).
+        return ([ex.slug for ex in all_for_type], False)
+    matching = [
+        ex for ex in all_for_type
+        if not ex.calibrated_for or fingerprint in ex.calibrated_for
+    ]
+    if matching:
+        return ([ex.slug for ex in matching], False)
+    # Zero compatible exemplars — annotate full list + offer deferral sentinel.
+    labels = [f"{ex.slug} [fingerprint-mismatch]" for ex in all_for_type]
+    labels.append("post-ship-iteration")
+    return (labels, True)
+
 
 def _view_in_scope(state: WalkState, view: str) -> bool:
     """A view is in-scope when the scope-check concern has been answered
@@ -840,16 +895,19 @@ def generate_product_input_concerns(
             ],
         ))
     if _view_in_scope(state, "product-input"):
-        for cid, summary in (
-            ("input-source-pi", "Input source — stdin, file path, network protocol, env var? Name the wire format."),
-            ("input-schema-pi", "Input validation schema — JSON Schema URL or inline, or 'none' if input is opaque bytes. Include the strictness level (strict | lenient | tolerant)."),
-            ("input-retry-pi", "Retry budget — how many retries on malformed input before the product rejects? '0' (fail fast) | '<int>' | 'unlimited'."),
-            ("input-exemplar-pi", "Exemplar binding — pick a catalog entry whose input-handling conventions match your product (run `spectre exemplars list --view-type help-text` for now; an input-shape view will surface in v1.1) or 'none' to skip exemplar-binding for this view."),
+        pi_fingerprint = state.answered.get("scope-product-input")
+        pi_options, _ = _exemplar_options_for(pi_fingerprint, "help-text")
+        for cid, summary, opts in (
+            ("input-source-pi", "Input source — stdin, file path, network protocol, env var? Name the wire format.", []),
+            ("input-schema-pi", "Input validation schema — JSON Schema URL or inline, or 'none' if input is opaque bytes. Include the strictness level (strict | lenient | tolerant).", []),
+            ("input-retry-pi", "Retry budget — how many retries on malformed input before the product rejects? '0' (fail fast) | '<int>' | 'unlimited'.", []),
+            ("input-exemplar-pi", "Exemplar binding — pick a catalog entry whose input-handling conventions match your product (run `spectre exemplars list --view-type help-text` for now; an input-shape view will surface in v1.1) or 'none' to skip exemplar-binding for this view.", pi_options),
         ):
             if cid not in existing:
                 new.append(Concern(
                     id=cid, kind="receiver-clarification", receivers=["human"],
                     depends_on=["scope-product-input"], summary=summary,
+                    prefab_options=list(opts),
                 ))
     return new
 
@@ -923,17 +981,21 @@ def generate_human_user_concerns(
             ],
         ))
     if _view_in_scope(state, "human-user"):
-        for cid, summary in (
-            ("help-text-hu", "Help text — what flags trigger help (`--help, -h`)? What categories must it include (usage, flags, examples, link-to-docs, version)?"),
-            ("help-text-style-hu", "Help text exemplar — bind to a `help-text` catalog entry (e.g. `curl`, `gh`, `rustc`, `git`). Run `spectre exemplars list --view-type help-text` to see options + their axis values. Or 'none' to skip exemplar binding."),
-            ("error-text-style-hu", "Error text exemplar — bind to an `error-text` catalog entry (e.g. `git`, `rust-compiler`, `gh`, `postgres`). Run `spectre exemplars list --view-type error-text`."),
-            ("error-text-shape-hu", "Error text shape — what categories must each error include (what-failed, why, recovery)? What exit code on error (nonzero | specific int)?"),
-            ("examples-hu", "Examples — does the help text include runnable examples? If yes, where (inline per-flag, separate EXAMPLES section, runnable code blocks)?"),
+        hu_fingerprint = state.answered.get("scope-human-user")
+        ht_options, _ = _exemplar_options_for(hu_fingerprint, "help-text")
+        et_options, _ = _exemplar_options_for(hu_fingerprint, "error-text")
+        for cid, summary, opts in (
+            ("help-text-hu", "Help text — what flags trigger help (`--help, -h`)? What categories must it include (usage, flags, examples, link-to-docs, version)?", []),
+            ("help-text-style-hu", "Help text exemplar — bind to a `help-text` catalog entry. Run `spectre exemplars list --view-type help-text` to see options + their axis values. Or 'none' to skip exemplar binding.", ht_options),
+            ("error-text-style-hu", "Error text exemplar — bind to an `error-text` catalog entry. Run `spectre exemplars list --view-type error-text`.", et_options),
+            ("error-text-shape-hu", "Error text shape — what categories must each error include (what-failed, why, recovery)? What exit code on error (nonzero | specific int)?", []),
+            ("examples-hu", "Examples — does the help text include runnable examples? If yes, where (inline per-flag, separate EXAMPLES section, runnable code blocks)?", []),
         ):
             if cid not in existing:
                 new.append(Concern(
                     id=cid, kind="receiver-clarification", receivers=["human"],
                     depends_on=["scope-human-user"], summary=summary,
+                    prefab_options=list(opts),
                 ))
     return new
 
@@ -968,16 +1030,19 @@ def generate_integrator_concerns(
             ],
         ))
     if _view_in_scope(state, "integrator"):
-        for cid, summary in (
-            ("api-style-int", "Interface style — rest-resource, rest-rpc, graphql, grpc, library, webhook? Name the wire protocol and authentication mechanism."),
-            ("api-versioning-int", "Versioning — semver, url-path (/v1/), header, content-negotiation, or none? Include the breaking-change policy in one line."),
-            ("api-error-model-int", "Error model — http-status-only, status-plus-body, problem-details-rfc7807, error-code-taxonomy? List required fields in error responses (code, message, request-id)."),
-            ("api-exemplar-int", "API shape exemplar — bind to an `api-shape` catalog entry (e.g. `stripe-rest`, `github-graphql`, `kubernetes-api`). Run `spectre exemplars list --view-type api-shape`."),
+        int_fingerprint = state.answered.get("scope-integrator")
+        api_options, _ = _exemplar_options_for(int_fingerprint, "api-shape")
+        for cid, summary, opts in (
+            ("api-style-int", "Interface style — rest-resource, rest-rpc, graphql, grpc, library, webhook? Name the wire protocol and authentication mechanism.", []),
+            ("api-versioning-int", "Versioning — semver, url-path (/v1/), header, content-negotiation, or none? Include the breaking-change policy in one line.", []),
+            ("api-error-model-int", "Error model — http-status-only, status-plus-body, problem-details-rfc7807, error-code-taxonomy? List required fields in error responses (code, message, request-id).", []),
+            ("api-exemplar-int", "API shape exemplar — bind to an `api-shape` catalog entry. Run `spectre exemplars list --view-type api-shape`.", api_options),
         ):
             if cid not in existing:
                 new.append(Concern(
                     id=cid, kind="receiver-clarification", receivers=["human"],
                     depends_on=["scope-integrator"], summary=summary,
+                    prefab_options=list(opts),
                 ))
     return new
 
@@ -1009,17 +1074,21 @@ def generate_operator_concerns(
             ],
         ))
     if _view_in_scope(state, "operator"):
-        for cid, summary in (
-            ("log-format-op", "Log format — plaintext, key-value (logfmt), or json-lines? List required log keys (timestamp, level, source, op, duration_ms, request_id, ...)."),
-            ("log-format-style-op", "Log format exemplar — bind to a `log-format` catalog entry (e.g. `systemd-journal`, `nginx`, `structlog-json`). Run `spectre exemplars list --view-type log-format`."),
-            ("metrics-op", "Metrics — what metric names does this product emit? Counter-only, counters+gauges, full Prometheus four-types, or OpenTelemetry? List 3-5 metric names."),
-            ("observability-style-op", "Observability exemplar — bind to an `observability` catalog entry (e.g. `prometheus`, `tmux-status`, `htop`). Run `spectre exemplars list --view-type observability`."),
-            ("paging-op", "Paging trigger — under what conditions does this product page its operator? Reference §8.7 ux-contract.on-failure for the failure signature."),
+        op_fingerprint = state.answered.get("scope-operator")
+        lf_options, _ = _exemplar_options_for(op_fingerprint, "log-format")
+        obs_options, _ = _exemplar_options_for(op_fingerprint, "observability")
+        for cid, summary, opts in (
+            ("log-format-op", "Log format — plaintext, key-value (logfmt), or json-lines? List required log keys (timestamp, level, source, op, duration_ms, request_id, ...).", []),
+            ("log-format-style-op", "Log format exemplar — bind to a `log-format` catalog entry. Run `spectre exemplars list --view-type log-format`.", lf_options),
+            ("metrics-op", "Metrics — what metric names does this product emit? Counter-only, counters+gauges, full Prometheus four-types, or OpenTelemetry? List 3-5 metric names.", []),
+            ("observability-style-op", "Observability exemplar — bind to an `observability` catalog entry. Run `spectre exemplars list --view-type observability`.", obs_options),
+            ("paging-op", "Paging trigger — under what conditions does this product page its operator? Reference §8.7 ux-contract.on-failure for the failure signature.", []),
         ):
             if cid not in existing:
                 new.append(Concern(
                     id=cid, kind="receiver-clarification", receivers=["human"],
                     depends_on=["scope-operator"], summary=summary,
+                    prefab_options=list(opts),
                 ))
     return new
 

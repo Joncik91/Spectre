@@ -90,6 +90,9 @@ KNOWN_KINDS = {
     "view-fingerprint-contradicts-exemplar-binding",
     "view-coverage-overlap",
     "taxonomy-version-stale",
+    # v1.1 Fix 2 — no-compatible-exemplar handling
+    "post-ship-iteration-deferral",
+    "excessive-post-ship-iteration",
 }
 
 # Severity mapping for Tier 3 contradiction tuple kinds (v0.5.2).
