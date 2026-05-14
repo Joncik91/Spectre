@@ -340,7 +340,7 @@ def write_envelope_alongside_sidecar(
     Imports handoff_envelope lazily to avoid circular-import risk in thin callers.
     """
     import importlib
-    he = importlib.import_module("handoff_envelope")
+    he = importlib.import_module("bin.handoff_envelope")
 
     envelope = he.build(spec_path, sidecar_path, walk_path, decisions_dir)
     envelope_path = he.envelope_path_for(pathlib.Path(spec_path))

@@ -641,6 +641,38 @@ def _main() -> int:
         help="Bypass cache even if a fresh entry exists.",
     )
 
+    p_pv = sub.add_parser(
+        "run-per-view",
+        help="Render a single §8.x block for one non-agent view (§§8.3-8.7).",
+    )
+    p_pv.add_argument(
+        "--view",
+        required=True,
+        help="View name: product-input | product-output | human-user | integrator | operator.",
+    )
+    p_pv.add_argument(
+        "--receiver",
+        required=True,
+        help="Receiver-fingerprint from the view's vocabulary, or 'not-applicable'.",
+    )
+    p_pv.add_argument(
+        "--trust-profile",
+        default="none",
+        dest="trust_profile",
+        help="Comma-separated trust tokens or 'none'. Vocabulary is per-view.",
+    )
+    p_pv.add_argument(
+        "--binding",
+        default="",
+        help="Contextual binding — one-line description of what this view is FOR.",
+    )
+    p_pv.add_argument(
+        "--not-applicable-reason",
+        default="",
+        dest="not_applicable_reason",
+        help="One-line reason; required when --receiver is 'not-applicable'.",
+    )
+
     args = parser.parse_args()
 
     if args.cmd == "run":
@@ -726,6 +758,38 @@ def _main() -> int:
             sys.stdout.write(block)
             sys.stdout.flush()
             return 0
+
+    if args.cmd == "run-per-view":
+        if args.receiver == "not-applicable" and not args.not_applicable_reason.strip():
+            _status.emit(
+                "error",
+                "wizard.substrate",
+                dest="stderr",
+                reason="missing_not_applicable_reason",
+                remediation="re-run with --not-applicable-reason '<one-line reason>' when --receiver is 'not-applicable'",
+            )
+            return 1
+        try:
+            block = run_per_view(
+                view=args.view,
+                receiver=args.receiver,
+                trust_profile=args.trust_profile,
+                binding=args.binding,
+                not_applicable_reason=args.not_applicable_reason,
+            )
+        except WizardValidationError as exc:
+            _status.emit(
+                "error",
+                "wizard.substrate",
+                dest="stderr",
+                reason=f"invalid_{exc.field}",
+                detail=exc.message,
+                remediation="re-run with corrected flag value for the field listed above",
+            )
+            return 1
+        sys.stdout.write(block)
+        sys.stdout.flush()
+        return 0
 
     return 2
 

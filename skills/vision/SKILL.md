@@ -140,9 +140,33 @@ Capture stdout — that's the §8.2 markdown block. Inject it after §8.1 in the
 
 If `trust-profile` includes `untrusted-input` or `handles-secrets`, every step that produces an artifact MUST declare `untrusted-input: yes/no` and (when relevant) `sanitizes:` covering its sanitized OUTPUT. The evaluator's Tier 1 will block on missing annotations.
 
-**Step 4 — fire per-view substrate:** §§8.3-8.7 carry one substrate block per non-agent view (product-input, product-output, human-user, integrator, operator). Each view is either in-scope (the spec author answered the scope-check concern with a value other than `not-applicable`) or marked N/A. For each in-scope view, ask the four substrate questions tailored to that view (the receiver-fingerprint vocabulary is per-view; see `bin/substrate_wizard._VIEW_FINGERPRINTS` for the allowed values). Invoke `bin.substrate_wizard.run_per_view(view=<view>, receiver=<value>, trust_profile=<csv>, binding=<one-line>)` and inject the returned markdown after §8.2.
+**Step 4 — fire per-view substrate:** §§8.3-8.7 carry one substrate block per non-agent view (product-input, product-output, human-user, integrator, operator). Each view is either in-scope (the spec author answered the scope-check concern with a value other than `not-applicable`) or marked N/A. For each in-scope view, ask the four substrate questions tailored to that view (the receiver-fingerprint vocabulary is per-view; see `bin/substrate_wizard._VIEW_FINGERPRINTS` for the allowed values). Invoke the per-view CLI:
 
-For views the walker has answered `not-applicable`, invoke `run_per_view(view=<view>, receiver='not-applicable', not_applicable_reason='<one-line reason>')` instead. The resulting §8.x block degenerates to a single `not-applicable: <reason>` field; the corresponding §9-13 view section body must also be replaced with the same `not-applicable: <reason>` marker.
+```bash
+spectre substrate_wizard run-per-view \
+  --view "$VIEW" \
+  --receiver "$RECEIVER" \
+  --trust-profile "$TRUST_PROFILE" \
+  --binding "$BINDING"
+```
+
+Capture stdout — that's the §8.x markdown block. Inject it after §8.2 in spec-document order.
+
+For views the walker has answered `not-applicable`, invoke instead:
+
+```bash
+spectre substrate_wizard run-per-view \
+  --view "$VIEW" \
+  --receiver "not-applicable" \
+  --not-applicable-reason "$REASON"
+```
+
+The resulting §8.x block degenerates to a single `not-applicable: <reason>` field; the corresponding §9-13 view section body must also be replaced with the same `not-applicable: <reason>` marker.
+
+**Failure modes:**
+- `error wizard.substrate reason=invalid_view ...` — view name not in {product-input, product-output, human-user, integrator, operator}.
+- `error wizard.substrate reason=invalid_receiver-fingerprint ...` — receiver value not in the view's vocabulary.
+- `error wizard.substrate reason=missing_not_applicable_reason` — `--receiver not-applicable` passed without `--not-applicable-reason`.
 
 Trust-profile vocabularies are per-view and NOT interchangeable. `untrusted-input` is valid only in §8.2 (implementing-agent); `accessibility-required` is valid only in §8.5 (human-user); `paging-required` is valid only in §8.7 (operator). Cross-pollination is rejected by the validator.
 
