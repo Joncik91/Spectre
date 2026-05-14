@@ -254,3 +254,44 @@ class TestSha256Cli:
         f.write_bytes(b"ok")
         r = _run("sha256", "--file", str(f))
         assert r.stderr == ""
+
+
+# ── write-envelope: import-resolution regression (v1.0.2 hotfix) ──────────────
+
+
+class TestWriteEnvelopeResolvesHandoffEnvelope:
+    """Regression for v1.0.2: write-envelope must resolve handoff_envelope via
+    the wrapper's PYTHONPATH (plugin root only, no bin/ entry).
+
+    Pre-fix: `importlib.import_module("handoff_envelope")` (bareword) raised
+    ModuleNotFoundError every lock because plugin root is on PYTHONPATH but
+    `bin/` is not, and `bin/__init__.py` does not exist.
+
+    This test runs `python3 -m bin.eval_metadata write-envelope ...` exactly
+    like the wrapper does, with a minimal valid spec + sidecar, and asserts
+    that the envelope file is actually written. If the import is reverted to
+    bareword, the subcommand dies with ModuleNotFoundError before reaching
+    the write, and the envelope path will not exist.
+    """
+
+    def test_write_envelope_writes_envelope_file(self, tmp_path):
+        spec = tmp_path / "x.spec.md"
+        spec.write_text(
+            "---\nspec-version: 1.0\nspec-id: x\n---\n# x\n",
+            encoding="utf-8",
+        )
+        sidecar = tmp_path / "x.spec.md.eval.json"
+        sidecar.write_text(
+            json.dumps(_make_sidecar_payload(spec_id="x")),
+            encoding="utf-8",
+        )
+        envelope_path = tmp_path / "x.spec.md.envelope.json"
+        r = _run(
+            "write-envelope",
+            "--spec", str(spec),
+            "--sidecar", str(sidecar),
+        )
+        # Positive assertion: envelope file exists on disk after the call.
+        # Pre-fix, the bareword import raised ModuleNotFoundError before any
+        # write happened, so envelope_path.exists() was False.
+        assert envelope_path.exists(), f"stdout={r.stdout!r} stderr={r.stderr!r}"

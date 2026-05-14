@@ -2,6 +2,25 @@
 
 All notable changes to the Spectre plugin.
 
+## v1.0.2 — 2026-05-14
+
+Skill-protocol hotfix. v1.0/v1.0.1 shipped two protocol-conformance bugs where the published `/vision` skill body invoked commands the wrapper couldn't fully serve. Discovered during the Vidence v1.0 dogfooding run; worked around manually in that session, but external users wouldn't have the context to do so. No spec contract changes — the locked v1.0/v1.0.1 specs are valid as-is; only the published interface is realigned.
+
+### Fixed — `eval_metadata write-envelope` ModuleNotFoundError on every lock
+- `bin/eval_metadata.py:343` was doing `importlib.import_module("handoff_envelope")` (bareword). The wrapper puts only the plugin root on `PYTHONPATH`, not `bin/`, and there is no `bin/__init__.py`-as-namespace-shim — so the bareword failed to resolve every time the skill called write-envelope at lock. Now fully qualified as `"bin.handoff_envelope"`, matching how the other modules import their siblings. Single-character-range change; smaller blast radius than mutating wrapper `PYTHONPATH` (which would shadow system modules for all subcommands).
+- Regression test in `tests/test_eval_metadata_cli.py::TestWriteEnvelopeResolvesHandoffEnvelope` runs the wrapper-equivalent `python3 -m bin.eval_metadata write-envelope` end-to-end and asserts the envelope file lands on disk. Confirmed to fail with `ModuleNotFoundError: No module named 'handoff_envelope'` against the pre-fix source.
+
+### Fixed — `substrate_wizard run-per-view` had no CLI surface
+- §§8.3-8.7 substrate rounds were reachable only via the Python API (`bin.substrate_wizard.run_per_view(...)`), which the skill body instructed operators to call inline. This violated the contract that everything in the skill resolves through the `spectre` wrapper — operators reading the skill literally would have no way to run it.
+- New `spectre substrate_wizard run-per-view` subcommand mirrors the §8.2 `run` shape but for the per-view path: `--view`, `--receiver`, `--trust-profile`, `--binding`, `--not-applicable-reason`. Validates view + receiver against `_VIEW_FINGERPRINTS`. `--receiver not-applicable` without `--not-applicable-reason` errors with `missing_not_applicable_reason`.
+- `skills/vision/SKILL.md` Step 4 updated to use the CLI form (two code blocks: in-scope path + `not-applicable` path) plus failure-modes block, matching the §8.2 docs shape.
+- Five subprocess tests in `tests/test_substrate_wizard.py::TestRunPerViewCLI` cover happy path, N/A path, missing N/A reason, unknown view, and invalid receiver-for-view.
+
+### Not-reproduced — `_status` / `_scratchpad` dispatch through wrapper
+- The reported symptom (skill references `spectre _status` / `spectre _scratchpad` as published surface but the wrapper doesn't dispatch underscore names) did not reproduce. The wrapper's `*` wildcard branch routes `_status` → `python3 -m bin._status` and `_scratchpad` → `python3 -m bin._scratchpad`; both modules exist; both subcommands return 0 under direct test. Filed but no change shipped here. If the symptom recurs the underlying cause is elsewhere (likely module-internal, not dispatch).
+
+---
+
 ## v1.0.1 — 2026-05-13
 
 Post-release doc verification pass against v1.0.0 + one catalog content fix. No code/behavior changes outside the catalog content.

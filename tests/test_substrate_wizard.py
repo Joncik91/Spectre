@@ -494,3 +494,83 @@ class TestNonInteractiveFlags:
         cached = substrate_wizard.read_cache(_GOOD_HASH)
         assert "untrusted-input" in cached["trust-profile"]
         assert "none" in cached["trust-profile"]
+
+
+def _run_per_view(tmp_path, extra_args):
+    """Helper: invoke `substrate_wizard run-per-view` via subprocess with isolated HOME."""
+    env = {**os.environ, "HOME": str(tmp_path), "PYTHONPATH": _REPO_ROOT}
+    return subprocess.run(
+        [sys.executable, "-m", "bin.substrate_wizard", "run-per-view"] + extra_args,
+        capture_output=True,
+        text=True,
+        cwd=_REPO_ROOT,
+        env=env,
+    )
+
+
+class TestRunPerViewCLI:
+    """CLI surface for §§8.3-8.7 per-view substrate blocks (v1.0.2)."""
+
+    def test_in_scope_view_emits_8x_block(self, tmp_path):
+        """Valid view + receiver + flags → stdout contains a §8.x block, exit 0."""
+        result = _run_per_view(
+            tmp_path,
+            [
+                "--view", "human-user",
+                "--receiver", "cli-power-user",
+                "--trust-profile", "none",
+                "--binding", "Power-user CLI surface",
+            ],
+        )
+        assert result.returncode == 0, result.stderr
+        assert "### 8.5" in result.stdout and "human-user" in result.stdout.lower()
+        assert "cli-power-user" in result.stdout
+
+    def test_not_applicable_emits_degenerate_block(self, tmp_path):
+        """--receiver not-applicable + --not-applicable-reason → degenerate block, exit 0."""
+        result = _run_per_view(
+            tmp_path,
+            [
+                "--view", "integrator",
+                "--receiver", "not-applicable",
+                "--not-applicable-reason", "no programmatic consumer",
+            ],
+        )
+        assert result.returncode == 0, result.stderr
+        assert "### 8.6" in result.stdout and "integrator" in result.stdout.lower()
+        assert "not-applicable: no programmatic consumer" in result.stdout
+
+    def test_not_applicable_without_reason_errors(self, tmp_path):
+        """--receiver not-applicable without --not-applicable-reason → exit 1, error emit."""
+        result = _run_per_view(
+            tmp_path,
+            ["--view", "integrator", "--receiver", "not-applicable"],
+        )
+        assert result.returncode == 1
+        assert "missing_not_applicable_reason" in result.stderr
+
+    def test_unknown_view_errors(self, tmp_path):
+        """Unknown view name → exit 1, invalid_view error emit."""
+        result = _run_per_view(
+            tmp_path,
+            [
+                "--view", "made-up-view",
+                "--receiver", "cli-power-user",
+                "--binding", "x",
+            ],
+        )
+        assert result.returncode == 1
+        assert "invalid_view" in result.stderr
+
+    def test_invalid_receiver_for_view_errors(self, tmp_path):
+        """Receiver value not in view's vocabulary → exit 1, invalid_receiver-fingerprint error emit."""
+        result = _run_per_view(
+            tmp_path,
+            [
+                "--view", "human-user",
+                "--receiver", "programmatic-trusted",  # belongs to product-input
+                "--binding", "x",
+            ],
+        )
+        assert result.returncode == 1
+        assert "invalid_receiver-fingerprint" in result.stderr
