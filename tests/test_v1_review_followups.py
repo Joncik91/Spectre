@@ -60,10 +60,10 @@ def test_strip_fenced_blocks_removes_examples():
     assert "intro" in cleaned and "tail" in cleaned
 
 
-# ── Issue #8: budget instrumentation emits valid JSON ────────────────────────
+# ── Issue #8: budget instrumentation emits via _status channel ───────────────
 
-def test_budget_emission_is_valid_json(tmp_path, capsys, monkeypatch):
-    """Verify the INFO tier3.budget line parses as JSON via json.loads."""
+def test_budget_emission_via_status_channel(tmp_path, capsys, monkeypatch):
+    """Verify the INFO tier3.budget line uses key=value format via _status.emit."""
     from bin import llm_judge
     # Stub _run_contradiction_prompt to return empty findings + bypass network
     monkeypatch.setattr(llm_judge, "_run_contradiction_prompt", lambda *a, **kw: [])
@@ -75,14 +75,35 @@ def test_budget_emission_is_valid_json(tmp_path, capsys, monkeypatch):
     spec_text = "**Spec-version:** 1.0\n\n## 1. Hard Problem\nx\n"
     llm_judge.evaluate(spec_text, config=_Cfg())
     captured = capsys.readouterr()
+    all_output = captured.out + captured.err
     budget_lines = [
-        line for line in captured.err.splitlines() if line.startswith("INFO tier3.budget")
+        line for line in all_output.splitlines() if line.startswith("INFO tier3.budget")
     ]
     assert len(budget_lines) == 1
-    payload = json.loads(budget_lines[0].split(" ", 2)[2])
-    assert payload["calls"] == 1
-    assert "exemplars_injected" in payload
-    assert "dismissals_by_fp" in payload
+    line = budget_lines[0]
+    assert "calls=1" in line
+    assert "exemplars_injected=" in line
+    assert "dismissals_by_fp=" in line
+
+
+def test_budget_emission_suppressed_by_spectre_quiet(tmp_path, capsys, monkeypatch):
+    """SPECTRE_QUIET=1 must suppress the INFO tier3.budget line."""
+    from bin import llm_judge
+    monkeypatch.setattr(llm_judge, "_run_contradiction_prompt", lambda *a, **kw: [])
+    monkeypatch.setenv("SPECTRE_QUIET", "1")
+
+    class _Cfg:
+        enabled = True
+        budget_tokens_per_spec = 1_000_000
+
+    spec_text = "**Spec-version:** 1.0\n\n## 1. Hard Problem\nx\n"
+    llm_judge.evaluate(spec_text, config=_Cfg())
+    captured = capsys.readouterr()
+    all_output = captured.out + captured.err
+    budget_lines = [
+        line for line in all_output.splitlines() if line.startswith("INFO tier3.budget")
+    ]
+    assert len(budget_lines) == 0
 
 
 # ── Issue #9: corrupt state file UX ──────────────────────────────────────────

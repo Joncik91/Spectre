@@ -573,6 +573,15 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - related: tier.gate
 - since: v0.3.0
 
+## tier3.budget
+- kind: status
+- dev: Instrumentation line emitted once per evaluate() call; reports Tier-3 LLM call volume and exemplar injection count. calls= is always 1 (exemplars are injected into a single call, not multiplied). Suppressed by SPECTRE_QUIET=1.
+- pm: The AI deep-reviewer ran once and checked the spec against its examples.
+- triggered_by: `llm_judge.evaluate()` after the Tier-3 contradiction-detection call completes.
+- user_action: None — informational only.
+- related: tier.evaluate, term:tier-3, term:exemplar
+- since: v1.1.0
+
 ## track.acquire
 - kind: status
 - dev: Resource lock acquired from the supervisor daemon for the given resource= ID.

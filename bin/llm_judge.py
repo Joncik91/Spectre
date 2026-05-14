@@ -16,6 +16,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 
+from bin import _status
 from bin import findings
 from bin.findings import Finding, FindingLocation
 
@@ -1364,15 +1365,15 @@ def evaluate(
     # v1.0 — instrumentation: emit budget signal so the ship-gate test harness
     # can confirm Tier-3 call volume stays within budget. One Tier-3 call per
     # evaluate(), regardless of exemplar count (exemplars are injected into the
-    # single existing call, not multiplied across calls). Payload is JSON so
-    # the harness parses it with json.loads, not eval/regex.
-    import sys as _sys
-    _budget_payload = {
-        "calls": 1,
-        "exemplars_injected": exemplar_count,
-        "dismissals_by_fp": _count_dismissals_by_fingerprint(primary_findings),
-    }
-    print(f"INFO tier3.budget {json.dumps(_budget_payload)}", file=_sys.stderr)
+    # single existing call, not multiplied across calls). Routed through
+    # _status.emit so SPECTRE_QUIET=1 suppresses it like every other info line.
+    _status.emit(
+        "info",
+        "tier3.budget",
+        calls=1,
+        exemplars_injected=exemplar_count,
+        dismissals_by_fp=_count_dismissals_by_fingerprint(primary_findings),
+    )
 
     # Deterministic post-filter: drop missing-producer findings for artifacts
     # that Tier 1 contract resolution shows as resolved.  This is a hard veto —
