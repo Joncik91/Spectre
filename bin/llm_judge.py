@@ -4,6 +4,7 @@ v0.5.2: replaced three-prompt prose review with a single structured
 contradiction-tuple prompt. DeepSeek receives a normalised step table
 (JSON) and returns typed contradiction tuples instead of vague findings.
 """
+import hashlib
 import json
 import os
 import pathlib
@@ -181,6 +182,40 @@ def _count_dismissals_by_fingerprint(findings_list: list[Finding]) -> dict[str, 
         except Exception:
             continue
     return dict(counter)
+
+
+def _extract_exemplar_slugs(spec_text: str) -> list[str]:
+    """Return sorted list of exemplar slugs bound in §§9-13 of spec_text.
+
+    Used by _emit_run_fingerprint to build the exemplar_set_hash.  Non-v1.0
+    specs and specs with no exemplar bindings return an empty list.
+    """
+    from bin import spec_ast as _spec_ast
+    if not _spec_ast.is_v1_spec(spec_text):
+        return []
+    from bin import _catalog
+    view_labels = {
+        "9": "Product-Input View",
+        "10": "Product-Output View",
+        "11": "Human-User View",
+        "12": "Integrator View",
+        "13": "Operator View",
+    }
+    seen: set[str] = set()
+    for section, label in view_labels.items():
+        section_re = rf"^##\s+{re.escape(section)}\.\s+{re.escape(label)}\b"
+        m = re.search(section_re, spec_text, re.MULTILINE)
+        if not m:
+            continue
+        start = m.end()
+        next_h2 = re.search(r"^##\s", spec_text[start:], re.MULTILINE)
+        section_body = spec_text[start : start + next_h2.start()] if next_h2 else spec_text[start:]
+        for ex_match in re.finditer(r"exemplar:([a-z0-9][a-z0-9:_-]*)", section_body):
+            ref = ex_match.group(1).strip()
+            if ref.startswith("<") or ref in ("post-ship-iteration",):
+                continue
+            seen.add(ref)
+    return sorted(seen)
 
 
 def _build_exemplar_context(spec_text: str) -> tuple[str, int]:
@@ -1317,6 +1352,99 @@ def _run_contradiction_prompt(
         return [_unavailable(f"Tier 3 unavailable: {type(exc).__name__}")]
 
 
+# ── Tier-3 run fingerprint (Fix P) ───────────────────────────────────────────
+
+# Temperature is hardcoded to 0 in _call_deepseek; top_p and seed are not
+# exposed by the current DeepSeek API client.  Record their absence explicitly
+# so the fingerprint captures the full inputs that could vary across providers.
+_TIER3_TEMPERATURE: int = 0
+_TIER3_TOP_P: str = "not-set"   # DeepSeek API does not require/expose this
+_TIER3_SEED: str = "not-set"    # DeepSeek API does not require/expose this
+_TIER3_PROVIDER: str = "deepseek"
+
+
+def _sha256_str(text: str) -> str:
+    """Return hex SHA-256 of UTF-8 encoded *text*."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _build_run_fingerprint(
+    *,
+    config: "JudgeConfig",
+    system_prompt: str,
+    exemplar_slugs: list[str],
+    spec_text: str,
+) -> str:
+    """Compute a deterministic SHA-256 fingerprint over all Tier-3 run inputs.
+
+    Inputs hashed (in canonical order):
+      provider, model_id, temperature, top_p, seed_if_set,
+      system_prompt_hash, exemplar_set_hash, spec_text_hash,
+      judge_config_hash (model + base_url + budget + timeouts).
+
+    Operators diff this fingerprint across runs to distinguish input drift
+    (different prompt/spec/config → different hash) from API instability
+    (identical inputs → same hash, but different findings → provider noise).
+
+    Returns the full 64-char hex digest.
+    """
+    system_prompt_hash = _sha256_str(system_prompt)
+    # Exemplar set: sort slugs so the hash is order-independent
+    exemplar_set_hash = _sha256_str(json.dumps(sorted(exemplar_slugs)))
+    spec_text_hash = _sha256_str(spec_text)
+    # Judge config components that affect model behaviour.
+    # Use getattr with defaults so partial stub configs (e.g. in tests) don't crash.
+    judge_config_repr = json.dumps({
+        "model": getattr(config, "model", "unknown"),
+        "base_url": getattr(config, "base_url", "unknown"),
+        "budget_tokens_per_spec": getattr(config, "budget_tokens_per_spec", 0),
+        "chunk_timeout_s": getattr(config, "chunk_timeout_s", 0),
+        "total_timeout_s": getattr(config, "total_timeout_s", 0),
+    }, sort_keys=True)
+    judge_config_hash = _sha256_str(judge_config_repr)
+
+    canonical = json.dumps({
+        "provider": _TIER3_PROVIDER,
+        "model_id": getattr(config, "model", "unknown"),
+        "temperature": _TIER3_TEMPERATURE,
+        "top_p": _TIER3_TOP_P,
+        "seed_if_set": _TIER3_SEED,
+        "system_prompt_hash": system_prompt_hash,
+        "exemplar_set_hash": exemplar_set_hash,
+        "spec_text_hash": spec_text_hash,
+        "judge_config_hash": judge_config_hash,
+    }, sort_keys=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _emit_run_fingerprint(
+    *,
+    config: "JudgeConfig",
+    spec_text: str,
+    exemplar_slugs: list[str],
+) -> None:
+    """Compute and emit tier3.run-fingerprint via _status.emit (info level).
+
+    Suppressed by SPECTRE_QUIET=1 (info channel). Consistent with tier3.budget
+    which also uses info channel.
+    """
+    fingerprint = _build_run_fingerprint(
+        config=config,
+        system_prompt=_CONTRADICTION_SYSTEM_PROMPT,
+        exemplar_slugs=exemplar_slugs,
+        spec_text=spec_text,
+    )
+    _status.emit(
+        "info",
+        "tier3.run-fingerprint",
+        hash=fingerprint[:16],   # short form for human readability
+        hash_full=fingerprint,
+        model=getattr(config, "model", "unknown"),
+        temperature=_TIER3_TEMPERATURE,
+        provider=_TIER3_PROVIDER,
+    )
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def evaluate(
@@ -1359,6 +1487,10 @@ def evaluate(
     step_table = build_step_table(spec_text, step_objects=step_objects)
     # v1.0 — build exemplar context for §§9-13 bindings (no-op for non-v1.0 specs).
     exemplar_context, exemplar_count = _build_exemplar_context(spec_text)
+    # v1.2 Fix P — emit run fingerprint before the API call so operators can
+    # compare hashes across runs to distinguish input drift from provider noise.
+    exemplar_slugs = _extract_exemplar_slugs(spec_text)
+    _emit_run_fingerprint(config=config, spec_text=spec_text, exemplar_slugs=exemplar_slugs)
     primary_findings = _run_contradiction_prompt(
         step_table, config=config, exemplar_context=exemplar_context
     )

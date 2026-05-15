@@ -142,6 +142,34 @@ _DECISION_LINE_RE = re.compile(r"^\s*[-*]?\s*decision:\s+\S", re.IGNORECASE | re
 _STEP_SPLIT_RE = re.compile(r"(?=^\s*- step:)", re.MULTILINE)
 _FENCE_RE = re.compile(r"```(?:yaml)?\s*\n(.*?)```", re.DOTALL)
 
+# Fix Q: patterns for narrative-form ADR candidate extraction
+# §3 Algorithm Audit Delete entries: `- **Delete:** <X>` or `- Delete: <X>`
+# Optionally followed by ` — Reason: <Y>` or ` — <Y>`.
+_S3_DELETE_RE = re.compile(
+    r"^\s*[-*]?\s*\*{0,2}Delete\*{0,2}\s*:\s*(.+)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+# §5 Physics Guardrails: plain bullet lines (not blank, not headings, not code)
+_S5_BULLET_RE = re.compile(
+    r"^\s*[-*]\s+(.+)$",
+    re.MULTILINE,
+)
+# §8.x assumptions-killed: single-line or YAML list
+# Single-line form: `- assumptions-killed: item text`
+# List form: `- assumptions-killed:\n  - item\n  - item`
+# NOTE: use [ \t]* (not \s*) before the capture group so the regex does NOT
+# consume newlines into the trailing whitespace and match across lines.
+_ASSUMPTIONS_KILLED_RE = re.compile(
+    r"^\s*-?\s*assumptions-killed\s*:[ \t]*(.*)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_ASSUMPTIONS_LIST_ITEM_RE = re.compile(
+    r"^\s{2,}-\s+(.+)$",
+    re.MULTILINE,
+)
+# Maximum ADR candidates surfaced (§3 Delete entries have priority)
+_ADR_CANDIDATE_CAP = 10
+
 
 def _extract_spec_text(draft_path: pathlib.Path) -> str:
     """Read draft and normalise CRLF."""
@@ -149,40 +177,202 @@ def _extract_spec_text(draft_path: pathlib.Path) -> str:
     return raw.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def _extract_preview_adrs(spec_text: str) -> list[str]:
-    """Scan §2 First Principles for decision: lines; derive slugs.
+def _extract_section(spec_text: str, heading_re: str) -> str | None:
+    """Return body of a top-level section matched by *heading_re*, or None."""
+    m = re.search(heading_re, spec_text, re.MULTILINE)
+    if not m:
+        return None
+    start = m.end()
+    next_h = re.search(r"^## ", spec_text[start:], re.MULTILINE)
+    return spec_text[start : start + next_h.start()] if next_h else spec_text[start:]
 
-    Returns list of slugs (one per unique decision: marker).
-    Deterministic rule: matches only literal 'decision:' lines (case-insensitive),
-    per Copilot review #5.
+
+def _candidate_slug(text: str, anchor: str) -> str:
+    """Derive a slug from *text*, prefixed with *anchor* so the source section is clear.
+
+    The anchor is a short string like 's3' or 's5' or 's82'.  The slug is truncated
+    to 60 chars (anchor + text slug) to stay reasonable in the /ship confirmation flow.
     """
-    s2_match = re.search(r"^## 2\. First Principles\s*$", spec_text, re.MULTILINE)
-    if not s2_match:
+    raw = text.strip()
+    # Strip markdown bold/italic markers, Reason: labels, and em-dash suffixes
+    raw = re.sub(r"\*{1,2}", "", raw)
+    raw = re.sub(r"\s*[—–-]+\s*(Reason|reason)\s*:.+$", "", raw)
+    raw = re.sub(r"\s*[—–-]+\s*.+$", "", raw)  # drop trailing em-dash clause
+    raw = raw.strip()
+    if not raw:
+        return f"{anchor}-unnamed"
+    slug = _adr.slugify(raw)
+    # Truncate the slug part (not the anchor) to avoid excessively long slugs
+    max_slug_len = 60 - len(anchor) - 1
+    if len(slug) > max_slug_len:
+        slug = slug[:max_slug_len].rstrip("-")
+    return f"{anchor}-{slug}"
+
+
+def _extract_s3_delete_candidates(spec_text: str) -> list[str]:
+    """Extract ADR candidate slugs from §3 Algorithm Audit Delete entries.
+
+    Pattern: `- **Delete:** <X>` or `- Delete: <X>`, optionally followed by
+    ` — Reason: <Y>`.  Returns slugs prefixed with 's3-' (e.g. 's3-use-rest-not-graphql').
+    """
+    body = _extract_section(spec_text, r"^## 3\. Algorithm Audit\b")
+    if not body:
         return []
-
-    s2_start = s2_match.end()
-    next_h = re.search(r"^## ", spec_text[s2_start:], re.MULTILINE)
-    s2_body = (
-        spec_text[s2_start : s2_start + next_h.start()]
-        if next_h
-        else spec_text[s2_start:]
-    )
-
-    slugs: list[str] = []
+    candidates: list[str] = []
     seen: set[str] = set()
-    for m in _DECISION_LINE_RE.finditer(s2_body):
-        # Extract the text after 'decision:'
-        line = m.group(0)
-        after_colon = re.sub(r"^\s*[-*]?\s*decision:\s*", "", line, flags=re.IGNORECASE).strip()
-        if after_colon:
-            slug = _adr.slugify(after_colon)
-        else:
-            slug = "unnamed-decision"
+    for m in _S3_DELETE_RE.finditer(body):
+        text = m.group(1).strip()
+        if not text or text.startswith("<"):  # skip template placeholders
+            continue
+        slug = _candidate_slug(text, "s3")
         if slug not in seen:
             seen.add(slug)
-            slugs.append(slug)
+            candidates.append(slug)
+    return candidates
 
-    return slugs
+
+def _extract_s5_guardrail_candidates(spec_text: str) -> list[str]:
+    """Extract ADR candidate slugs from §5 Physics Guardrails bullet items.
+
+    Returns slugs prefixed with 's5-' (e.g. 's5-filesystem-state-immutable').
+    Skips Spectre-executor-invariant blockquotes and template placeholder lines.
+    """
+    body = _extract_section(spec_text, r"^## 5\. Physics Guardrails\b")
+    if not body:
+        return []
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for m in _S5_BULLET_RE.finditer(body):
+        text = m.group(1).strip()
+        if not text or text.startswith("<") or text.startswith(">"):
+            continue
+        # Skip blockquote continuation lines (inside the executor-invariants block)
+        if m.group(0).lstrip().startswith(">"):
+            continue
+        slug = _candidate_slug(text, "s5")
+        if slug not in seen:
+            seen.add(slug)
+            candidates.append(slug)
+    return candidates
+
+
+def _extract_s8x_assumptions_candidates(spec_text: str) -> list[str]:
+    """Extract ADR candidate slugs from §8.x assumptions-killed: blocks.
+
+    Handles both:
+      - Single-line: `- assumptions-killed: text`
+      - YAML list:   `- assumptions-killed:\\n  - item\\n  - item`
+
+    Returns slugs prefixed with 's8x-'.
+    """
+    # Find the §8 Receiver Calibration section
+    body = _extract_section(spec_text, r"^## 8\. Receiver Calibration\b")
+    if not body:
+        return []
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for m in _ASSUMPTIONS_KILLED_RE.finditer(body):
+        inline_text = m.group(1).strip()
+        if inline_text and not inline_text.startswith("<"):
+            # Single-line form
+            slug = _candidate_slug(inline_text, "s8x")
+            if slug not in seen:
+                seen.add(slug)
+                candidates.append(slug)
+        else:
+            # YAML list form: look at subsequent indented bullet lines until
+            # we hit a non-indented (non-blank) line or end of body.
+            after = body[m.end():]
+            for line in after.splitlines():
+                if not line.strip():
+                    continue  # blank lines allowed within a YAML list
+                if not line.startswith("  "):
+                    break  # non-indented line ends the list
+                li_m = re.match(r"^\s{2,}-\s+(.+)$", line)
+                if not li_m:
+                    break
+                item_text = li_m.group(1).strip()
+                if not item_text or item_text.startswith("<"):
+                    continue
+                slug = _candidate_slug(item_text, "s8x")
+                if slug not in seen:
+                    seen.add(slug)
+                    candidates.append(slug)
+    return candidates
+
+
+def _extract_preview_adrs(spec_text: str) -> list[str]:
+    """Scan spec for ADR candidates and return deduplicated slugs.
+
+    Primary path (§2 decision: markers — canonical form):
+      Literal `decision:` lines in §2 First Principles.  These are the authoritative
+      decisions the operator has already tagged; returned first and always included.
+
+    Secondary paths (Fix Q — narrative-form candidates for operator confirmation):
+      §3 Algorithm Audit Delete entries → prefixed 's3-...'
+      §5 Physics Guardrails bullet items → prefixed 's5-...'
+      §8.x assumptions-killed: blocks → prefixed 's8x-...'
+
+    Priority order: §2 canonical → §3 Delete → §5 Guardrails → §8.x assumptions.
+    Cap: at most _ADR_CANDIDATE_CAP slugs total; a trailing pointer string
+    '<N more available>' is appended when secondary candidates are truncated.
+
+    Returns list of slugs.  Never raises.
+    """
+    # ── Primary: §2 decision: markers (always included, no cap) ──
+    s2_match = re.search(r"^## 2\. First Principles\s*$", spec_text, re.MULTILINE)
+    primary: list[str] = []
+    seen: set[str] = set()
+    if s2_match:
+        s2_start = s2_match.end()
+        next_h = re.search(r"^## ", spec_text[s2_start:], re.MULTILINE)
+        s2_body = (
+            spec_text[s2_start : s2_start + next_h.start()]
+            if next_h
+            else spec_text[s2_start:]
+        )
+        for m in _DECISION_LINE_RE.finditer(s2_body):
+            # m.group(0) only matches up to the first \S char (the regex ends with \S
+            # for anchoring the match to non-empty lines).  Extract the full line by
+            # finding the newline boundary AFTER the match's end position.
+            match_end = m.end()
+            line_end_nl = s2_body.find("\n", match_end)
+            # Full line = everything from the last newline before m.start() to the
+            # next newline after m.end().  Use m.group(0) as the prefix (it contains
+            # everything up to and including the first non-whitespace char) then append
+            # the tail of the line.
+            tail = s2_body[match_end : line_end_nl if line_end_nl != -1 else len(s2_body)]
+            full_line = m.group(0) + tail
+            after_colon = re.sub(r"^\s*[-*]?\s*decision:\s*", "", full_line, flags=re.IGNORECASE).strip()
+            slug = _adr.slugify(after_colon) if after_colon else "unnamed-decision"
+            if slug not in seen:
+                seen.add(slug)
+                primary.append(slug)
+
+    # ── Secondary: narrative-form candidates (Fix Q) ──
+    s3_candidates = [s for s in _extract_s3_delete_candidates(spec_text) if s not in seen]
+    s5_candidates = [s for s in _extract_s5_guardrail_candidates(spec_text) if s not in seen]
+    s8x_candidates = [s for s in _extract_s8x_assumptions_candidates(spec_text) if s not in seen]
+
+    # Merge in priority order: §3 Delete, §5, §8.x
+    secondary: list[str] = s3_candidates + s5_candidates + s8x_candidates
+
+    # Remove duplicates within secondary (maintain first-seen order)
+    secondary_deduped: list[str] = []
+    for s in secondary:
+        if s not in seen:
+            seen.add(s)
+            secondary_deduped.append(s)
+
+    # Cap secondary candidates at _ADR_CANDIDATE_CAP (primary §2 entries are NOT
+    # counted toward the cap — they're always included in full).  Append a trailing
+    # '<N more available>' pointer when candidates are truncated.
+    truncated = secondary_deduped[_ADR_CANDIDATE_CAP:]
+    secondary_final = secondary_deduped[:_ADR_CANDIDATE_CAP]
+    if truncated:
+        secondary_final.append(f"<{len(truncated)} more available>")
+
+    return primary + secondary_final
 
 
 def _extract_preview_resources(spec_text: str) -> list[dict]:
