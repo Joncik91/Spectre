@@ -335,6 +335,8 @@ Repeat until the walker reports stop:
    - If the concern's `kind` is NOT `receiver-clarification` and `"defer to later layer"` is not already in the list, append it as the last choice.
    - Before displaying, drop any prefab option that contradicts a prior `state.answered` entry. Contradiction rule: the option shares ≥ 2 content tokens with an answered value that contains a negation word (`not`, `no`, `never`, `without`, `excluding`, `vendor-agnostic`). Example: if a prior answer says "vendor-agnostic, no DeepSeek-only options", drop a prefab containing "deepseek". Apply this in prose — the walker library exposes no helper for this in v0.8.2.
 
+   **`state.answered` shape** (Fix N): `state.answered` is a `dict[str, str]` mapping `concern_id → answer_text`, **not** a list. Iterate over answered values with `state.answered.values()` (e.g. `for answer in state.answered.values(): ...`). The prefab-contradiction logic above uses this pattern to scan all prior answers.
+
 5. **Check stop conditions.** Re-run `peek-pending` — if it returns `null`, the walk is exhausted; proceed to the Draft phase. Alternatively, check the `stop` field in the full state dump:
 
    ```bash
@@ -347,7 +349,7 @@ Repeat until the walker reports stop:
 
 ### Phase: Draft
 
-The walk has stopped. Render the draft from accumulated `state.answered` plus `state.spec_intent`:
+The walk has stopped. Render the draft from accumulated `state.answered` (a `dict[str, str]` mapping `concern_id → answer_text`) plus `state.spec_intent`. To iterate over all answers, use `state.answered.values()` or `state.answered.items()` for the id–text pair:
 
 1. **Slugify the title** (lowercase, `[^a-z0-9]+ → -`, trim).
 2. **Write the draft file** atomically at `$PROJECT/specs/<slug>.spec.md.draft` using the answers as Steps + First Principles + §§8-13 content. The exact mapping from concerns to spec sections lives in your judgment of what the answers tell you; the skill does not impose a 1:1 mapping.

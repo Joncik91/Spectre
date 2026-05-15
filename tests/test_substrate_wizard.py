@@ -116,13 +116,26 @@ def test_compute_author_spec_hash_excludes_82_block_followed_by_another_heading(
 
 
 def test_run_with_all_answers_returns_82_markdown(monkeypatch, tmp_path):
-    """Wizard with mock prompts returns a complete §8.2 block."""
+    """Wizard with mock prompts returns a complete §8.2 block.
+
+    After the 4 core questions, the wizard prompts for each ``<...>``
+    placeholder in the rendered block (ux-contract fields, assumptions-killed,
+    requires-situated-judgment, roi-budget).  All six are provided here so the
+    iterator is not exhausted.
+    """
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
     answers_iter = iter([
         "1",                                  # receiver: claude-code+human
         "untrusted-input,touches-network",    # trust-profile
         "fetch external metadata for indexer",  # contextual-binding
-        "none",                                # provenance
+        "none",                               # provenance
+        # placeholder substitutions:
+        "indexer ready",                      # on-success
+        "indexer failed, check logs",         # on-failure + remediation
+        "stderr",                             # log-target
+        "polling instead of streaming",       # assumptions-killed
+        "3, 5",                               # requires-situated-judgment
+        "high yield low scaffolding",         # roi-budget
     ])
 
     def fake_prompt(question: str) -> str:
@@ -135,12 +148,23 @@ def test_run_with_all_answers_returns_82_markdown(monkeypatch, tmp_path):
     assert "touches-network" in block
     assert "fetch external metadata for indexer" in block
     assert "kind: none" in block
+    # placeholders must be gone
+    assert "<" not in block or all(
+        tok not in block for tok in ["<one-line", "<path or stream", "<list of", "<yield-curve"]
+    )
 
 
 def test_run_writes_cache(monkeypatch, tmp_path):
-    """A successful run persists answers to the cache."""
+    """A successful run persists answers to the cache.
+
+    Provides answers for the 4 core questions plus the 6 placeholder fields
+    surfaced by _substitute_placeholders after rendering.
+    """
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
-    answers_iter = iter(["1", "none", "test", "none"])
+    answers_iter = iter([
+        "1", "none", "test binding", "none",   # 4 core questions
+        "ok", "failed", "stderr", "none", "1", "low",  # 6 placeholder fields
+    ])
     substrate_wizard.run(
         _VALID_HASH_B, prompt_fn=lambda _q: next(answers_iter)
     )
@@ -150,7 +174,11 @@ def test_run_writes_cache(monkeypatch, tmp_path):
 
 
 def test_run_uses_cache_when_present(monkeypatch, tmp_path):
-    """If a fresh cache exists, run() uses it without re-prompting."""
+    """If a fresh cache exists, run() skips the 4 core questions.
+
+    Placeholder fields (ux-contract, assumptions-killed, etc.) are still
+    prompted because they are not part of the cached answers.
+    """
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
     substrate_wizard.write_cache(_VALID_HASH_C, {
         "receiver-fingerprint": "claude-code-autonomous",
@@ -159,11 +187,15 @@ def test_run_uses_cache_when_present(monkeypatch, tmp_path):
         "provenance": {"kind": "none"},
     })
 
-    def fail_prompt(_q):
-        raise AssertionError("should not prompt when cache is fresh")
+    # Provide answers only for the placeholder fields — NOT for the 4 core
+    # questions, confirming those are not re-asked on a cache hit.
+    placeholder_answers = iter(["ok", "failed", "stderr", "none", "2", "low"])
 
-    block = substrate_wizard.run(_VALID_HASH_C, prompt_fn=fail_prompt)
+    block = substrate_wizard.run(_VALID_HASH_C, prompt_fn=lambda _q: next(placeholder_answers))
     assert "claude-code-autonomous" in block
+    assert "<" not in block or all(
+        tok not in block for tok in ["<one-line", "<path or stream", "<list of", "<yield-curve"]
+    )
 
 
 def test_run_raises_runtime_error_on_eof(monkeypatch, tmp_path):
@@ -186,6 +218,8 @@ def test_run_provenance_with_parent_envelope_hash(monkeypatch, tmp_path):
         "none",
         "derived spec",
         f"derived-from foo-bar {parent_sha}",
+        # placeholder answers:
+        "ok", "failed", "stderr", "none", "2", "low",
     ])
     block = substrate_wizard.run(
         _VALID_HASH_E, prompt_fn=lambda _q: next(answers_iter)
@@ -574,3 +608,97 @@ class TestRunPerViewCLI:
         )
         assert result.returncode == 1
         assert "invalid_receiver-fingerprint" in result.stderr
+
+
+# ── Fix I: placeholder substitution ──────────────────────────────────────────
+
+class TestPlaceholderSubstitution:
+    """Fix I: <...> stubs in rendered blocks are replaced by prompt_fn answers."""
+
+    _HASH = "2" * 64
+
+    def _make_placeholder_answers(self, extras=None):
+        """Return an iterator covering all placeholder labels in a §8.2 block.
+
+        §8.2 placeholders (implementing-agent view):
+          on-success, on-failure+remediation, log-target,
+          assumptions-killed, requires-situated-judgment, roi-budget
+        """
+        base = ["ready", "failed, retry", "/var/log/x", "polling ruled out", "3", "low"]
+        if extras:
+            base.extend(extras)
+        return iter(base)
+
+    def test_run_with_prompt_fn_produces_no_placeholders(self, monkeypatch, tmp_path):
+        """run() with a prompt_fn must emit zero <...> tokens."""
+        monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+        answers_iter = iter([
+            "1", "none", "fetch metadata", "none",  # 4 core questions
+            "ready", "failed, retry", "/var/log/x", "polling ruled out", "3", "low",
+        ])
+        block = substrate_wizard.run(
+            self._HASH, prompt_fn=lambda _q: next(answers_iter)
+        )
+        import re
+        assert not re.search(r"<[^<>\n]+>", block), f"placeholder found in block:\n{block}"
+
+    def test_run_per_view_with_prompt_fn_produces_no_placeholders(self, monkeypatch, tmp_path):
+        """run_per_view() with prompt_fn substitutes all <...> tokens."""
+        monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+        answers_iter = iter([
+            "product ready", "product failed", "stdout", "sync ruled out",
+        ])
+        block = substrate_wizard.run_per_view(
+            view="product-output",
+            receiver="human-reader",
+            trust_profile="schema-stable",
+            binding="export CSV report",
+            prompt_fn=lambda _q: next(answers_iter),
+        )
+        import re
+        assert not re.search(r"<[^<>\n]+>", block), f"placeholder found in block:\n{block}"
+
+    def test_run_per_view_without_prompt_fn_leaves_placeholders(self):
+        """Without prompt_fn, <...> tokens are left in-place (backward-compat)."""
+        block = substrate_wizard.run_per_view(
+            view="operator",
+            receiver="on-call-engineer",
+            trust_profile="paging-required",
+            binding="production deployment runbook",
+        )
+        import re
+        assert re.search(r"<[^<>\n]+>", block), "expected placeholders when no prompt_fn"
+
+    def test_substitute_placeholders_deduplicates_labels(self, monkeypatch, tmp_path):
+        """Each unique placeholder label is asked exactly once."""
+        _DEDUP_HASH = "9" * 64
+        monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+        call_count = {"n": 0}
+
+        def counting_prompt(_q):
+            call_count["n"] += 1
+            return "answer"
+
+        # _format_82_block has 6 distinct placeholder labels; run() core questions
+        # also call prompt_fn, so we need to feed those first.
+        answers_iter = iter(["1", "none", "binding text", "none"])
+
+        def combined_prompt(q):
+            try:
+                return next(answers_iter)
+            except StopIteration:
+                return counting_prompt(q)
+
+        substrate_wizard.run(_DEDUP_HASH, prompt_fn=combined_prompt)
+        # 6 distinct placeholder labels in §8.2 implementing-agent view
+        assert call_count["n"] == 6
+
+    def test_substitute_placeholders_direct(self):
+        """_substitute_placeholders replaces every token and deduplicates."""
+        block = "foo: <x>\nbar: <y>\nbaz: <x>"
+        answers = iter(["val-x", "val-y"])
+        result = substrate_wizard._substitute_placeholders(block, lambda _q: next(answers))
+        assert "val-x" in result
+        assert "val-y" in result
+        assert "<x>" not in result
+        assert "<y>" not in result
