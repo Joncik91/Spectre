@@ -12,11 +12,20 @@ import json
 import os
 import pathlib
 import re
+import sys
 import tempfile
 from dataclasses import dataclass, field
 from typing import Any
 
-from bin import _catalog
+# v1.1.1 Fix G: allow direct `python3 path/to/bin/walker.py` invocation by
+# ensuring the plugin root is on sys.path before resolving sibling imports.
+# The bin/spectre wrapper sets PYTHONPATH for `python3 -m bin.walker`; this
+# shim covers the bare-path case (skill bodies, debugger entry, ad hoc).
+_ROOT = pathlib.Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from bin import _catalog  # noqa: E402
 
 WALKER_VERSION = "1.0.0"
 

@@ -247,6 +247,90 @@ def test_missing_calibration_when_mutates_field_absent():
     assert any(f.kind == "missing-receiver-calibration" for f in fs)
 
 
+# ── Fix J: §8.1 field regex accepts markdown bold ───────────────────────────
+
+def _spec_with_81_fields(field_lines: str, tmp_path) -> list:
+    """Build a minimal spec with custom §8.1 field rendering, classify it,
+    return the findings list.
+    """
+    body = (
+        "# Test\n"
+        "**Generated:** 2026-05-15\n"
+        "**Slug:** bold-fields-test\n\n"
+        "## 1. Hard Problem\nProbe.\n\n"
+        "## 2. First Principles\n- only stdlib\n\n"
+        "## 6. Steps\n\n"
+        "```yaml\n"
+        '- step: 1\n'
+        '  why: "noop"\n'
+        '  action: "true"\n'
+        '  verification: "true"\n'
+        "```\n\n"
+        "## 8. Receiver Calibration\n### 8.1 Hard contract\n"
+        f"{field_lines}\n"
+    )
+    spec_path = tmp_path / "bold_fields.spec.md"
+    spec_path.write_text(body)
+    return spec_ast.classify(spec_path)
+
+
+def test_81_field_plain_form_passes(tmp_path):
+    # Fix J: plain `- mutates:` form is still accepted.
+    fs = _spec_with_81_fields(
+        "- mutates: []\n"
+        "- never-touches: [/etc]\n"
+        "- decision-budget: 0 paid calls\n"
+        "- reboot-survival: stateless\n",
+        tmp_path,
+    )
+    assert not any(f.kind == "missing-receiver-calibration" for f in fs)
+
+
+def test_81_field_markdown_bold_form_passes(tmp_path):
+    # Fix J regression: prior to v1.1.1, `- **mutates:**` produced 4 false
+    # missing-receiver-calibration block findings. Markdown bold is the
+    # default rendering when the spec author copies from a docs page.
+    fs = _spec_with_81_fields(
+        "- **mutates:** []\n"
+        "- **never-touches:** [/etc]\n"
+        "- **decision-budget:** 0 paid calls\n"
+        "- **reboot-survival:** stateless\n",
+        tmp_path,
+    )
+    assert not any(f.kind == "missing-receiver-calibration" for f in fs)
+
+
+def test_81_field_single_opener_double_closer_still_fires(tmp_path):
+    # Fix J symmetry: `*mutates:**` is malformed; the finding still fires
+    # so the operator gets a clean signal instead of silent acceptance.
+    fs = _spec_with_81_fields(
+        "- *mutates:** []\n"
+        "- never-touches: [/etc]\n"
+        "- decision-budget: 0 paid calls\n"
+        "- reboot-survival: stateless\n",
+        tmp_path,
+    )
+    assert any(
+        f.kind == "missing-receiver-calibration" and "mutates" in f.suggested_fix
+        for f in fs
+    )
+
+
+def test_81_field_double_opener_single_closer_still_fires(tmp_path):
+    # Fix J symmetry: `**mutates:*` is malformed; the finding still fires.
+    fs = _spec_with_81_fields(
+        "- **mutates:* []\n"
+        "- never-touches: [/etc]\n"
+        "- decision-budget: 0 paid calls\n"
+        "- reboot-survival: stateless\n",
+        tmp_path,
+    )
+    assert any(
+        f.kind == "missing-receiver-calibration" and "mutates" in f.suggested_fix
+        for f in fs
+    )
+
+
 # ── action-not-probed ────────────────────────────────────────────────────────
 
 def test_action_not_probed_warn_when_path_in_action_not_in_verification():

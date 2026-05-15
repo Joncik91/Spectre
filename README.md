@@ -6,7 +6,7 @@
 
 > Spectre — a deterministic spec-driven Claude Code plugin. Vision → Spec → Evaluate → Lock → Implement → Verify, with three-tier pre-lock review and per-project resource locking.
 
-[![tests](https://img.shields.io/badge/tests-1822%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE) [![version](https://img.shields.io/badge/version-1.1.0-blue)](CHANGELOG.md)
+[![tests](https://img.shields.io/badge/tests-1842%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.11%2B-blue)](#install) [![stdlib only](https://img.shields.io/badge/deps-stdlib%20only-blue)](#install) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE) [![version](https://img.shields.io/badge/version-1.1.1-blue)](CHANGELOG.md)
 
 ## Table of Contents
 
@@ -116,7 +116,7 @@ Full vocabulary registry: [`docs/glossary.md`](docs/glossary.md) (75+ status cod
 
 Full reference — hooks, skills, spec step schema, sidecar format, layout, finding-kind taxonomy: [`docs/API.md`](docs/API.md).
 
-**v1.1 components** — plugin `1.1.0` ([`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)), `EVALUATOR_VERSION = "1.0.0"` ([`bin/spec_evaluator.py`](bin/spec_evaluator.py)), `WALKER_VERSION = "1.0.0"` ([`bin/walker.py`](bin/walker.py)). Walker state files persisted under v0.9 are rejected on load; remove `state/.walk.json` and re-run `/vision` to migrate (hard cutover from v0.9; no migration tool).
+**v1.1 components** — plugin `1.1.1` ([`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)), `EVALUATOR_VERSION = "1.0.0"` ([`bin/spec_evaluator.py`](bin/spec_evaluator.py)), `WALKER_VERSION = "1.0.0"` ([`bin/walker.py`](bin/walker.py)). Walker state files persisted under v0.9 are rejected on load; remove `state/.walk.json` and re-run `/vision` to migrate (hard cutover from v0.9; no migration tool).
 
 **`spectre` CLI surface** — top-level wrapper resolves `${CLAUDE_PLUGIN_ROOT}`, exports `PYTHONPATH`, dispatches to `python3 -m bin.<subcommand>`:
 
@@ -133,12 +133,12 @@ Full reference — hooks, skills, spec step schema, sidecar format, layout, find
 ## Tests
 
 ```bash
-pytest tests/                  # 1822 tests, stdlib + pytest
+pytest tests/                  # 1842 tests, stdlib + pytest
 pytest tests/ -v               # verbose
 pytest tests/test_spec_evaluator.py -v   # single module
 ```
 
-Test discipline: stdlib + pytest only, no network mocks outside `test_llm_judge.py`, Pragma test-gaming guard blocks `rejects/raises/refuses/denies`-named tests without `pytest.raises`. 1:1 module → test mapping for `bin/*.py`, plus four integration/E2E tests including a `test_v1_1_e2e.py` v1.1 acceptance test. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for full discipline and the review process.
+Test discipline: stdlib + pytest only, no network mocks outside `test_llm_judge.py`, Pragma test-gaming guard blocks `rejects/raises/refuses/denies`-named tests without `pytest.raises`. 1:1 module → test mapping for `bin/*.py`, plus four integration/E2E tests including a `test_v1_1_e2e.py` v1.1 acceptance test and `test_bin_direct_invocation.py` import-bootstrap coverage for direct `python3 bin/<module>.py` invocation. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for full discipline and the review process.
 
 ## Maintainers
 

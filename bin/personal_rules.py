@@ -25,11 +25,17 @@ from __future__ import annotations
 
 import os
 import pathlib
+import sys
 import tempfile
 import tomllib
 from datetime import datetime, timezone
 
-from bin import _scratchpad
+# v1.1.1 Fix G: see bin/walker.py for the rationale on this sys.path shim.
+_ROOT = pathlib.Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from bin import _scratchpad  # noqa: E402
 
 PERSONAL_RULES_VERSION = "0.4.1"
 DEFAULT_BRAKE_THRESHOLD = 3

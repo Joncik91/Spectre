@@ -2,6 +2,38 @@
 
 All notable changes to the Spectre plugin.
 
+## v1.1.1 — 2026-05-15
+
+Hotfix release. Four protocol bugs surfaced by Vidence's first `/vision` cycle against the v1.1 evaluator. External installs hit Bugs G and J/K on real specs; bug F is a Claude Code harness message, documented here as expected behavior. Test count: 1822 → 1842 (+20).
+
+### Fixed — bin/*.py direct invocation no longer raises ModuleNotFoundError (Fix G)
+
+- `python3 path/to/bin/walker.py` (and 7 other modules) failed with `ModuleNotFoundError: No module named 'bin'` when invoked from any cwd outside `CLAUDE_PLUGIN_ROOT`. The `bin/spectre` wrapper sets `PYTHONPATH` for `python3 -m bin.<module>` invocation, but direct file-path invocation bypasses the wrapper. Skill bodies, debuggers, and ad-hoc invocation now work from any cwd.
+- Added a small `sys.path` shim above the first `from bin import …` line in each of: `walker.py`, `spec_evaluator.py`, `exemplars.py`, `adr.py`, `track.py`, `personal_rules.py`, `migrate_scratchpad_v1_to_v2.py`. `hydrate.py` and `compact.py` already had this shim (they are hook entry points). `walker.py` carries the rationale comment; others link back.
+- **Stopgap, not architecture.** The duplicated shims will rot if the layout changes. v1.3 will convert `bin/` to a proper installable package (`pyproject.toml` + entry-point console scripts) and drop the shims.
+- New `tests/test_bin_direct_invocation.py` (9 parametrized cases) — real subprocess invocation from a `tmp_path` cwd; asserts no `ModuleNotFoundError`/`no module named 'bin'` on any covered module.
+
+### Fixed — §8.1 hard-contract parser accepts markdown-bold field names (Fix J)
+
+- `- **mutates:**`, `- **never-touches:**`, `- **decision-budget:**`, `- **reboot-survival:**` (the default rendering when a spec author copies from a docs page) previously produced 4 false `missing-receiver-calibration` block findings. Specs that used plain `- mutates:` worked.
+- Regex extended to accept either plain or symmetrically-bold field names: `(?:<field>|\*\*<field>\*\*)`. Asymmetric forms (`*mutates:**`, `**mutates:*`) still fire the finding — operator gets a clean signal instead of silent acceptance.
+- Applied at both `_check_receiver_calibration` and `_parse_mutates_paths` sites in `bin/spec_ast.py`.
+- 4 new tests in `tests/test_spec_ast.py`.
+
+### Fixed — YAML quote-style aware unescape for step fields (Fix K)
+
+- `bin/spec_ast.py::_parse_steps_section` previously called `value.strip('"').strip("'")` on every captured `why:`/`action:`/`verification:` value. This stripped outer quotes but left literal backslash-quote sequences inside the value, causing downstream `_extract_python_c_bodies` shlex+ast to flag legitimate `python3 -c "..."` bodies as `SyntaxError` (verification-syntax block findings). On Vidence v2, 8 such false-positive blocks fired on a single spec.
+- New `_unquote_yaml_scalar(value)` helper handles three forms:
+  - bare: `foo bar` — preserved
+  - double-quoted: `"foo \"bar\""` — backslash-escaped `\"`, `\\`, `\n`, `\t`, `\r`, `\0`, `\/` unescaped per the YAML 1.1 table
+  - single-quoted: `'it''s'` — only doubled-single (`''`) is decoded to `'`
+- **Plan override:** the plan called for invalid escape sequences (e.g. `\q`) to raise `VerificationParseError`. Implementation preserves them verbatim instead — raising would crash classification on a single malformed spec; preserving lets the existing `verification-syntax-error` Tier-1 finding fire cleanly with a precise message. Lower blast radius for the same operator outcome.
+- New `tests/test_spec_ast_verification_escapes.py` (7 unit tests) + adjustment to `tests/test_spec_ast_stub_producer.py::test_vidence_v2_corrected_classify_no_stub_finding` (the prior "corrected" fixture relied on the broken parsing path; updated to use a non-stub body so the test asserts the right thing).
+
+### Documentation — "Shell cwd was reset" is a Claude Code harness message (Fix F)
+
+- After running `cd <path> && python3 …` inside a CC session, the harness emits `Shell cwd was reset to <repo>` to indicate it restored the working directory. Several Vidence operators flagged this as a Spectre defect. It is not — the string does not appear in any Spectre source file or hook. No supported install path emits it from Spectre code; it is purely a CC-side notification. Documented in `docs/API.md`; no code change.
+
 ## v1.1.0 — 2026-05-14
 
 Coverage and verification fixes from the v1.0 Vidence `/vision` dogfooding cycle. Five fixes across three classes: three walker/cross-view coverage holes (Class A) + two non-blocking friction items (Class B). No spec contract changes — v1.0/v1.0.2 locked specs are valid as-is; v1.1 evaluator surfaces additional warn/info findings on existing specs where new checks apply.

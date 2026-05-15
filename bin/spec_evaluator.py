@@ -24,13 +24,22 @@ import json
 import os
 import pathlib
 import re
+import sys
 import tempfile
 import tomllib
 from dataclasses import dataclass, field
 from typing import Any
 
-from bin import findings as _findings
-from bin import spec_ast as _spec_ast
+# v1.1.1 Fix G: allow direct `python3 path/to/bin/spec_evaluator.py` by
+# putting the plugin root on sys.path before sibling `from bin import …`
+# resolves. bin/spectre handles `python3 -m bin.spec_evaluator`; this is
+# the bare-path fallback.
+_ROOT = pathlib.Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from bin import findings as _findings  # noqa: E402
+from bin import spec_ast as _spec_ast  # noqa: E402
 from bin import substrate_ast as _substrate_ast
 from bin import spec_lint as _spec_lint
 from bin import coverage_gate as _coverage_gate

@@ -1,7 +1,14 @@
 """One-shot v1 → v2 scratchpad migration. Idempotent. Stdlib only."""
 import json
+import sys
 from pathlib import Path
-from bin import _scratchpad as sp
+
+# v1.1.1 Fix G: see bin/walker.py for the rationale on this sys.path shim.
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from bin import _scratchpad as sp  # noqa: E402
 
 
 def migrate(path: Path) -> str:

@@ -276,6 +276,60 @@ def _parse_reboot_survival(body: str) -> str:
     return m.group(1).strip().strip("`").strip("'\"").lower()
 
 
+# YAML 1.1 double-quoted escape table (subset Spectre accepts).
+_YAML_DQUOTE_ESCAPES = {
+    '"': '"',
+    "\\": "\\",
+    "n": "\n",
+    "t": "\t",
+    "r": "\r",
+    "0": "\0",
+    "/": "/",
+}
+
+
+def _unquote_yaml_scalar(value: str) -> str:
+    """Unquote a YAML scalar value taken from a `key: <value>` line.
+
+    Supports three quoting forms:
+      - bare:           foo bar              → "foo bar"
+      - double-quoted:  "foo \"bar\""        → 'foo "bar"' (with backslash escapes)
+      - single-quoted:  'it''s'              → "it's" (only doubled-single is escaped)
+
+    Invalid escape sequences in a double-quoted scalar (e.g. \\q) are
+    preserved verbatim — Spectre is permissive at parse time and lets the
+    downstream check flag a real syntax error rather than raising here.
+    Unterminated quoted scalars fall back to a best-effort raw strip so
+    the parser does not crash mid-spec.
+    """
+    s = value
+    if not s:
+        return s
+    if s[0] == '"':
+        end = s.rfind('"')
+        if end <= 0:
+            return s[1:]
+        inner = s[1:end]
+        out: list[str] = []
+        i = 0
+        while i < len(inner):
+            ch = inner[i]
+            if ch == "\\" and i + 1 < len(inner):
+                nxt = inner[i + 1]
+                out.append(_YAML_DQUOTE_ESCAPES.get(nxt, "\\" + nxt))
+                i += 2
+            else:
+                out.append(ch)
+                i += 1
+        return "".join(out)
+    if s[0] == "'":
+        end = s.rfind("'")
+        if end <= 0:
+            return s[1:]
+        return s[1:end].replace("''", "'")
+    return s
+
+
 def _parse_steps_section(body: str) -> list[dict[str, str | int | list[str]]]:
     """
     Parse ## 6. Steps section from a spec body.
@@ -328,7 +382,7 @@ def _parse_steps_section(body: str) -> list[dict[str, str | int | list[str]]]:
                 m_field = re.match(r"^\s+(why|action|verification):\s*(.*)", line)
                 if m_field:
                     key = m_field.group(1)
-                    value = m_field.group(2).strip().strip('"').strip("'")
+                    value = _unquote_yaml_scalar(m_field.group(2).rstrip())
                     step[key] = value
             if "step" in step:
                 # Parse produces/requires contract lists from the raw block
@@ -517,9 +571,15 @@ def _check_receiver_calibration(body: str) -> list[_findings.Finding]:
     next_h = re.search(r"^#{2,3} ", body[block_start:], re.MULTILINE)
     block_81 = body[block_start : block_start + next_h.start()] if next_h else body[block_start:]
 
-    # Check presence of each required field
+    # Check presence of each required field.
+    # Accept plain (`mutates:`) and markdown-bold (`**mutates:**`) field names.
+    # The two arms of the alternation enforce symmetry: either both `**` are
+    # present or neither — `*mutates:**` and `**mutates:*` are rejected.
     for field in _CALIBRATION_REQUIRED_FIELDS:
-        if not re.search(r"^\s*[`-]?\s*`?" + re.escape(field), block_81, re.MULTILINE):
+        escaped = re.escape(field)
+        prefix = r"^\s*[`-]?\s*`?"
+        pattern = prefix + r"(?:" + escaped + r"|\*\*" + escaped + r"\*\*)"
+        if not re.search(pattern, block_81, re.MULTILINE):
             msg = f"§8.1 field '{field}' is absent."
             if len(msg) > 140:
                 msg = msg[:137] + "..."
@@ -821,7 +881,12 @@ def _parse_mutates_paths(body: str) -> list[str]:
     next_h = re.search(r"^#{2,3} ", body[block_start:], re.MULTILINE)
     block_81 = body[block_start : block_start + next_h.start()] if next_h else body[block_start:]
 
-    m = re.search(r"^\s*[`-]?\s*`?mutates:`?\s*(.*)", block_81, re.MULTILINE)
+    # Accept plain `mutates:` and markdown-bold `**mutates:**` — symmetric.
+    m = re.search(
+        r"^\s*[`-]?\s*`?(?:mutates:`?|\*\*mutates:\*\*)\s*(.*)",
+        block_81,
+        re.MULTILINE,
+    )
     if not m:
         return []
     raw = m.group(1).strip()
