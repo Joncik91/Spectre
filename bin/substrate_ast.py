@@ -220,7 +220,7 @@ def _list(chunk: str, field: str) -> list[str]:
 
 def _split_steps(body: str) -> list[dict]:
     """Crude step splitter: returns list of dicts with action, requires,
-    produces, untrusted-input, sanitizes."""
+    produces, untrusted-input, sanitizes, sanitized-input."""
     yaml_block = re.search(
         r"^## 6\. Steps\s*\n.*?^```yaml\n(.*?)^```", body,
         re.DOTALL | re.MULTILINE,
@@ -249,6 +249,7 @@ def _split_steps(body: str) -> list[dict]:
             "produces": _list(chunk, "produces"),
             "requires": _list(chunk, "requires"),
             "sanitizes": _list(chunk, "sanitizes"),
+            "sanitized-input": _list(chunk, "sanitized-input"),
         }
         out.append(info)
     return out
@@ -382,8 +383,15 @@ def _check_trust_flow(body: str) -> list[_findings.Finding]:
     if not requires_annot:
         return results
 
-    # ── propagate taint ───────────────────────────────────────────────────
-    tainted: set[str] = set()  # contract entries currently tainted
+    # ── propagate taint — artifact-version model ──────────────────────────
+    # tainted: set of contract-entry strings whose CURRENT version is tainted.
+    # An artifact's "version" is the last step that produced it. When a step
+    # declares `sanitized-input: X`, it clears the taint of the *current*
+    # version of X (the one visible at this step). If a later step produces
+    # X again (minting a new version), that fresh version is tainted unless
+    # the producing step itself sanitizes it.  This prevents upstream
+    # sanitized-input declarations from covering downstream re-writes.
+    tainted: set[str] = set()  # contract entries whose current version is tainted
     for step in steps:
         annot = step["untrusted-input"]
         is_taint_source = annot == "yes" or (
@@ -393,8 +401,16 @@ def _check_trust_flow(body: str) -> list[_findings.Finding]:
         action = step["action"] or ""
         sanitized_outputs = set(step["sanitizes"])
 
-        # Inputs flowing in that are tainted
-        incoming = [r for r in step["requires"] if r in tainted]
+        # sanitized-input: paths that the *operator* asserts have been cleaned
+        # before this step consumes them.  Clears current-version taint for
+        # those paths so the check below does not fire on them.
+        sanitized_input_paths = set(step["sanitized-input"])
+        # Apply sanitized-input: remove declared-clean paths from tainted set
+        # at this step's consumption boundary.
+        effective_tainted = tainted - sanitized_input_paths
+
+        # Inputs flowing in that are tainted (after sanitized-input cleared)
+        incoming = [r for r in step["requires"] if r in effective_tainted]
 
         # Sink detection
         if incoming or is_taint_source:
@@ -428,18 +444,31 @@ def _check_trust_flow(body: str) -> list[_findings.Finding]:
                         f"tainted input; no sanitization output declared."
                     ),
                     suggested_fix=(
-                        "Add a prior sanitize step OR list cleaned output "
+                        "Add a prior sanitize step OR declare `sanitized-input:` "
+                        "on the consuming step, OR list cleaned output "
                         "in this step's `sanitizes:`."
                     ),
                 ))
 
         # Update taint set: outputs are tainted if step is a source OR
         # tainted incoming; UNLESS the output is in sanitizes:.
+        # Each produces: entry mints a new artifact version — any prior
+        # sanitized-input declaration for this path does NOT carry over to
+        # the newly minted version (the fresh write resets the version clock).
         for prod in step["produces"]:
             if prod in sanitized_outputs:
+                # Explicitly sanitized output: clear from tainted set.
+                tainted.discard(prod)
                 continue
             if is_taint_source or incoming:
+                # New tainted version of this artifact.
                 tainted.add(prod)
+            # If a path was in sanitized_input_paths but is now re-produced
+            # (without sanitizes:), we must re-taint it only if this step
+            # is a taint source or has tainted incoming.  If neither is true,
+            # the produces: just refreshes a clean artifact — leave taint
+            # state unchanged (it stays out of `tainted` since it wasn't in
+            # effective_tainted).
 
     return results
 
