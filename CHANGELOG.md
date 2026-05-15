@@ -2,6 +2,52 @@
 
 All notable changes to the Spectre plugin.
 
+## v1.3.0 — 2026-05-16
+
+Minor release. Three coverage and prototype items addressing the gaps surfaced across two Vidence dogfood cycles plus a walker plumbing follow-up surfaced by the Wave 3 Opus aggregate review. No spec contract changes — v1.0/v1.1/v1.1.1/v1.2.0/v1.2.1 locked specs continue to validate.
+
+**Test count:** 1967 (v1.2.1) → 2003 (v1.3.0). +36 new tests, 0 regressions.
+
+### Added — exemplar catalog seeded for input-shape, output-shape, ipc-rpc (item 8, #86)
+
+- Six new exemplars under `docs/exemplars/`, two per view type:
+  - **input-shape:** `cli-argparse-shape.md` (POSIX §12 + GNU Coding Standards), `openapi-request-body.md` (OpenAPI 3.1 Request Body Object).
+  - **output-shape:** `json-rpc-response-2.0.md` (json-rpc.org 2.0 spec), `openapi-response-envelope.md` (OpenAPI 3.1 Response Object).
+  - **ipc-rpc:** `unix-socket-rpc.md` (POSIX bind(2), AF_UNIX SOCK_STREAM), `subprocess-rpc.md` (POSIX waitpid(2), stdin/stdout lifecycle).
+- Every convention in each exemplar traces to the cited `source-url`. No invented conventions.
+- Three new `axes.yml` files (input-shape, output-shape, ipc-rpc).
+- `bin/cross_view_gate.py::_VIEW_TO_CATALOG_TYPES` rerouted: §9 → `{input-shape}` (was placeholder `{help-text}`), §10 → `{output-shape}`, §12 → `{api-shape, ipc-rpc}`. Specs that previously deferred §9/§10 with the `no-compatible-exemplar` reason will now find compatible exemplars and tag deferrals as `operator-deferral` instead — the `excessive-post-ship-iteration` aggregate warn will fire for two-or-more deferrals as designed.
+- `bin/walker.py::_VIEW_TO_CATALOG_VIEW_TYPE` aligned: `product-input` → `input-shape`, `product-output` → `output-shape`. The walker's exemplar-suggestion path and the cross-view gate's validation path now query the same catalog. (Pre-fixup, the walker still recommended help-text exemplars for input-shape views.) The `input-exemplar-pi` concern prompt updated to reference `input-shape` instead of the v1.1 placeholder language.
+
+### Added — vocabulary partition fail-soft UX with block-severity firewall (item 9, #85)
+
+- `bin/substrate_wizard.py::_validate_view_trust_profile` contract changed from `raise WizardValidationError` to `return (profile, findings)`. Misplaced tokens (e.g. `untrusted-input` placed in §8.3 instead of §8.2) are **dropped from the returned profile** — the semantic firewall — and each emits one `block`-severity `trust-token-misplaced` finding whose `suggested_fix` names the correct destination view.
+- The lock still cannot complete while a misplaced-token finding exists; the partition's semantic guarantee holds. What changes is operator ergonomics: a structured, actionable finding replaces an opaque `ValueError`, the walker re-prompts inline with the right-section hint, and operators don't re-read docs to fix it.
+- New finding kind registered in `bin/findings.py::KNOWN_KINDS`. Glossary entry added to `docs/glossary.md`.
+- 7 new tests in `tests/test_substrate_wizard_partition_fail_soft.py` covering the tuple shape, the dropped-token invariant, the multi-token case, and the suggested-fix content.
+
+### Added — Layer 5 self-interrogation prototype (item 10, #87)
+
+- New module `bin/_layer5.py` containing `build_trace_record(...)` and `project_substitution_trace(...)` helpers. `SPECTRE_LAYER5=off` env var disables emission for token-cost A/B comparison.
+- `bin/walker.py` emits machine-parseable reasoning-trace records at two commit sites: walker concern-resolution (`record_answer`) and exemplar-binding (within `record_answer` when the answered concern is one of the six known exemplar-binding IDs). Skip when `len(prefab_options) <= 1` (no real choice). New `WalkState.layer5_trace: list[dict]` field; `persist` and `load` round-trip it.
+- `bin/eval_metadata.py::write_sidecar` accepts an optional `layer5_trace` kwarg and writes it under a new top-level `layer5_trace: list[dict]` key. `bin/spec_evaluator.py` threads the walker's trace records through to the sidecar.
+- Six-field schema per record (plus timestamp): `choice_point`, `step_or_concern_id`, `options_considered`, `selected`, `rationale`, `validation_anchor`, `source_anchor`. Two glossary entries added (`term:layer5-trace`, `term:layer5-choice-point`).
+- 20 new tests across `tests/test_layer5_walker_trace.py`, `tests/test_layer5_substitution_trace.py`, `tests/test_layer5_exemplar_trace.py`.
+
+### Surface bumps
+
+- `.claude-plugin/marketplace.json` 1.2.1 → 1.3.0 (both `metadata.version` and `plugins[0].version`)
+- README test-count badge: 1967 → 2003
+- README version badge: 1.2.1 → 1.3.0
+- `findings.Finding` `KNOWN_KINDS` gains `trust-token-misplaced`
+- `substrate_wizard._validate_view_trust_profile` returns `(list[str], list[Finding])` instead of raising
+- `eval_metadata.write_sidecar` gains optional `layer5_trace: list[dict] | None` kwarg
+- `walker.WalkState` gains `layer5_trace: list[dict]` field
+
+### Known follow-ups
+
+- The Layer 5 prototype lacks an explicit `walker.persist → walker.load` roundtrip test for `WalkState.layer5_trace`. The four-site wiring is correct by inspection and 20 tests cover the emission paths, but a focused state-roundtrip test will land as a small follow-up (v1.3.1 or earlier).
+
 ## v1.2.1 — 2026-05-15
 
 Defect-pack hotfix. Seven fixes addressing Tier-1 regex false-positives, walker stop-signal inconsistency, post-ship-iteration false-positive on zero-exemplar views, missing substitution evidence in the eval sidecar, and missing operator-mode flag on lock state. No spec contract changes — v1.0/v1.1/v1.1.1/v1.2.0 locked specs remain valid.

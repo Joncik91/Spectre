@@ -940,10 +940,10 @@ _VIEW_SCOPE_CONCERN_IDS = {
 # error-text), this map lists them in priority order; each concern that needs
 # exemplar options passes the specific view-type it's filtering against.
 _VIEW_TO_CATALOG_VIEW_TYPE: dict[str, str] = {
-    "product-input": "help-text",    # placeholder; input-shape lands in v1.1
-    "product-output": "help-text",   # placeholder; output-shape lands in v1.1
+    "product-input": "input-shape",
+    "product-output": "output-shape",
     "human-user": "help-text",       # error-text handled separately per concern
-    "integrator": "api-shape",
+    "integrator": "api-shape",       # ipc-rpc handled by cross_view_gate too
     "operator": "log-format",        # observability handled separately per concern
 }
 
@@ -1040,12 +1040,12 @@ def generate_product_input_concerns(
         ))
     if _view_in_scope(state, "product-input"):
         pi_fingerprint = state.answered.get("scope-product-input")
-        pi_options, _ = _exemplar_options_for(pi_fingerprint, "help-text")
+        pi_options, _ = _exemplar_options_for(pi_fingerprint, "input-shape")
         for cid, summary, opts in (
             ("input-source-pi", "Input source — stdin, file path, network protocol, env var? Name the wire format.", []),
             ("input-schema-pi", "Input validation schema — JSON Schema URL or inline, or 'none' if input is opaque bytes. Include the strictness level (strict | lenient | tolerant).", []),
             ("input-retry-pi", "Retry budget — how many retries on malformed input before the product rejects? '0' (fail fast) | '<int>' | 'unlimited'.", []),
-            ("input-exemplar-pi", "Exemplar binding — pick a catalog entry whose input-handling conventions match your product (run `spectre exemplars list --view-type help-text` for now; an input-shape view will surface in v1.1) or 'none' to skip exemplar-binding for this view.", pi_options),
+            ("input-exemplar-pi", "Exemplar binding — pick a catalog entry whose input-handling conventions match your product (run `spectre exemplars list --view-type input-shape`) or 'none' to skip exemplar-binding for this view.", pi_options),
         ):
             if cid not in existing:
                 new.append(Concern(
