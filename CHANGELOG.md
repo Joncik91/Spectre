@@ -2,6 +2,96 @@
 
 All notable changes to the Spectre plugin.
 
+## v1.2.0 — 2026-05-15
+
+Coverage + diagnostics minor release. 13 fixes across five classes surfaced by Vidence's v1.1 dogfooding. No spec contract changes — locked specs from v1.0/v1.1/v1.1.1 remain valid. v1.2 evaluator may surface additional `warn`/`info` findings on existing specs where new checks now apply.
+
+**Test count:** 1842 (v1.1.1) → 1923 (v1.2.0). +81 new tests, 0 regressions.
+
+### Added — `sanitized-input:` step field with per-artifact-version taint tracking (Fix L, #80)
+
+- Operators can now declare `sanitized-input: [path, ...]` on a step to signal "this input was cleaned by an upstream sanitization step (or by this step's pre-processing)." `sanitizes:` retains its existing output-sanitization semantics.
+- The check is **per-artifact-version**, not per-path-string: each `produces:` of path X mints a new tainted version of X. A `sanitized-input: X` declaration suppresses the check only at that step's position in the dep graph. Downstream consumers that re-produce X re-mint a tainted version (operators must declare `sanitized-input:` again or risk the finding).
+- The `untrusted-flow-unguarded` Tier-1 check no longer requires ritualistic self-cleaning loops on every step with both `untrusted-input: yes` and `produces:`. Vidence-style "input was pre-sanitized by step 4" flows now work cleanly.
+- Three new glossary entries: `term:sanitized-input`, `term:taint`, `term:artifact-version`.
+- 9 new tests in `tests/test_spec_ast_taint.py` including the cross-step propagation edge case.
+
+### Added — gated Python-stack walker detection (Fix E, #78)
+
+- Walker `lifecycle_asked` and `prompt_design_asked` question families now fire on Python-stack patterns. Previously JS-stack-biased (chokidar, pm2, nodemon, express) — Vidence's Python product (watchdog, asyncio, anthropic SDK) triggered neither.
+- New strong tokens (match alone): `watchdog.observers`, `multiprocessing.Process`, `asyncio.run`, `apscheduler`, `systemd-run`, `crontab`, `openai.ChatCompletion`, `anthropic.Anthropic`.
+- New gated tokens (require co-occurring strong context within 80 chars to avoid false fires): `daemon` near `systemd|.service|pid|fork()`; `messages=[` / `system_prompt` near an LLM vendor keyword.
+- 15 new tests in `tests/test_walker_python_detection.py` covering positive matches AND negative cases (e.g. "daemon" in prose about UNIX history must NOT fire).
+
+### Added — `tier3.run-fingerprint` info status (Fix P, #82)
+
+- Tier-3 reviewer now emits a per-run fingerprint hash before the API call. Inputs hashed: `provider`, `model_id`, `temperature`, `top_p_or_seed`, `system_prompt_hash`, `exemplar_set_hash`, `spec_text_hash`, `judge_config_hash`.
+- Operators diff this hash across two runs of the same spec — identical hash + different verdict = provider instability; different hash = prompt or config drift.
+- Emitted via `_status.emit("info", ...)` so `SPECTRE_QUIET=1` suppresses it (consistent with v1.1 Fix 5).
+- Glossary entry: `tier3.run-fingerprint`.
+
+### Added — ADR auto-extractor recognizes §3/§5/§8.x patterns (Fix Q, #82)
+
+- `_extract_preview_adrs` previously scanned only for explicit `decision:` prefix lines. The v1.0 spec template doesn't use that prefix for §3 Algorithm Audit Delete entries, §5 Physics Guardrails bullets, or §8.x `assumptions-killed:` blocks — Vidence had zero ADRs auto-extracted despite multiple real decisions.
+- Three new extraction paths added; `<N more available>` truncation sentinel appended when candidate count exceeds 10. Primary canonical form (§2 `decision:` prefix) unchanged.
+- Pre-existing slug-truncation bug in `_DECISION_LINE_RE` (decisions captured only the first character) fixed in scope.
+
+### Added — walker round-count visibility (Fix D, #81)
+
+- `_status.emit("info", "walker.round", round=N, pending=K)` after each concern answer in `record_answer`. Operators see interview progress at the round granularity without exposing convergence decisions.
+- No threshold finding — round counts vary widely; operator interpretation only.
+- Glossary entry: `walker.round`.
+
+### Added — `tier3-negative-paths-thin-coverage` finding (Fix C, #81)
+
+- Emitted alongside any `negative-path-omission` finding whose step has fewer than 3 `negative-paths:` entries. Tier-3 warn, dismissable.
+- Co-occurrence semantics — no demotion is involved (`negative-path-omission` is info-severity).
+- Glossary entry: `tier3-negative-paths-thin-coverage`.
+
+### Added — `--project PATH` flag on spec_evaluator (Fix H, #79)
+
+- `bin/spec_evaluator.py evaluate --project PATH` accepts an explicit project root. Threaded through every downstream relative-path resolution (spec, config, bundle dir, output, exemplar overlay).
+- Invocation from any cwd now produces the same result as invocation from the project root. Fixes the v1.1 protocol-skill drift where the CLI silently ignored the flag.
+
+### Fixed — `excessive-post-ship-iteration` actually fires now (Fix O, #82)
+
+- Vidence's v1.1 spec used `exemplar: post-ship-iteration` (with `exemplar:` prefix) — the parser tried to catalog-lookup `post-ship-iteration` as a real exemplar slug, returned `not-found`, and emitted a `block`-severity `exemplar-not-found` finding instead of an `info`-severity `post-ship-iteration-deferral`. The aggregator therefore saw zero deferrals and never fired the warn.
+- Sentinel guard now routes both forms (`<aspect>-style: post-ship-iteration` and `exemplar: post-ship-iteration`) to the deferral path. Per-section deduplication prevents double-counting when both forms appear in one block.
+
+### Fixed — substrate wizard placeholders prompted instead of emitted literally (Fix I, #79)
+
+- `_format_view_block` and `_format_82_block` previously emitted `<one-line operator-visible message>` template stubs directly into the captured §8.2 block — the wizard didn't substitute or prompt.
+- Now: any `<...>` token in the template surfaces as a wizard question. The captured block contains zero placeholders.
+
+### Fixed — `calibrated-for` exemplar audit (Fix A, #77)
+
+- v1.1's conservative-default backfill listed `[cli-power-user, cli-novice]` on multiple exemplars that only actually serve power users. Narrowed:
+  - `help-text/gh`, `help-text/git`, `help-text/rustc`: `[cli-power-user]` (JSON pipe / man-page / nightly grouping all expert-facing).
+  - `error-text/git`, `error-text/postgres`: `[cli-power-user]` (terse, structured field labels).
+  - `api-shape/github-graphql`: dropped `webhook-subscriber` (GraphQL ≠ webhook protocol).
+- Vidence-shape (§11 bound to `help-text:gh`, §8.5 fingerprint `cli-novice`) now fires `view-fingerprint-contradicts-exemplar-binding` as the v1.1 check was designed to.
+
+### Fixed — `self-cycle-produces` finding wording (Fix M, #81)
+
+- Old: "consumes X which it also produces (self-cycle)" — confusing when the action only NAMED the path without consuming content.
+- New: "references X which it also declares in produces (possible self-cycle)" + a two-branch `suggested_fix` covering both the path-only-reference and the read-the-content cases.
+
+### Fixed — `state.answered` skill doc was wrong shape (Fix N, #79)
+
+- `skills/vision/SKILL.md` described `state.answered` as a list. The code uses `dict[str, str]`. Skill doc corrected with the `.values()` iteration pattern.
+
+### Fixed — step action precision concern (Fix B, #81)
+
+- Walker now flags vague action shapes via **structural patterns** (not bare tokens, to avoid false positives): `pip install` without a version pin, `python -m <pkg>` without subcommand args, bare model IDs inside an action that also calls an LLM-vendor SDK.
+
+### Removed — none
+
+### Surface bumps
+
+- Plugin: `1.1.1` → `1.2.0` (both `metadata.version` and `plugins[0].version`).
+- README test-count badge: `1842` → `1923`.
+- README version badge: `1.1.1` → `1.2.0`.
+
 ## v1.1.1 — 2026-05-15
 
 Hotfix release. Four protocol bugs surfaced by Vidence's first `/vision` cycle against the v1.1 evaluator. External installs hit Bugs G and J/K on real specs; bug F is a Claude Code harness message, documented here as expected behavior. Test count: 1822 → 1842 (+20).
