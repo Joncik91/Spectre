@@ -174,10 +174,10 @@ def _check_cross_view_references(
 # Multiple view-types are allowed because a §11 Human-User View may bind to
 # both help-text and error-text catalog entries.
 _VIEW_TO_CATALOG_TYPES: dict[str, set[str]] = {
-    "9": {"help-text"},                       # placeholder until v1.1 ships input-shape exemplars
-    "10": {"help-text"},                      # placeholder until v1.1 ships output-shape exemplars
+    "9": {"input-shape"},
+    "10": {"output-shape"},
     "11": {"help-text", "error-text"},
-    "12": {"api-shape"},
+    "12": {"api-shape", "ipc-rpc"},
     "13": {"log-format", "observability"},
 }
 

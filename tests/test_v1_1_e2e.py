@@ -221,16 +221,14 @@ def test_v1_1_acceptance_synthetic_spec(tmp_path: pathlib.Path) -> None:
     deferrals = [f for f in all_findings if f.kind == "post-ship-iteration-deferral"]
     assert len(deferrals) == 2
 
-    # v1.2.1 #5: §9 (help-text placeholder catalog) has no exemplar compatible
-    # with `human-typed` fingerprint → tagged `no-compatible-exemplar`.
-    # §12 (api-shape) has exemplars compatible with `api-consumer` →
-    # tagged `operator-deferral`. The aggregate warn counts only the
-    # operator-deferral subset, so with one operator-deferral the warn
-    # does NOT fire (≤ 1 threshold).
+    # v1.3 #8: §9 now maps to input-shape which has cli-argparse-shape (human-typed)
+    # and openapi-request-body (programmatic-trusted) — both compatible with the
+    # human-typed fingerprint in §8.3.  §12 (api-shape|ipc-rpc) has api-consumer
+    # compatible exemplars.  Both deferrals are operator-deferral (compatible
+    # exemplars exist; operator chose to defer).  Count=2 > 1 → excessive fires.
     by_reason = {d.reason for d in deferrals}
-    assert "no-compatible-exemplar" in by_reason
-    assert "operator-deferral" in by_reason
-    assert "excessive-post-ship-iteration" not in kinds
+    assert by_reason == {"operator-deferral"}
+    assert "excessive-post-ship-iteration" in kinds
 
     # Fix 3: behavioral why + structural-only verification on step 2
     assert "verification-too-shallow-for-claim" in kinds

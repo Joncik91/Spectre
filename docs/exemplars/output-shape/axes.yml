@@ -1,0 +1,11 @@
+taxonomy-version: 1
+axes:
+  envelope:
+    values: [http-status-body, json-rpc-2.0, json-lines, plain-text, structured-log, problem-details-rfc7807]
+    description: The outermost container that wraps every response. Http-status-body = HTTP status code plus a body; json-rpc-2.0 = the JSON-RPC 2.0 response object (jsonrpc, id, result|error); json-lines = one JSON object per newline; plain-text = unstructured UTF-8 stream; structured-log = keyed log records (logfmt, JSON); problem-details-rfc7807 = RFC 7807 problem object.
+  success-error-split:
+    values: [http-only, body-field, exclusive-union, status-plus-body]
+    description: How success and error outcomes are distinguished. Http-only = HTTP status code is the sole indicator; body-field = a field in the body carries success/error; exclusive-union = exactly one of result or error is present (JSON-RPC model); status-plus-body = HTTP status plus a structured error body.
+  schema-binding:
+    values: [openapi-3.1, jsonschema-draft7, none, vendor-spec]
+    description: Which schema vocabulary constrains the response object. Openapi-3.1 = OpenAPI 3.1 response object; jsonschema-draft7 = JSON Schema draft-07; none = no formal schema; vendor-spec = proprietary specification document.

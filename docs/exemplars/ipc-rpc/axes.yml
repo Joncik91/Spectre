@@ -1,0 +1,11 @@
+taxonomy-version: 1
+axes:
+  transport:
+    values: [unix-socket, tcp-socket, stdin-stdout, named-pipe, shared-memory]
+    description: The OS-level channel used for IPC. Unix-socket = AF_UNIX SOCK_STREAM or SOCK_SEQPACKET; tcp-socket = AF_INET/AF_INET6 loopback; stdin-stdout = file descriptors 0 and 1 of a child process; named-pipe = mkfifo or CreateNamedPipe; shared-memory = mmap or POSIX shm_open.
+  framing:
+    values: [newline-delimited, length-prefix, http-upgrade, none]
+    description: How message boundaries are marked on the stream. Newline-delimited = each JSON object terminated by \n (NDJSON); length-prefix = a fixed-width byte count preceding each payload; http-upgrade = HTTP/1.1 Upgrade handshake then a framing sub-protocol; none = single-message connection (open, write, read, close).
+  lifecycle:
+    values: [per-request, persistent-session, child-process-boundary]
+    description: How the connection lifetime relates to individual calls. Per-request = open a new connection for each call; persistent-session = one long-lived connection carries many calls; child-process-boundary = connection lifetime equals the child process lifetime (stdin closes = child exits).
