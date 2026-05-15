@@ -1192,11 +1192,11 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 
 ## tier3-negative-paths-thin-coverage
 - kind: finding
-- dev: Tier-3 demotion alongside-finding. Emitted when a negative-path-omission finding is demoted via the faithfulness check AND the affected step's negative-paths: count is fewer than 3. Signals that the step's failure-branch coverage is thin even after demotion. Tier-3 warn, dismissable.
-- pm: A step's failure-branch coverage is thin (fewer than 3 entries). The automated review flagged it, but couldn't verify it from the spec text alone. Consider adding more failure scenarios to the step's negative-paths section.
-- triggered_by: Tier-3 faithfulness demotion of a negative-path-omission finding when negative-paths count is less than 3.
+- dev: Emitted alongside any `negative-path-omission` finding whose step has fewer than 3 `negative-paths:` entries. No demotion is involved — `negative-path-omission` is info-severity and never enters the faithfulness demotion path. The pairing signals "the LLM judge flagged a missing failure branch AND the step's structural coverage is thin." Tier-3 warn, dismissable.
+- pm: A step's failure-branch coverage is thin (fewer than 3 entries) and the automated review flagged a missing failure scenario. Consider adding more failure scenarios to the step's negative-paths section.
+- triggered_by: Co-occurrence of a `negative-path-omission` finding (LLM-judge output) and `< 3` negative-paths entries on the affected step.
 - user_action: Add more negative-paths entries to the flagged step (at least 3 entries covering different failure modes), or dismiss if the step genuinely has only one or two realistic failure branches.
-- related: negative-path-omission, tier3-unfaithful-contradiction
+- related: negative-path-omission
 - since: v1.2
 
 ## walker.round
