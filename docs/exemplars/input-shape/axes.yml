@@ -1,0 +1,11 @@
+taxonomy-version: 1
+axes:
+  arg-style:
+    values: [posix-flags, gnu-long-flags, subcommand-verb, positional-only, json-body, query-string]
+    description: How inputs are structurally presented to the program. Posix-flags = short-form (-x); gnu-long-flags = long-form (--flag, --flag=value); subcommand-verb = first positional arg is an operation name; positional-only = unnamed positional args; json-body = structured JSON payload in HTTP request body; query-string = URL-encoded key=value pairs in the query component.
+  optionality:
+    values: [all-required, all-optional, mixed, schema-validated]
+    description: Whether inputs are required or optional. All-required = every declared input must be supplied; all-optional = all inputs have defaults; mixed = some required some optional; schema-validated = a schema object (JSON Schema or OpenAPI) declares required/optional per-field.
+  separator-support:
+    values: [none, double-dash, content-type-boundary, newline-delimited]
+    description: How the input boundary between option parsing and positional data is signaled. None = no explicit separator; double-dash = POSIX -- convention ends option scanning; content-type-boundary = MIME multipart boundary header; newline-delimited = each record is a newline-terminated JSON line.
