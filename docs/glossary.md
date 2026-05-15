@@ -582,6 +582,15 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - related: tier.evaluate, term:tier-3, term:exemplar
 - since: v1.1.0
 
+## tier3.run-fingerprint
+- kind: status
+- dev: SHA-256 fingerprint of all Tier-3 run inputs — provider, model_id, temperature, top_p, seed_if_set, system_prompt_hash (sha256 of substituted prompt), exemplar_set_hash (sha256 of sorted bound exemplar slugs), spec_text_hash (sha256 of locked spec body), judge_config_hash (sha256 of model+base_url+budget+timeouts). Emitted once per evaluate() call before the API request. hash= is a 16-char prefix for readability; hash_full= is the canonical 64-char digest to diff across runs. Suppressed by SPECTRE_QUIET=1. Diff hash_full across runs: identical hash → same inputs → non-determinism is provider instability; different hash → input drift (prompt/spec/config changed).
+- pm: A fingerprint of the AI reviewer's inputs was recorded so you can tell if different AI responses came from a changed spec or from the AI itself behaving inconsistently.
+- triggered_by: `llm_judge.evaluate()` before the Tier-3 API call, after budget check passes.
+- user_action: None — informational only. Compare hash_full across runs to diagnose non-determinism.
+- related: tier3.budget, tier.evaluate, term:tier-3
+- since: v1.2.0
+
 ## track.acquire
 - kind: status
 - dev: Resource lock acquired from the supervisor daemon for the given resource= ID.

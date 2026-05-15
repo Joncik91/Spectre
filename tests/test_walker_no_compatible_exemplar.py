@@ -188,6 +188,54 @@ def test_two_deferrals_emits_excessive_warn(tmp_path, monkeypatch):
     deferral = [f for f in findings if f.kind == "post-ship-iteration-deferral"]
     excessive = [f for f in findings if f.kind == "excessive-post-ship-iteration"]
     assert len(deferral) == 2
+    assert all(f.severity == "info" for f in deferral), "deferral findings must be info severity"
+    assert all(f.tier == 2 for f in deferral), "deferral findings must be Tier 2"
     assert len(excessive) == 1
     assert excessive[0].severity == "warn"
     assert excessive[0].tier == 2
+
+
+# ---------------------------------------------------------------------------
+# Test 5: prefixed sentinel form (exemplar:post-ship-iteration) — the bug fix
+# ---------------------------------------------------------------------------
+
+def test_prefixed_sentinel_emits_deferral_not_exemplar_not_found(tmp_path, monkeypatch):
+    """Spec where the operator writes `exemplar:post-ship-iteration` (with the
+    `exemplar:` prefix) instead of the bare sentinel form must emit
+    post-ship-iteration-deferral (info), NOT exemplar-not-found (block).
+
+    This is the v1.2 Fix O root cause: the prefixed form was mis-firing as a
+    missing-catalog error because _check_exemplar_bindings didn't guard against
+    the `post-ship-iteration` raw_ref before the catalog lookup.
+    """
+    monkeypatch.setattr(_catalog, "_LOAD_CACHE", None)
+
+    spec = _write_spec(
+        tmp_path,
+        extra_substrate=(
+            "### 8.5 Human-user substrate\n"
+            "- receiver-fingerprint: gui-only\n\n"
+            "### 8.7 Operator substrate\n"
+            "- receiver-fingerprint: on-call-engineer\n\n"
+        ),
+        view_sections=(
+            "## 11. Human-User View\n\n"
+            "### Exemplar bindings\n"
+            "- help-text-style: exemplar:post-ship-iteration\n"
+            "- taxonomy-version: help-text:1\n\n"
+            "## 13. Operator View\n\n"
+            "### Exemplar bindings\n"
+            "- log-format-style: exemplar:post-ship-iteration\n"
+            "- taxonomy-version: log-format:1\n"
+        ),
+    )
+    findings = cross_view_gate.classify(spec)
+    deferral = [f for f in findings if f.kind == "post-ship-iteration-deferral"]
+    not_found = [f for f in findings if f.kind == "exemplar-not-found"]
+    excessive = [f for f in findings if f.kind == "excessive-post-ship-iteration"]
+    assert len(not_found) == 0, f"prefixed sentinel must NOT emit exemplar-not-found, got: {not_found}"
+    assert len(deferral) == 2, f"expected 2 deferral findings, got {len(deferral)}"
+    assert all(f.severity == "info" for f in deferral)
+    assert all(f.tier == 2 for f in deferral)
+    assert len(excessive) == 1, "two deferrals must trigger excessive-post-ship-iteration warn"
+    assert excessive[0].severity == "warn"

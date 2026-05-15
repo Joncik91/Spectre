@@ -182,6 +182,26 @@ _VIEW_TO_CATALOG_TYPES: dict[str, set[str]] = {
 }
 
 
+def _emit_deferral_finding(section: str) -> "_findings.Finding":
+    """Return a post-ship-iteration-deferral info finding for the given view section."""
+    return _findings.Finding(
+        tier=2,
+        kind="post-ship-iteration-deferral",
+        severity="info",
+        location=_findings.FindingLocation(
+            scope="spec-wide", ref=f"section-{section}"
+        ),
+        message=(
+            f"§{section} deferred exemplar selection to post-ship iteration — "
+            f"no catalog exemplar matched the view's receiver-fingerprint."
+        ),
+        suggested_fix=(
+            f"Add a compatible exemplar to ~/.spectre/exemplars/ or the plugin catalog, "
+            f"then re-run the walker to bind §{section}."
+        ),
+    )
+
+
 def _check_exemplar_bindings(
     view_blocks: dict[str, str],
 ) -> list[_findings.Finding]:
@@ -199,31 +219,33 @@ def _check_exemplar_bindings(
             except ValueError:
                 continue
             spec_taxonomies[view_type] = version
-        # Check for post-ship-iteration sentinel.  The sentinel is written as
-        # `<aspect>-style: post-ship-iteration` (no `exemplar:` prefix) so it
-        # doesn't match _EXEMPLAR_REF_RE — detect it with its own regex.
-        for _m in _POST_SHIP_RE.finditer(block):
-            results.append(_findings.Finding(
-                tier=2,
-                kind="post-ship-iteration-deferral",
-                severity="info",
-                location=_findings.FindingLocation(
-                    scope="spec-wide", ref=f"section-{section}"
-                ),
-                message=(
-                    f"§{section} deferred exemplar selection to post-ship iteration — "
-                    f"no catalog exemplar matched the view's receiver-fingerprint."
-                ),
-                suggested_fix=(
-                    f"Add a compatible exemplar to ~/.spectre/exemplars/ or the plugin catalog, "
-                    f"then re-run the walker to bind §{section}."
-                ),
-            ))
+        # Track which sections have emitted a deferral finding to prevent
+        # double-counting when both sentinel forms (`<aspect>-style: post-ship-iteration`
+        # and `exemplar:post-ship-iteration`) appear in the same view block.
+        _section_deferred = False
+        # Check for post-ship-iteration sentinel (plain form: `<aspect>-style: post-ship-iteration`).
+        # The sentinel is written without the `exemplar:` prefix so it doesn't match
+        # _EXEMPLAR_REF_RE — detect it with its own regex.  Emit at most one deferral
+        # finding per section even if multiple style-keys are deferred.
+        if _POST_SHIP_RE.search(block):
+            results.append(_emit_deferral_finding(section))
+            _section_deferred = True
         # Find exemplar bindings
         for m in _EXEMPLAR_REF_RE.finditer(block):
             raw_ref = m.group(1).strip()
             # Skip template angle-bracket placeholders
             if raw_ref.startswith("<") or raw_ref in ("slug", "name"):
+                continue
+            # post-ship-iteration written with the exemplar: prefix
+            # (e.g. `exemplar:post-ship-iteration`) is a valid sentinel form —
+            # emit deferral info, not exemplar-not-found block.  The plain-sentinel
+            # path (`<aspect>-style: post-ship-iteration`) is caught by _POST_SHIP_RE
+            # above; this guard prevents the prefixed form from mis-firing as a
+            # missing-catalog error.  Skip if the section already emitted a deferral.
+            if raw_ref == "post-ship-iteration":
+                if not _section_deferred:
+                    results.append(_emit_deferral_finding(section))
+                    _section_deferred = True
                 continue
             status, matches = _catalog.lookup_status(raw_ref)
             if status == "not-found":
