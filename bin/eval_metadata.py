@@ -241,6 +241,7 @@ def write_sidecar(
     substrate_resolution: dict | None = None,
     findings_inline: list[dict] | None = None,
     substitutions: list[dict] | None = None,
+    layer5_trace: list[dict] | None = None,
 ) -> pathlib.Path:
     """Atomic write of <spec>.eval.json next to the spec file.
 
@@ -275,6 +276,12 @@ def write_sidecar(
     "tier1_check_name": <kind>, "step_id": <step-N>}`` recording an agent's
     rewrite of action content or verification commands to satisfy a Tier-1
     check. Not a finding — contemporaneous evidence the operator can audit.
+
+    *layer5_trace* — v1.3 #10 reasoning-trace records. When non-None, written
+    verbatim under the ``layer5_trace`` key. Each entry is a six-field dict
+    (choice_point, step_or_concern_id, options_considered, selected, rationale,
+    validation_anchor, source_anchor, timestamp). Projected from walker state
+    or from substitution dicts that carry the extended schema.
     """
     spec_path = pathlib.Path(spec_path)
     sidecar_path = sidecar_path_for(spec_path)
@@ -322,6 +329,13 @@ def write_sidecar(
     # to satisfy a Tier-1 check. Evidence, not a finding.
     if substitutions is not None:
         payload["substitutions"] = substitutions
+
+    # v1.3 #10: Layer 5 reasoning-trace records. Each entry is a six-field
+    # dict (choice_point, step_or_concern_id, options_considered, selected,
+    # rationale, validation_anchor, source_anchor, timestamp). Projected
+    # from walker state or from substitution dicts with extended schema.
+    if layer5_trace is not None:
+        payload["layer5_trace"] = layer5_trace
 
     # Atomic write: mkstemp + os.replace
     fd, tmp = tempfile.mkstemp(
@@ -506,6 +520,7 @@ if __name__ == "__main__":
                 substrate_resolution=payload.get("substrate_resolution"),
                 findings_inline=payload.get("findings_inline"),
                 substitutions=payload.get("substitutions"),
+                layer5_trace=payload.get("layer5_trace"),
             )
         except KeyError as exc:
             _status.emit("error", "eval_metadata.sidecar_missing_field", dest="stderr",

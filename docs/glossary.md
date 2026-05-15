@@ -1243,3 +1243,17 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - user_action: No action required. Monitor round and pending counts to gauge walk progress. Operator interpretation only — walker.round does not imply any threshold or convergence signal.
 - related: walker.yield, walker.coverage
 - since: v1.2
+
+## term:layer5-trace
+- kind: term
+- dev: A Layer 5 reasoning-trace record emitted at a named choice point (walker-concern, substitution, or exemplar-binding). Six fields: choice_point, step_or_concern_id, options_considered, selected, rationale, validation_anchor, source_anchor, plus timestamp. Written to the `.eval.json` sidecar under `layer5_trace: [...]`. Skipped when SPECTRE_LAYER5=off or when options_considered has <=1 entry (no real choice).
+- pm: A logged record of why the system made a specific choice at a key decision point. This audit trail lets reviewers verify the reasoning behind each significant design or binding selection.
+- related: term:layer5-choice-point, eval.substitutions
+- since: v1.3
+
+## term:layer5-choice-point
+- kind: term
+- dev: One of three named decision sites where Layer 5 reasoning-trace records are emitted. (1) walker-concern — operator selects from prefab options when answering a walker concern. (2) substitution — agent rewrites action or verification content to satisfy a Tier-1 check. (3) exemplar-binding — operator selects a catalog exemplar for a view. Traces are emitted only when a real choice exists (options_considered > 1).
+- pm: The three types of decisions the system records reasoning traces for: answering a walker question, rewriting content to pass a check, or picking a catalog example to follow.
+- related: term:layer5-trace
+- since: v1.3

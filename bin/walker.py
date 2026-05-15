@@ -26,6 +26,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from bin import _catalog  # noqa: E402
+from bin import _layer5  # noqa: E402
 
 WALKER_VERSION = "1.0.0"
 
@@ -94,6 +95,8 @@ class WalkState:
     human_user_asked: bool = False
     integrator_asked: bool = False
     operator_asked: bool = False
+    # v1.3 #10 — Layer 5 reasoning-trace records accumulated during this walk.
+    layer5_trace: list[dict] = field(default_factory=list)
 
 
 _OQ_INLINE_RE = re.compile(
@@ -312,6 +315,32 @@ def record_answer(state: WalkState, *, concern_id: str, answer: str) -> WalkStat
     for i, c in enumerate(state.pending):
         if c.id == concern_id:
             state.asked.append(c)
+            # v1.3 #10 — emit layer5 trace when a real choice exists.
+            # Skip when prefab_options has 0 or 1 entry (no meaningful choice).
+            if len(c.prefab_options) > 1:
+                _is_exemplar = concern_id in _EXEMPLAR_BINDING_CONCERN_IDS
+                _choice_point = "exemplar-binding" if _is_exemplar else "walker-concern"
+                _rationale = (
+                    f"Operator bound exemplar '{answer}' for view concern '{concern_id}' "
+                    f"from {len(c.prefab_options)} catalog options."
+                    if _is_exemplar else
+                    f"Operator selected '{answer}' for concern '{concern_id}' "
+                    f"({c.summary[:80]}…) after considering "
+                    f"{len(c.prefab_options)} prefab options."
+                )
+                _trace = _layer5.build_trace_record(
+                    choice_point=_choice_point,
+                    step_or_concern_id=concern_id,
+                    options_considered=list(c.prefab_options),
+                    selected=answer,
+                    rationale=_rationale,
+                    validation_anchor=(
+                        "tier2-cross-view-gate" if _is_exemplar else "tier1-structural"
+                    ),
+                    source_anchor=None,
+                )
+                if _trace is not None:
+                    state.layer5_trace.append(_trace)
             state.answered[concern_id] = answer
             del state.pending[i]
             state.round_count += 1
@@ -507,6 +536,8 @@ def persist(state: WalkState, path: pathlib.Path) -> None:
         "human_user_asked": state.human_user_asked,
         "integrator_asked": state.integrator_asked,
         "operator_asked": state.operator_asked,
+        # v1.3 #10 — layer5 reasoning-trace records
+        "layer5_trace": list(state.layer5_trace),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name, suffix=".tmp")
@@ -569,6 +600,8 @@ def load(path: pathlib.Path) -> WalkState | None:
         human_user_asked=data.get("human_user_asked", False),
         integrator_asked=data.get("integrator_asked", False),
         operator_asked=data.get("operator_asked", False),
+        # v1.3 #10 — layer5 trace (defaults to empty list for backwards compat)
+        layer5_trace=list(data.get("layer5_trace", [])),
     )
 
 
@@ -917,6 +950,18 @@ _VIEW_TO_CATALOG_VIEW_TYPE: dict[str, str] = {
 # Map from the scope-check concern ID to the view name (inverse of
 # _VIEW_SCOPE_CONCERN_IDS, kept alongside for co-location).
 _SCOPE_CONCERN_TO_VIEW: dict[str, str] = {v: k for k, v in _VIEW_SCOPE_CONCERN_IDS.items()}
+
+# v1.3 #10 — Concern IDs that represent exemplar-binding choices (catalog slug
+# selection). When one of these is answered via record_answer, a layer5 trace
+# with choice_point="exemplar-binding" is emitted instead of "walker-concern".
+_EXEMPLAR_BINDING_CONCERN_IDS: frozenset[str] = frozenset({
+    "input-exemplar-pi",
+    "help-text-style-hu",
+    "error-text-style-hu",
+    "api-exemplar-int",
+    "log-format-style-op",
+    "observability-style-op",
+})
 
 
 def _exemplar_options_for(
@@ -2416,6 +2461,8 @@ if __name__ == "__main__":
                 "human_user_asked": state.human_user_asked,
                 "integrator_asked": state.integrator_asked,
                 "operator_asked": state.operator_asked,
+                # v1.3 #10 — layer5 reasoning-trace records
+                "layer5_trace": list(state.layer5_trace),
             }
             print(json.dumps(payload, indent=2, sort_keys=True))
         else:
@@ -2591,6 +2638,8 @@ if __name__ == "__main__":
                 "human_user_asked": state.human_user_asked,
                 "integrator_asked": state.integrator_asked,
                 "operator_asked": state.operator_asked,
+                # v1.3 #10 — layer5 reasoning-trace records
+                "layer5_trace": list(state.layer5_trace),
             }
             print(json.dumps(payload, indent=2, sort_keys=True))
         else:
