@@ -41,7 +41,7 @@ _SUBSTRATE_TMPL = (
     "- receiver-fingerprint: {fingerprint}\n\n"
 )
 
-# §11 Human-User View binding to help-text:gh (calibrated-for: cli-power-user, cli-novice).
+# §11 Human-User View binding to help-text:gh (calibrated-for: cli-power-user).
 _HUMAN_USER_VIEW_WITH_GH = (
     "## 11. Human-User View\n\n"
     "- help-text-style: exemplar:help-text:gh\n"
@@ -180,3 +180,37 @@ def test_catalog_load_rejects_unknown_fingerprint(tmp_path):
     )
     with pytest.raises(CatalogError, match="not-a-real-fingerprint"):
         _catalog._parse_exemplar_file(bad_exemplar, "plugin")
+
+
+# ---------------------------------------------------------------------------
+# Test 5 & 6: v1.2 regression — help-text:gh now cli-power-user only
+# ---------------------------------------------------------------------------
+
+def test_gh_help_text_fires_finding_for_novice_fingerprint(tmp_path, monkeypatch):
+    """§8.5 cli-novice + §11 bound to help-text:gh →
+    view-fingerprint-contradicts-exemplar-binding fires (gh is power-user only
+    after the v1.2 calibrated-for audit)."""
+    monkeypatch.setattr(_catalog, "_LOAD_CACHE", None)
+    findings = cross_view_gate.classify(_write_spec(tmp_path, "cli-novice"))
+    fp_findings = [
+        f for f in findings
+        if f.kind == "view-fingerprint-contradicts-exemplar-binding"
+    ]
+    assert len(fp_findings) == 1, (
+        "expected exactly one view-fingerprint-contradicts-exemplar-binding "
+        f"finding; got {len(fp_findings)}"
+    )
+    assert fp_findings[0].severity == "warn"
+
+
+def test_gh_help_text_does_not_fire_for_power_user_fingerprint(tmp_path, monkeypatch):
+    """§8.5 cli-power-user + §11 bound to help-text:gh →
+    no view-fingerprint-contradicts-exemplar-binding (gh IS calibrated for
+    power users; this is the happy path that must stay green)."""
+    monkeypatch.setattr(_catalog, "_LOAD_CACHE", None)
+    findings = cross_view_gate.classify(_write_spec(tmp_path, "cli-power-user"))
+    fp_findings = [
+        f for f in findings
+        if f.kind == "view-fingerprint-contradicts-exemplar-binding"
+    ]
+    assert len(fp_findings) == 0

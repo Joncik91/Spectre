@@ -10,7 +10,7 @@ conventions:
   - "Deprecated flags or aliases are documented with an explicit deprecation notice in their OPTIONS entry; they are not silently omitted"
   - "The SEE ALSO section at the end of each man page lists related git subcommands by name (e.g., `gitrevisions(7)`, `git-rebase(1)`)"
 axes: {verbosity: balanced, structure: subcommand-tree, example-density: separate-section}
-calibrated-for: [cli-power-user, cli-novice]
+calibrated-for: [cli-power-user]
 taxonomy-version: 1
 source-url: https://git-scm.com/docs/git-help
 last-reviewed: 2026-05-13

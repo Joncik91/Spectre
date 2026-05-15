@@ -11,7 +11,7 @@ conventions:
   - "Pagination uses cursor-based connections: list fields expose `edges[].cursor`, `pageInfo.hasNextPage`, `pageInfo.hasPreviousPage`, `pageInfo.startCursor`, and `pageInfo.endCursor`; offset pagination is not available"
   - "Rate limiting is communicated via a `rateLimit` query field (`limit`, `cost`, `remaining`, `resetAt`) and `X-RateLimit-*` response headers; callers must check both to avoid silent quota exhaustion"
 axes: {style: graphql, error-model: status-plus-body, versioning: breaking-only-on-major}
-calibrated-for: [library-consumer, api-consumer, webhook-subscriber, sdk-author]
+calibrated-for: [library-consumer, api-consumer, sdk-author]
 taxonomy-version: 1
 source-url: https://docs.github.com/en/graphql
 last-reviewed: 2026-05-13
