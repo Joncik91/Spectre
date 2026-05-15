@@ -640,6 +640,15 @@ if __name__ == "__main__":
         "evaluate",
         help="Run the full evaluator over a spec file. Writes JSON result to stdout.",
     )
+    p_eval.add_argument(
+        "--project",
+        default=None,
+        help=(
+            "Project root directory. When given, all relative paths (--spec, "
+            "--config, --bundle-dir, --output) are resolved relative to this "
+            "root instead of the process cwd. Absolute paths are unaffected."
+        ),
+    )
     p_eval.add_argument("--spec", required=True, help="Path to the spec file (draft or locked).")
     p_eval.add_argument("--config", default=None, help="Path to reviewer TOML config.")
     p_eval.add_argument("--bundle-dir", default=None, help="Bundle persist directory (default: state/ next to spec).")
@@ -666,9 +675,26 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.cmd == "evaluate":
-        spec_path = pathlib.Path(args.spec)
-        config_path = pathlib.Path(args.config) if args.config else None
-        bundle_dir = pathlib.Path(args.bundle_dir) if args.bundle_dir else None
+        # ── Project-root re-rooting (Fix H) ───────────────────────────────────
+        # When --project is given, relative paths are resolved against that root
+        # rather than the process cwd.  Absolute paths pass through unchanged.
+        # This lets the caller invoke the evaluator from /tmp (or any cwd) and
+        # still target a spec tree rooted elsewhere.
+        if args.project is not None:
+            project_root = pathlib.Path(args.project).resolve()
+        else:
+            project_root = pathlib.Path.cwd()
+
+        def _resolve(p: str) -> pathlib.Path:
+            """Resolve path string against project_root (abs paths unchanged)."""
+            raw = pathlib.Path(p)
+            if raw.is_absolute():
+                return raw
+            return (project_root / raw).resolve()
+
+        spec_path = _resolve(args.spec)
+        config_path = _resolve(args.config) if args.config else None
+        bundle_dir = _resolve(args.bundle_dir) if args.bundle_dir else None
         try:
             result = evaluate(spec_path, config_path=config_path, bundle_persist_dir=bundle_dir)
         except Exception as exc:  # noqa: BLE001
@@ -698,7 +724,8 @@ if __name__ == "__main__":
         }
         output_text = json.dumps(out_data, indent=2)
         if args.output:
-            pathlib.Path(args.output).write_text(output_text, encoding="utf-8")
+            output_path = _resolve(args.output)
+            output_path.write_text(output_text, encoding="utf-8")
         else:
             print(output_text)
 

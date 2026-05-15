@@ -7,6 +7,7 @@ Pragma guard: one assertion per test; no _rejects_/_raises_ without
 pytest.raises; no mocked exit.
 """
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -151,3 +152,82 @@ class TestClearBundleCli:
         bundle.write_text("{}", encoding="utf-8")
         r = _run("clear-bundle", "--bundle", str(bundle))
         assert r.stderr == ""
+
+
+# ── Fix H: --project flag ─────────────────────────────────────────────────────
+
+class TestProjectFlag:
+    """Fix H: --project PATH re-roots all relative path resolution."""
+
+    def test_project_flag_accepted_by_evaluate(self):
+        """--project flag is recognised (no argparse error)."""
+        r = _run(
+            "evaluate",
+            "--project", str(FIXTURES),
+            "--spec", "non-existent.spec.md",
+            "--bundle-dir", "/tmp",
+        )
+        # Exit 1 (spec missing) is fine — 2 would mean argparse rejected the flag.
+        assert r.returncode != 2
+
+    def test_project_flag_resolves_spec_relative_to_project(self, tmp_path):
+        """Invoked from /tmp with --project <fixtures dir>; evaluator finds the spec."""
+        bundle_dir = tmp_path / "bundle"
+        bundle_dir.mkdir()
+        env = {**os.environ, "PYTHONPATH": str(_REPO)}
+        r = subprocess.run(
+            _CMD + [
+                "evaluate",
+                "--project", str(FIXTURES),
+                "--spec", "good_minimal.spec.md",
+                "--bundle-dir", str(bundle_dir),
+            ],
+            capture_output=True,
+            text=True,
+            cwd="/tmp",  # intentionally different from fixtures dir
+            env=env,
+        )
+        assert r.returncode == 0
+
+    def test_project_flag_result_matches_cwd_invocation(self, tmp_path):
+        """evaluate --project <fixtures> from /tmp equals evaluate from <fixtures>."""
+        bundle_a = tmp_path / "a"
+        bundle_b = tmp_path / "b"
+        bundle_a.mkdir(); bundle_b.mkdir()
+
+        r_cwd = _run(
+            "evaluate",
+            "--spec", str(GOOD_MINIMAL),
+            "--bundle-dir", str(bundle_a),
+        )
+        env = {**os.environ, "PYTHONPATH": str(_REPO)}
+        r_proj = subprocess.run(
+            _CMD + [
+                "evaluate",
+                "--project", str(FIXTURES),
+                "--spec", "good_minimal.spec.md",
+                "--bundle-dir", str(bundle_b),
+            ],
+            capture_output=True, text=True, cwd="/tmp", env=env,
+        )
+        assert r_cwd.returncode == 0
+        assert r_proj.returncode == 0
+        data_cwd = json.loads(r_cwd.stdout)
+        data_proj = json.loads(r_proj.stdout)
+        assert data_cwd["max_severity"] == data_proj["max_severity"]
+
+    def test_absolute_spec_path_unaffected_by_project_flag(self, tmp_path):
+        """Absolute --spec ignores --project (absolute paths pass through)."""
+        bundle_dir = tmp_path / "bundle"
+        bundle_dir.mkdir()
+        env = {**os.environ, "PYTHONPATH": str(_REPO)}
+        r = subprocess.run(
+            _CMD + [
+                "evaluate",
+                "--project", "/nonexistent/root",
+                "--spec", str(GOOD_MINIMAL),  # absolute path
+                "--bundle-dir", str(bundle_dir),
+            ],
+            capture_output=True, text=True, cwd="/tmp", env=env,
+        )
+        assert r.returncode == 0

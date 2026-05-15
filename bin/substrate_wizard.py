@@ -31,8 +31,42 @@ SUBSTRATE_WIZARD_VERSION = "0.7"
 
 _82_BLOCK_RE = re.compile(r"\n\n?###\s+8\.2\b.*?(?=\n##\s|\n\Z|\Z)", re.DOTALL)
 
+# Matches any <...> template placeholder token embedded in a rendered block.
+# Used by _substitute_placeholders to detect unfilled stubs.
+_PLACEHOLDER_RE = re.compile(r"<([^<>\n]+)>")
+
 # Must match hashlib.sha256().hexdigest() output — 64 lowercase hex chars.
 _AUTHOR_SPEC_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _substitute_placeholders(block: str, prompt_fn) -> str:
+    """Replace every ``<...>`` stub in *block* by asking *prompt_fn* once per
+    unique placeholder label.
+
+    Rules:
+    - Each distinct label (the text inside ``<...>``) is asked exactly once,
+      even if it appears multiple times in the block.
+    - Empty answers are not accepted; the prompt repeats until non-empty input
+      is given (or EOFError propagates to the caller).
+    - The returned block contains zero ``<...>`` tokens.
+
+    This is called by :func:`run` and :func:`run_per_view` after the block
+    is rendered, so no changes to the rendering helpers are required.
+    """
+    labels_seen: dict[str, str] = {}  # label → substituted answer
+
+    def _substitute_one(m: re.Match) -> str:
+        label = m.group(1)
+        if label in labels_seen:
+            return labels_seen[label]
+        while True:
+            answer = prompt_fn(f"{label}: ").strip()
+            if answer:
+                break
+        labels_seen[label] = answer
+        return answer
+
+    return _PLACEHOLDER_RE.sub(_substitute_one, block)
 
 
 def cache_dir_default() -> pathlib.Path:
@@ -476,6 +510,7 @@ def run_per_view(
     trust_profile: str = "none",
     binding: str = "",
     not_applicable_reason: str = "",
+    prompt_fn=None,
 ) -> str:
     """Render one §8.x block from validated flag values.
 
@@ -487,6 +522,11 @@ def run_per_view(
 
     `receiver` must be 'not-applicable' OR a value from the view's
     vocabulary in _VIEW_FINGERPRINTS.
+
+    When *prompt_fn* is provided, any ``<...>`` placeholder tokens that
+    remain in the rendered block are resolved interactively before the
+    block is returned.  Without *prompt_fn* the placeholders are left
+    as-is (backward-compatible with non-interactive callers).
     """
     cleaned_receiver = _validate_view_receiver(view, receiver)
     if cleaned_receiver == "not-applicable":
@@ -499,7 +539,10 @@ def run_per_view(
         "trust-profile": _validate_view_trust_profile(view, trust_profile),
         "contextual-binding": _validate_contextual_binding(binding) if binding else "<one-line description for this view>",
     }
-    return _format_view_block(view, answers)
+    block = _format_view_block(view, answers)
+    if prompt_fn is not None:
+        block = _substitute_placeholders(block, prompt_fn)
+    return block
 
 
 def _format_82_block(answers: dict) -> str:
@@ -538,10 +581,15 @@ def run(author_spec_hash: str, *, prompt_fn) -> str:
 
     Uses cached answers when fresh. Raises RuntimeError('deferred') if
     prompt_fn raises EOFError (non-interactive caller).
+
+    After the core §8.2 block is rendered, any remaining ``<...>`` placeholder
+    tokens are resolved by prompting the operator once per unique label via
+    *prompt_fn*.  This ensures the emitted block is always fully populated.
     """
     cached = read_cache(author_spec_hash)
     if cached is not None:
-        return _format_82_block(cached)
+        block = _format_82_block(cached)
+        return _substitute_placeholders(block, prompt_fn)
     try:
         answers = {
             "receiver-fingerprint": _ask_receiver(prompt_fn),
@@ -555,7 +603,8 @@ def run(author_spec_hash: str, *, prompt_fn) -> str:
             "Re-run /vision interactively to lock §8.2."
         ) from exc
     write_cache(author_spec_hash, answers)
-    return _format_82_block(answers)
+    block = _format_82_block(answers)
+    return _substitute_placeholders(block, prompt_fn)
 
 
 def run_with_flags(
@@ -769,6 +818,11 @@ def _main() -> int:
                 remediation="re-run with --not-applicable-reason '<one-line reason>' when --receiver is 'not-applicable'",
             )
             return 1
+        # Pass _stdin_prompt when running interactively so <...> stubs are
+        # resolved before the block reaches the caller.  Non-interactive callers
+        # (stdin not a TTY) leave placeholders in-place for downstream
+        # processors to handle.
+        pv_prompt_fn = _stdin_prompt if sys.stdin.isatty() else None
         try:
             block = run_per_view(
                 view=args.view,
@@ -776,6 +830,7 @@ def _main() -> int:
                 trust_profile=args.trust_profile,
                 binding=args.binding,
                 not_applicable_reason=args.not_applicable_reason,
+                prompt_fn=pv_prompt_fn,
             )
         except WizardValidationError as exc:
             _status.emit(
