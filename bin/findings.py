@@ -97,6 +97,8 @@ KNOWN_KINDS = {
     "verification-too-shallow-for-claim",
     # v1.2 Fix C — Tier-3 thin negative-path coverage alongside-finding
     "tier3-negative-paths-thin-coverage",
+    # v1.3 #9 — per-view vocabulary partition fail-soft UX
+    "trust-token-misplaced",
 }
 
 # Severity mapping for Tier 3 contradiction tuple kinds (v0.5.2).
