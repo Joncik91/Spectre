@@ -1005,11 +1005,29 @@ def _faithfulness_malformed_finding() -> Finding:
     )
 
 
+def _thin_coverage_finding(original_finding: Finding) -> Finding:
+    """Return a tier3-negative-paths-thin-coverage warn alongside a demoted negative-path-omission."""
+    step_n = original_finding.location.step
+    msg = (
+        f"Step {step_n} has fewer than 3 negative-paths entries (thin coverage); "
+        "consider adding more failure branches."
+    )[:findings.MAX_MESSAGE_LEN]
+    return Finding(
+        tier=3,
+        kind="tier3-negative-paths-thin-coverage",
+        severity="warn",
+        location=original_finding.location,
+        message=msg,
+        dismissable=True,
+    )
+
+
 def _verify_block_tuples_with_citations(
     tuple_findings: list[Finding],
     step_table: dict,
     *,
     config: JudgeConfig,
+    step_objects: list | None = None,
 ) -> list[Finding]:
     """Run a second batched API call to verify block-severity contradiction tuples.
 
@@ -1032,15 +1050,41 @@ def _verify_block_tuples_with_citations(
     Returns a new finding list with the same non-block findings plus either
     verified-or-demoted block findings.
     """
+    # Build negative-paths count lookup from step_objects (Fix C).
+    # Done first so thin-coverage logic can run even when no block findings exist.
+    _neg_paths_count: dict[int, int] = {}
+    if step_objects:
+        for obj in step_objects:
+            if isinstance(obj, dict):
+                sn = obj.get("step")
+                np = obj.get("negative_paths") or obj.get("negative-paths") or []
+            else:
+                sn = getattr(obj, "step", None)
+                np = getattr(obj, "negative_paths", None) or []
+            if sn is not None:
+                _neg_paths_count[int(sn)] = len(np) if np else 0
+
     # Separate block (verifiable) from non-block (pass through).
     block_indices: list[int] = []
     for idx, f in enumerate(tuple_findings):
         if f.kind in _BLOCK_CONTRADICTION_KINDS and f.severity == "block":
             block_indices.append(idx)
 
-    # Short-circuit: nothing to verify.
+    # Fix C: emit thin-coverage alongside-finding for any negative-path-omission
+    # finding whose step has fewer than 3 negative-paths entries.
+    # This runs regardless of whether block findings exist.
+    thin_coverage_additions: list[Finding] = []
+    for f in tuple_findings:
+        if f.kind == "negative-path-omission":
+            step_n = f.location.step
+            np_count = _neg_paths_count.get(step_n, 0) if step_n is not None else 0
+            if np_count < 3:
+                thin_coverage_additions.append(_thin_coverage_finding(f))
+
+    # Short-circuit: nothing to verify via faithfulness check.
     if not block_indices:
-        return list(tuple_findings)
+        result = list(tuple_findings) + thin_coverage_additions
+        return result
 
     # Build a minimal representation of block findings to send to DeepSeek.
     block_summaries = []
@@ -1149,7 +1193,7 @@ def _verify_block_tuples_with_citations(
         if should_demote:
             result[orig_idx] = _faithfulness_demote_finding(original_finding)
 
-    return result
+    return result + thin_coverage_additions
 
 
 # ── Deterministic contract-resolution post-filter ────────────────────────────
@@ -1404,4 +1448,6 @@ def evaluate(
 
     # Second pass: cite-and-verify for block-severity tuples (v0.6 faithfulness check).
     # Zero extra cost when no block tuples; one batched call otherwise.
-    return _verify_block_tuples_with_citations(primary_findings, step_table, config=config)
+    return _verify_block_tuples_with_citations(
+        primary_findings, step_table, config=config, step_objects=step_objects
+    )

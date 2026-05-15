@@ -1189,3 +1189,21 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - user_action: Run `spectre catalog upgrade-taxonomy --spec <slug> --to <version>` when you want to consider the newer axes, or ignore.
 - related: term:taxonomy-version
 - since: v1.0
+
+## tier3-negative-paths-thin-coverage
+- kind: finding
+- dev: Tier-3 demotion alongside-finding. Emitted when a negative-path-omission finding is demoted via the faithfulness check AND the affected step's negative-paths: count is fewer than 3. Signals that the step's failure-branch coverage is thin even after demotion. Tier-3 warn, dismissable.
+- pm: A step's failure-branch coverage is thin (fewer than 3 entries). The automated review flagged it, but couldn't verify it from the spec text alone. Consider adding more failure scenarios to the step's negative-paths section.
+- triggered_by: Tier-3 faithfulness demotion of a negative-path-omission finding when negative-paths count is less than 3.
+- user_action: Add more negative-paths entries to the flagged step (at least 3 entries covering different failure modes), or dismiss if the step genuinely has only one or two realistic failure branches.
+- related: negative-path-omission, tier3-unfaithful-contradiction
+- since: v1.2
+
+## walker.round
+- kind: status
+- dev: Emitted after each concern answer in the walker interview loop. Fields: round=N (1-based count of answered concerns), pending=K (remaining non-stale concerns). Provides per-round visibility into walk progress without exposing convergence decisions.
+- pm: The walker just finished interview round N. There are K questions still to answer.
+- triggered_by: walker.record_answer increments round_count.
+- user_action: No action required. Monitor round and pending counts to gauge walk progress. Operator interpretation only — walker.round does not imply any threshold or convergence signal.
+- related: walker.yield, walker.coverage
+- since: v1.2

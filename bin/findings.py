@@ -95,6 +95,8 @@ KNOWN_KINDS = {
     "excessive-post-ship-iteration",
     # v1.1 Fix 3 — behavioral claim with structural-only verification
     "verification-too-shallow-for-claim",
+    # v1.2 Fix C — Tier-3 thin negative-path coverage alongside-finding
+    "tier3-negative-paths-thin-coverage",
 }
 
 # Severity mapping for Tier 3 contradiction tuple kinds (v0.5.2).
@@ -118,6 +120,8 @@ TIER3_CONTRADICTION_SEVERITY: dict[str, str] = {
     "adversarial-pathway": "block",
     # v0.8 — contract-filter audit sentinel
     "tier3-filter-applied": "info",
+    # v1.2 Fix C — thin negative-path coverage alongside demotion
+    "tier3-negative-paths-thin-coverage": "warn",
 }
 
 SEVERITIES = {"block", "warn", "info"}
