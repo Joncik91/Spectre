@@ -315,6 +315,12 @@ def record_answer(state: WalkState, *, concern_id: str, answer: str) -> WalkStat
             state.answered[concern_id] = answer
             del state.pending[i]
             state.round_count += 1
+            # Fix D: per-round visibility for operators.
+            try:
+                from bin import _status as _st
+                _st.emit("info", "walker.round", round=state.round_count, pending=len(state.pending))
+            except Exception:  # noqa: BLE001
+                pass
             # Flip seed-family flags
             if concern_id == "seed-lifecycle":
                 state.lifecycle_asked = True
@@ -1389,6 +1395,140 @@ def generate_negative_path_concerns(
                 f"mid-write?) and how should we handle it (retry / reject / escalate)?"
             ),
         ))
+    return concerns
+
+
+# ── Step-action precision concerns (Fix B) ───────────────────────────────────
+
+# pip install without pinned version: no `==`, no `@`, no `-r` constraint file, no `--constraint`.
+_PRECISION_PIP_UNVERSIONED_RE = re.compile(
+    r"\bpip\s+install\b(?!.*(?:==|@\s*\S|(?:-r|-c|--constraint|--requirement)\s+\S))",
+)
+# python -m <pkg> with no subcommand/argument after the package name.
+_PRECISION_PYTHON_M_BARE_RE = re.compile(
+    r"\bpython3?\s+-m\s+([\w.]+)\s*$"
+)
+# Bare URL with no version token nearby (http(s):// not followed by a version token on the same line).
+_PRECISION_BARE_URL_RE = re.compile(
+    r"https?://\S+"
+)
+_PRECISION_VERSION_TOKEN_RE = re.compile(
+    r"(?:==|@\s*v?[\d.]+|/v[\d.]+/|/[\d.]+/)"
+)
+# LLM vendor SDK + bare model identifier patterns.
+_PRECISION_LLM_VENDOR_RE = re.compile(
+    r"\b(anthropic|openai|deepseek|ollama|client\.messages\.create|client\.chat\.completions|client\.responses\.create)\b",
+    re.IGNORECASE,
+)
+_PRECISION_BARE_MODEL_ID_RE = re.compile(
+    r"\b(gpt-\d+[a-z0-9-]*|claude-[a-z0-9-]+|deepseek-[a-z0-9-]+|llama-[a-z0-9-]+|mistral-[a-z0-9-]+|gemma-[a-z0-9-]+|command-[a-z0-9-]+)\b",
+    re.IGNORECASE,
+)
+
+
+def _check_step_precision(step_n: int, action: str) -> list[tuple[str, str]]:
+    """Return list of (concern_id, summary) for vague shapes in *action*.
+
+    Checks (structural patterns):
+    1. pip install without version pin.
+    2. python -m <pkg> with no subcommand args.
+    3. Bare URL with no version-pin verification nearby.
+    4. Bare model ID alongside LLM vendor SDK call.
+    """
+    concerns: list[tuple[str, str]] = []
+    a = action.strip()
+
+    # 1. pip install without version pin
+    if _PRECISION_PIP_UNVERSIONED_RE.search(a):
+        concerns.append((
+            f"precision-pip-{step_n}",
+            (
+                f"Step {step_n} action `{a[:60]}` has `pip install` without a pinned version — "
+                "add `==X.Y.Z` or a constraint file (e.g. `-c constraints.txt`) to make the "
+                "build reproducible."
+            )[:280],
+        ))
+
+    # 2. python -m <pkg> with no subcommand args
+    m = _PRECISION_PYTHON_M_BARE_RE.search(a)
+    if m:
+        pkg = m.group(1)
+        concerns.append((
+            f"precision-python-m-{step_n}",
+            (
+                f"Step {step_n} action `{a[:60]}` invokes `python -m {pkg}` with no subcommand "
+                "or arguments — specify the subcommand (e.g. `python -m myapp serve`) so the "
+                "intent is unambiguous."
+            )[:280],
+        ))
+
+    # 3. Bare URL with no version-pin token in the same action
+    url_m = _PRECISION_BARE_URL_RE.search(a)
+    if url_m:
+        url = url_m.group(0)[:60]
+        if not _PRECISION_VERSION_TOKEN_RE.search(a):
+            concerns.append((
+                f"precision-url-{step_n}",
+                (
+                    f"Step {step_n} action contains a bare URL (`{url}`) with no version pin — "
+                    "pin to a specific version tag or commit so the download is reproducible."
+                )[:280],
+            ))
+
+    # 4. Bare model ID alongside LLM vendor SDK
+    if _PRECISION_LLM_VENDOR_RE.search(a):
+        model_m = _PRECISION_BARE_MODEL_ID_RE.search(a)
+        if model_m:
+            model_id = model_m.group(0)
+            concerns.append((
+                f"precision-model-{step_n}",
+                (
+                    f"Step {step_n} action uses bare model ID `{model_id}` alongside a vendor SDK — "
+                    "document the model selection logic (env var, config key, or version-locked constant) "
+                    "so the choice is explicit and auditable."
+                )[:280],
+            ))
+
+    return concerns
+
+
+def generate_step_precision_concerns(
+    state: WalkState,
+    steps: list[dict],
+) -> list[Concern]:
+    """Emit edge-case concerns for vague action shapes in each step.
+
+    Checks four structural patterns per step action (Fix B):
+    1. pip install without version pin.
+    2. python -m <pkg> with no subcommand.
+    3. Bare URL with no version-pin verification.
+    4. Bare model ID alongside LLM vendor SDK.
+
+    Idempotent: never emits a concern whose id already exists in state.
+    """
+    existing_ids: set[str] = (
+        {c.id for c in state.asked}
+        | {c.id for c in state.pending}
+        | set(state.answered)
+    )
+    concerns: list[Concern] = []
+    for step in steps:
+        step_n = step.get("step")
+        if step_n is None:
+            continue
+        action: str = step.get("action", "") or ""
+        if not action:
+            continue
+        for concern_id, summary in _check_step_precision(step_n, action):
+            if concern_id in existing_ids:
+                continue
+            concerns.append(Concern(
+                id=concern_id,
+                kind="edge-case",
+                receivers=["human"],
+                depends_on=[],
+                summary=summary,
+            ))
     return concerns
 
 

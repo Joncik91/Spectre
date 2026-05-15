@@ -53,6 +53,30 @@ def test_self_cycle_emits_finding():
         p.unlink(missing_ok=True)
 
 
+# ── Fix M: self-cycle wording ─────────────────────────────────────────────────
+
+def test_self_cycle_message_uses_references_wording():
+    """Fix M: message must say 'references ... declares in produces' not 'consumes ... produces'."""
+    p = _write_spec(_SELF_CYCLE_YAML)
+    try:
+        fs = spec_ast.classify(p)
+        f = next(x for x in fs if x.kind == "self-cycle-produces")
+        assert "references" in f.message and "declares in produces" in f.message
+    finally:
+        p.unlink(missing_ok=True)
+
+
+def test_self_cycle_suggested_fix_mentions_idempotency():
+    """Fix M: suggested_fix must offer idempotency as the second branch."""
+    p = _write_spec(_SELF_CYCLE_YAML)
+    try:
+        fs = spec_ast.classify(p)
+        f = next(x for x in fs if x.kind == "self-cycle-produces")
+        assert "idempotency" in (f.suggested_fix or "")
+    finally:
+        p.unlink(missing_ok=True)
+
+
 def test_self_cycle_severity_is_block():
     p = _write_spec(_SELF_CYCLE_YAML)
     try:

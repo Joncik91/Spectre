@@ -1641,7 +1641,7 @@ def _check_self_cycle_produces(steps: list[dict]) -> list[_findings.Finding]:
                     continue
                 # Self-cycle confirmed
                 display = tok if len(tok) <= 60 else "..." + tok[-57:]
-                msg = f"Step {step_n} action consumes {display!r} which it also produces (self-cycle)."
+                msg = f"Step {step_n} action references {display!r} which it also declares in produces (possible self-cycle)."
                 if len(msg) > 140:
                     msg = msg[:137] + "..."
                 results.append(_findings.Finding(
@@ -1653,8 +1653,8 @@ def _check_self_cycle_produces(steps: list[dict]) -> list[_findings.Finding]:
                     ),
                     message=msg,
                     suggested_fix=(
-                        "Move the file to a prior step's produces:, or remove it from "
-                        "this step's produces: if it is an input, not an output."
+                        "If action only names the path, remove from produces:. "
+                        "If action reads X, change verification to assert idempotency."
                     )[:140],
                 ))
 
