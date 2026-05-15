@@ -218,10 +218,19 @@ def test_v1_1_acceptance_synthetic_spec(tmp_path: pathlib.Path) -> None:
     assert "view-fingerprint-contradicts-exemplar-binding" in kinds
 
     # Fix 2: two post-ship-iteration deferrals (§9 and §12)
-    assert sum(1 for f in all_findings if f.kind == "post-ship-iteration-deferral") == 2
+    deferrals = [f for f in all_findings if f.kind == "post-ship-iteration-deferral"]
+    assert len(deferrals) == 2
 
-    # Fix 2 aggregator: excessive-post-ship-iteration fires when count > 1
-    assert "excessive-post-ship-iteration" in kinds
+    # v1.2.1 #5: §9 (help-text placeholder catalog) has no exemplar compatible
+    # with `human-typed` fingerprint → tagged `no-compatible-exemplar`.
+    # §12 (api-shape) has exemplars compatible with `api-consumer` →
+    # tagged `operator-deferral`. The aggregate warn counts only the
+    # operator-deferral subset, so with one operator-deferral the warn
+    # does NOT fire (≤ 1 threshold).
+    by_reason = {d.reason for d in deferrals}
+    assert "no-compatible-exemplar" in by_reason
+    assert "operator-deferral" in by_reason
+    assert "excessive-post-ship-iteration" not in kinds
 
     # Fix 3: behavioral why + structural-only verification on step 2
     assert "verification-too-shallow-for-claim" in kinds

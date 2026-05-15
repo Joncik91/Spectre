@@ -1253,6 +1253,22 @@ def _refresh_pending(state: WalkState, draft_text: str) -> None:
     state.pending.extend(generate_operator_concerns(state, draft_text))
 
 
+def _recommend_stop_predicate(state: WalkState, draft_text: str) -> dict:
+    """Single source of truth for the walker stop signal.
+
+    Refreshes dynamic concerns from the current draft text, then computes the
+    coverage dict — including the ``recommended_stop`` boolean. Every
+    code path that reports or acts on the stop signal MUST call this rather
+    than computing coverage from a possibly-stale state snapshot.
+
+    Mutates ``state`` (via :func:`_refresh_pending`); callers that read the
+    result must persist the state if they want subsequent reads to see the
+    same view.
+    """
+    _refresh_pending(state, draft_text)
+    return _compute_coverage(state, draft_text)
+
+
 def _compute_coverage(state: WalkState, draft_text: str) -> dict:
     """Compute coverage metrics for the current walk state.
 
@@ -2662,11 +2678,9 @@ if __name__ == "__main__":
             except OSError:
                 pass
 
-        # Fire newly-applicable generators now that the draft may have evolved
-        _refresh_pending(state, draft_text)
-
-        # Coverage and recommend-stop transition
-        cov = _compute_coverage(state, draft_text)
+        # Unified stop-signal predicate — refreshes generators and computes
+        # coverage from a single state snapshot.
+        cov = _recommend_stop_predicate(state, draft_text)
         prev_emitted = state.last_recommend_stop_emitted
         if cov["recommended_stop"] and not prev_emitted:
             _status.emit("result", "walker.recommend-stop", reason="coverage-complete")
@@ -2721,7 +2735,7 @@ if __name__ == "__main__":
                 )
                 sys.exit(1)
 
-        # Compute and emit full coverage line
+        # Compute and emit full coverage line — unified predicate
         draft_text = ""
         draft_path_for_cov = pathlib.Path(args.draft) if getattr(args, "draft", None) else state.spec_draft_path
         if draft_path_for_cov.exists():
@@ -2729,7 +2743,7 @@ if __name__ == "__main__":
                 draft_text = draft_path_for_cov.read_text(encoding="utf-8")
             except OSError:
                 pass
-        cov = _compute_coverage(state, draft_text)
+        cov = _recommend_stop_predicate(state, draft_text)
         _status.emit(
             "result", "walker.coverage",
             answered=cov["answered"],
@@ -2771,7 +2785,12 @@ if __name__ == "__main__":
                     draft_text = draft_path_cov.read_text(encoding="utf-8")
                 except OSError:
                     pass
-        cov = _compute_coverage(state, draft_text)
+        cov = _recommend_stop_predicate(state, draft_text)
+        # Persist refreshed pending so subsequent reads see the same view.
+        try:
+            persist(state, state_path)
+        except OSError:
+            pass  # coverage is read-only-ish; persistence failure is non-fatal
 
         if args.json_mode:
             print(json.dumps(cov, indent=2))

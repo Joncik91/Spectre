@@ -53,30 +53,49 @@ def _atomic_write_json(path: Path, data: dict) -> None:
         raise
 
 
+_VALID_OPERATOR_MODES = ("interactive", "auto")
+
+
 class LockState:
     """In-memory + JSON-persisted lock state for one project."""
 
     def __init__(self, locks_path: Path):
         self.locks_path = Path(locks_path)
         self.resources: dict[str, int] = {}  # resource_id -> capacity
-        # Internal 4-tuple storage: (track, pid, start_time, granted_at_iso)
-        self._holders: dict[str, list[tuple[str, int, float, str]]] = {}
-        self.queues: dict[str, list[tuple[str, int, float, str]]] = {}
+        # Internal 5-tuple storage: (track, pid, start_time, granted_at_iso, operator_mode)
+        # operator_mode (v1.2.1 #7) records whether the lock was acquired by
+        # an interactive /vision/walker session or an auto-mode /implement run.
+        # Downstream consumers (audit, evidence trail) can distinguish the two.
+        self._holders: dict[str, list[tuple[str, int, float, str, str]]] = {}
+        self.queues: dict[str, list[tuple[str, int, float, str, str]]] = {}
 
     def register_resource(self, resource_id: str, capacity: int) -> None:
         self.resources[resource_id] = capacity
         self._holders.setdefault(resource_id, [])
         self.queues.setdefault(resource_id, [])
 
-    def acquire(self, resource_id: str, *, track: str, actor_pid: int, actor_start_time: float) -> bool:
+    def acquire(
+        self,
+        resource_id: str,
+        *,
+        track: str,
+        actor_pid: int,
+        actor_start_time: float,
+        operator_mode: str = "interactive",
+    ) -> bool:
         if resource_id not in self.resources:
             raise KeyError(f"unknown resource: {resource_id}")
+        if operator_mode not in _VALID_OPERATOR_MODES:
+            raise ValueError(
+                f"operator_mode must be one of {_VALID_OPERATOR_MODES}, got {operator_mode!r}"
+            )
         granted_at = datetime.now(timezone.utc).isoformat()
+        entry = (track, actor_pid, actor_start_time, granted_at, operator_mode)
         if len(self._holders[resource_id]) < self.resources[resource_id]:
-            self._holders[resource_id].append((track, actor_pid, actor_start_time, granted_at))
+            self._holders[resource_id].append(entry)
             self._persist()
             return True
-        self.queues[resource_id].append((track, actor_pid, actor_start_time, granted_at))
+        self.queues[resource_id].append(entry)
         self._persist()
         return False
 
@@ -129,19 +148,25 @@ class LockState:
             st = entry["actor_start_time"]
             if _actor_alive(pid, st):
                 granted_at = entry.get("granted_at", datetime.now(timezone.utc).isoformat())
-                self._holders[rid].append((entry["track"], pid, st, granted_at))
+                # v1.2.1 #7: default to interactive for pre-1.2.1 lock files
+                # that don't carry the field.
+                operator_mode = entry.get("operator_mode", "interactive")
+                self._holders[rid].append(
+                    (entry["track"], pid, st, granted_at, operator_mode)
+                )
         self._persist()
 
     def _persist(self) -> None:
         all_locks = []
         for rid, holders in self._holders.items():
-            for track, pid, st, granted_at in holders:
+            for track, pid, st, granted_at, operator_mode in holders:
                 all_locks.append({
                     "resource": rid,
                     "track": track,
                     "actor_pid": pid,
                     "actor_start_time": st,
                     "granted_at": granted_at,
+                    "operator_mode": operator_mode,
                 })
         _atomic_write_json(self.locks_path, {
             "version": LOCK_FILE_VERSION,
@@ -156,11 +181,14 @@ def handle_request(state: LockState, req: dict[str, Any]) -> dict[str, Any]:
             for k in ("track", "resource_id", "actor_pid", "actor_start_time"):
                 if k not in req:
                     return {"ok": False, "error": f"missing field: {k}"}
+            # v1.2.1 #7: operator_mode defaults to "interactive" so pre-1.2.1
+            # callers (and tests) keep working unchanged.
             granted = state.acquire(
                 req["resource_id"],
                 track=req["track"],
                 actor_pid=req["actor_pid"],
                 actor_start_time=req["actor_start_time"],
+                operator_mode=req.get("operator_mode", "interactive"),
             )
             resp: dict[str, Any] = {"ok": True, "granted": granted}
             if not granted:

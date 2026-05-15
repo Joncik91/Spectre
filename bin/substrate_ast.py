@@ -274,8 +274,20 @@ _SHELL_EVAL_RE = re.compile(
     r"|\beval\b"
     r"|\$\("
 )
+# SQL keyword opener must be preceded by start-of-string, whitespace, a shell
+# statement boundary, or a quote (start of a kept interpreter payload) — never
+# by `.` (which would indicate a method call like `hashlib.update()`,
+# `os.replace()`, `.replace()`). `UPDATE` and `REPLACE` are bare verbs that
+# collide with English ("update the index", "replace the value"), so they
+# additionally require a following SQL-shape: `UPDATE <table> SET` or
+# `REPLACE INTO|VALUES`. `INSERT INTO` and `DELETE FROM` are specific enough
+# to stand alone.
 _SQL_RE = re.compile(
-    r"\b(?:INSERT|UPDATE|REPLACE|DELETE\s+FROM)\b", re.IGNORECASE
+    r"(?:^|(?<=[\s;|&(\"']))"
+    r"(?:INSERT\s+INTO|DELETE\s+FROM"
+    r"|UPDATE\s+\w+\s+SET"
+    r"|REPLACE\s+(?:INTO|VALUES))\b",
+    re.IGNORECASE,
 )
 _TEMPLATE_RE = re.compile(r"\b(?:jinja2|template_render|format_map)\b")
 _NETWORK_EGRESS_RE = re.compile(
@@ -284,6 +296,76 @@ _NETWORK_EGRESS_RE = re.compile(
     r"|--post-file=|--upload-file\b|\s-d\b|\s-F\b|\s-T\b)",
     re.IGNORECASE,
 )
+
+# Interpreters whose `-c` / `-e` argument is an executable code payload.
+# Inside a payload the sink regexes must still see the code (so a live
+# `bash -c "DELETE FROM x"` fires `_SQL_RE`). Outside a payload, an inert
+# literal — JSON body, log message, error string — is masked before scanning.
+_EXEC_PAYLOAD_INTRO_RE = re.compile(
+    r"\b(?:bash|sh|zsh|dash|python|python3|node|nodejs|perl|ruby|"
+    r"psql|mysql|sqlite3)\s+(?:-[A-Za-z]+\s+)*-[ce]\s*$"
+)
+_LITERAL_PLACEHOLDER = "\x01"  # inert spans collapse to a single control char
+
+
+def _classify_and_strip_literals(action: str) -> str:
+    """Mask inert string-literal spans so sink regexes scan only live code.
+
+    Walks the action left-to-right. Each quoted span (``"..."``, ``'...'``,
+    ``\"\"\"...\"\"\"``, ``'''...'''``) is classified:
+
+    - *Executable* — the span is the argument of a recognized interpreter
+      `-c` / `-e` invocation (`bash -c`, `python3 -c`, `psql -c`, …). The
+      span body is kept verbatim because it is live code.
+    - *Inert* — JSON body, log string, error message, argv element. The
+      span body collapses to a placeholder so collision-prone tokens
+      inside data (``$(book)``, ``"update"``, ``"DELETE FROM"``) no longer
+      reach the sink scanners.
+
+    Conservative on unbalanced input: returns the original action unchanged
+    so coverage degrades to today's behavior instead of silently passing
+    dangerous payloads.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(action)
+    while i < n:
+        ch = action[i]
+        if ch not in ("\"", "'"):
+            out.append(ch)
+            i += 1
+            continue
+        # Detect triple-quote first; longer-match-wins.
+        if i + 2 < n and action[i + 1] == ch and action[i + 2] == ch:
+            quote = ch * 3
+        else:
+            quote = ch
+        close = action.find(quote, i + len(quote))
+        if quote == ch:  # single-char quote: honour backslash escapes
+            scan = i + 1
+            while scan < n:
+                c = action[scan]
+                if c == "\\" and scan + 1 < n:
+                    scan += 2
+                    continue
+                if c == ch:
+                    close = scan
+                    break
+                scan += 1
+            else:
+                close = -1
+        if close == -1:
+            return action  # unbalanced — fall back to today's behavior
+        body_start = i + len(quote)
+        body = action[body_start:close]
+        prefix = "".join(out)
+        is_exec = bool(_EXEC_PAYLOAD_INTRO_RE.search(prefix))
+        if is_exec:
+            out.append(quote + body + quote)
+        else:
+            out.append(_LITERAL_PLACEHOLDER)
+        i = close + len(quote)
+    return "".join(out)
 
 
 def _value_in_action(action: str, contract_entry: str) -> bool:
@@ -321,12 +403,13 @@ def _classify_source_step_sinks(action: str) -> list[str]:
 
 
 def _sink_kinds_from_action(action: str) -> list[str]:
+    scanned = _classify_and_strip_literals(action)
     sinks: list[str] = []
-    if _SHELL_EVAL_RE.search(action):
+    if _SHELL_EVAL_RE.search(scanned):
         sinks.append("shell-eval")
-    if _SQL_RE.search(action) or _TEMPLATE_RE.search(action):
+    if _SQL_RE.search(scanned) or _TEMPLATE_RE.search(scanned):
         sinks.append("sql-or-template")
-    if _NETWORK_EGRESS_RE.search(action):
+    if _NETWORK_EGRESS_RE.search(scanned):
         sinks.append("network-egress")
     return sinks
 

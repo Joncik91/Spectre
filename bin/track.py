@@ -108,7 +108,13 @@ def _self_actor() -> tuple[int, float]:
     return pid, float(after[19])
 
 
-def acquire(project_root: Path, *, track_name: str, resource_id: str) -> dict[str, Any]:
+def acquire(
+    project_root: Path,
+    *,
+    track_name: str,
+    resource_id: str,
+    operator_mode: str = "interactive",
+) -> dict[str, Any]:
     pid, st = _self_actor()
     return _send(project_root, {
         "op": "acquire",
@@ -116,6 +122,7 @@ def acquire(project_root: Path, *, track_name: str, resource_id: str) -> dict[st
         "resource_id": resource_id,
         "actor_pid": pid,
         "actor_start_time": st,
+        "operator_mode": operator_mode,
     })
 
 

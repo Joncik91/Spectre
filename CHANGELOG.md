@@ -2,6 +2,61 @@
 
 All notable changes to the Spectre plugin.
 
+## v1.2.1 — 2026-05-15
+
+Defect-pack hotfix. Seven fixes addressing Tier-1 regex false-positives, walker stop-signal inconsistency, post-ship-iteration false-positive on zero-exemplar views, missing substitution evidence in the eval sidecar, and missing operator-mode flag on lock state. No spec contract changes — v1.0/v1.1/v1.1.1/v1.2.0 locked specs remain valid.
+
+**Test count:** 1923 (v1.2.0) → 1967 (v1.2.1). +44 new tests, 0 regressions.
+
+### Fixed — Tier-1 `_SQL_RE` + `_SHELL_EVAL_RE` lexical-context filtering (defects #1, #2)
+
+- `_SQL_RE` no longer fires on Python/TS identifier collisions: `hashlib.update()`, `os.replace()`, `errors="replace"`, `.replace()`. Opener boundary tightened to require non-`.` predecessor; bare `UPDATE`/`REPLACE` now require SQL-shape continuation (`UPDATE <table> SET`, `REPLACE INTO|VALUES`). `INSERT INTO` and `DELETE FROM` are specific enough to stand alone.
+- `_SHELL_EVAL_RE`'s `$(...)` branch no longer fires inside inert string literals (JSON bodies, log strings, argv elements). A new `_classify_and_strip_literals` pre-pass distinguishes **executable string payloads** (the argument of `bash -c`, `python3 -c`, `psql -c`, etc.) from **inert data**. Inert literals are masked before sink scanning; executable payloads remain verbatim so live `bash -c "DELETE FROM x"` still fires.
+- Allowlisted executable-payload interpreters: `bash`, `sh`, `zsh`, `dash`, `python`, `python3`, `node`, `nodejs`, `perl`, `ruby`, `psql`, `mysql`, `sqlite3`. Conservative fallback on unbalanced quotes (returns original action; today's behavior preserved).
+- 18 new tests in `tests/test_substrate_ast_lexical_filtering.py` covering 6 false-positives, 8 true-positives, and 4 boundary cases.
+
+### Fixed — `_action_authored_path` accepts relative paths + `touch` (defect #3)
+
+- Authoring-verb regexes (`tee`, `>`, `>>`, `cat >`, `cp`, `install`, plus new `touch`) now match relative paths when a project root is threaded through. The v1.2 Fix H `--project` flag is the carrier; relative authoring was previously rejected, forcing operators into `: > path` workarounds and false `self-cycle-produces` findings on natural idioms like `tee schemas/x.json`.
+- **Workspace-boundary guard:** every authored path is normalized via `pathlib.Path.resolve()` and rejected if it escapes the project root. `../etc/passwd`, out-of-root absolute paths, and symlink escapes are not cleared — `self-cycle-produces` still fires for them, preventing false-clears that would mask real authoring problems.
+- Backward-compatible: when called without a project root, only absolute paths are recognized (today's behavior).
+- 10 new tests in `tests/test_spec_ast_relative_authoring.py` including an end-to-end integration test through `classify()`.
+
+### Fixed — walker stop predicate unified (defect #4)
+
+- New `_recommend_stop_predicate(state, draft_text)` function is the single source of truth for the walker stop signal. Previously the explicit `walker coverage` subcommand computed coverage without first calling `_refresh_pending`, producing `recommended-stop=no` despite `pending=0 deferred=0` when the draft had been edited externally after the last answer.
+- Both the post-answer emission path and the explicit-coverage entrypoint now route through the predicate. The `walker coverage` subcommand also persists the refreshed pending set so subsequent reads see the same view.
+- 3 new tests in `tests/test_walker_stop_predicate_consistency.py`.
+
+### Fixed — `excessive-post-ship-iteration` zero-exemplar exception (defect #5)
+
+- The aggregate check no longer penalizes operators for picking `post-ship-iteration` when a view has zero compatible exemplars in the catalog — the deferral was forced, not chosen.
+- `post-ship-iteration-deferral` findings now carry a structured `reason` field (added to `findings.Finding` as a non-fingerprinted attribute): `"operator-deferral"` when compatible exemplars existed but the operator chose to defer, `"no-compatible-exemplar"` when the catalog was empty for the view's fingerprint.
+- The aggregate `excessive-post-ship-iteration` warn counts only the operator-deferral subset. Empty-catalog deferrals get a different recovery hint pointing to catalog contribution (`docs/exemplars/<view>/<slug>.md`).
+- 6 new tests in `tests/test_cross_view_gate_no_compatible_exception.py` including an end-to-end integration test that exercises both reasons.
+
+### Added — substitution log in eval sidecar (defect #6)
+
+- `eval_metadata.write_sidecar()` now accepts an optional `substitutions: list[dict]` kwarg. Each entry shape: `{"from": <old_text>, "to": <new_text>, "reason": <short>, "tier1_check_name": <kind>, "step_id": <step-N>}`.
+- Logged when an agent rewrites action content or verification commands to satisfy a Tier-1 check — contemporaneous evidence, not a finding. Empty array when no rewrites; absent key when the caller doesn't supply the kwarg (back-compat).
+- Forwarded by the `write-sidecar` CLI subcommand so Python and shell callers stay in sync.
+- 4 new tests in `tests/test_eval_sidecar_substitutions.py`.
+
+### Added — `operator_mode` flag on lock state (defect #7)
+
+- Each lock entry in `state/.locks.json` now records `operator_mode: "interactive" | "auto"` so downstream audit/evidence can distinguish operator-driven locks from `/implement auto` runs.
+- `supervisor.LockState.acquire()` accepts an `operator_mode` kwarg (default `"interactive"`); the supervisor's `acquire` request op accepts an `operator_mode` field (default `"interactive"`).
+- Backward-compatible: pre-1.2.1 lock files that lack the field default to `"interactive"` on reconcile.
+- 3 new tests in `tests/test_supervisor_operator_mode.py`.
+
+### Surface bumps
+
+- `.claude-plugin/marketplace.json` 1.2.0 → 1.2.1 (both `metadata.version` and `plugins[0].version`)
+- `README.md` test-count badge: 1923 → 1967
+- `README.md` version badge: 1.2.0 → 1.2.1
+- `findings.Finding` gains a non-fingerprinted `reason: str | None` field
+- `eval_metadata.write_sidecar` gains an optional `substitutions: list[dict] | None` kwarg
+
 ## v1.2.0 — 2026-05-15
 
 Coverage + diagnostics minor release. 13 fixes across five classes surfaced by Vidence's v1.1 dogfooding. No spec contract changes — locked specs from v1.0/v1.1/v1.1.1 remain valid. v1.2 evaluator may surface additional `warn`/`info` findings on existing specs where new checks now apply.
