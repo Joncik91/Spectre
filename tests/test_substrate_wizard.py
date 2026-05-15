@@ -648,7 +648,7 @@ class TestPlaceholderSubstitution:
         answers_iter = iter([
             "product ready", "product failed", "stdout", "sync ruled out",
         ])
-        block = substrate_wizard.run_per_view(
+        block, _findings = substrate_wizard.run_per_view(
             view="product-output",
             receiver="human-reader",
             trust_profile="schema-stable",
@@ -660,7 +660,7 @@ class TestPlaceholderSubstitution:
 
     def test_run_per_view_without_prompt_fn_leaves_placeholders(self):
         """Without prompt_fn, <...> tokens are left in-place (backward-compat)."""
-        block = substrate_wizard.run_per_view(
+        block, _findings = substrate_wizard.run_per_view(
             view="operator",
             receiver="on-call-engineer",
             trust_profile="paging-required",

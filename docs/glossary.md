@@ -1226,6 +1226,15 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - related: negative-path-omission
 - since: v1.2
 
+## trust-token-misplaced
+- kind: finding
+- dev: A trust token was declared in the wrong view's §8.x substrate block. The token belongs to a different view's vocabulary and has no effect here — the semantic firewall drops it from the returned trust profile so downstream taint/UX checks see the profile as if the token were absent. Tier-1 block. The lock cannot complete while this finding exists.
+- pm: A trust label was placed in the wrong section of the spec. For example, `untrusted-input` belongs in the implementing-agent section (§8.2), not the human-user section (§8.4). Move the label to the correct section and re-run.
+- triggered_by: Tier-1 substrate_wizard _validate_view_trust_profile when a token is not in the calling view's _VIEW_TRUST_TOKENS vocabulary.
+- user_action: Check the suggested_fix field — it names the view where the token belongs. Move the token to that view's §8.x block. Valid tokens for each view are listed in the Spectre docs.
+- related: term:view, untrusted-flow-unguarded
+- since: v1.3
+
 ## walker.round
 - kind: status
 - dev: Emitted after each concern answer in the walker interview loop. Fields: round=N (1-based count of answered concerns), pending=K (remaining non-stale concerns). Provides per-round visibility into walk progress without exposing convergence decisions.

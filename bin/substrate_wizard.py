@@ -331,36 +331,65 @@ _VIEW_TRUST_TOKENS: dict[str, frozenset[str]] = {
 }
 
 
-def _validate_view_trust_profile(view: str, raw: str) -> list[str]:
-    """Per-view trust-profile validator. Tokens must come from the view's
-    own vocabulary in _VIEW_TRUST_TOKENS — view A's tokens are not valid
-    under view B's profile."""
+def _validate_view_trust_profile(
+    view: str, raw: str
+) -> tuple[list[str], list]:
+    """Per-view trust-profile validator — fail-soft contract (v1.3 #9).
+
+    Returns a 2-tuple ``(profile, findings)`` where:
+    - ``profile`` contains only the tokens that belong to *this* view's
+      vocabulary (semantic firewall: misplaced tokens are never consumed).
+    - ``findings`` is a list of block-severity ``trust-token-misplaced``
+      :class:`~bin.findings.Finding` objects, one per misplaced token.
+
+    The caller must surface every finding through the normal finding pipeline.
+    The lock cannot complete while any ``trust-token-misplaced`` finding exists
+    (it is block-tier, same as every other block finding).
+
+    Rationale: raising ValueError was opaque and gave operators no actionable
+    fix.  The semantic firewall is *preserved* — misplaced tokens never enter
+    the returned profile — but the error is now structured so the walker can
+    re-prompt inline with the suggested-fix.
+    """
+    from bin import findings as _findings  # local import avoids circular dep
+
     stripped = (raw or "").strip()
     if not stripped or stripped == "none":
-        return []
+        return [], []
     allowed = _VIEW_TRUST_TOKENS.get(view)
     if allowed is None:
         raise WizardValidationError("view", f"unknown view {view!r}")
     tokens = [t.strip() for t in stripped.split(",") if t.strip()]
+    profile: list[str] = []
+    emitted: list[Any] = []
     for t in tokens:
-        if t not in allowed:
-            # Disambiguation hint: when the token IS valid in another view,
-            # tell the operator instead of just listing the current view's
-            # allowed set. Saves an "is it misspelled?" detour.
+        if t in allowed:
+            profile.append(t)
+        else:
+            # Semantic firewall: token is NOT added to profile.
+            # Build a suggested-fix pointing the operator to the right view.
             other_views = sorted(
                 v for v, vocab in _VIEW_TRUST_TOKENS.items() if t in vocab
             )
-            hint = (
-                f" (Note: {t!r} is valid in view {other_views[0]!r}, not {view!r}.)"
-                if other_views
-                else ""
-            )
-            raise WizardValidationError(
-                "trust_profile",
-                f"unknown trust token for view {view!r}: {t!r}. Valid tokens: "
-                + ", ".join(sorted(allowed)) + hint,
-            )
-    return tokens
+            if other_views:
+                fix = f"Move {t!r} to {other_views[0]!r} view (§8.x)."[:140]
+            else:
+                fix = (
+                    "Valid tokens for this view: "
+                    + ", ".join(sorted(allowed))
+                )[:140]
+            msg = (
+                f"Trust token {t!r} is not valid in view {view!r}."
+            )[:140]
+            emitted.append(_findings.Finding(
+                tier=1,
+                kind="trust-token-misplaced",
+                severity="block",
+                location=_findings.FindingLocation(scope="spec-wide"),
+                message=msg,
+                suggested_fix=fix,
+            ))
+    return profile, emitted
 
 
 # v1.0 — per-view fingerprint vocabularies
@@ -511,8 +540,16 @@ def run_per_view(
     binding: str = "",
     not_applicable_reason: str = "",
     prompt_fn=None,
-) -> str:
+) -> tuple[str, list]:
     """Render one §8.x block from validated flag values.
+
+    Returns a 2-tuple ``(block: str, findings: list[Finding])``.  The
+    ``findings`` list contains block-severity ``trust-token-misplaced``
+    entries for every trust token that does not belong to *this* view's
+    vocabulary.  Misplaced tokens are **not** included in the rendered
+    block (semantic firewall preserved).  Callers must surface any returned
+    findings through the normal finding pipeline; the lock cannot complete
+    while a block-tier finding exists.
 
     Caller (the /vision skill) walks the view_scope dict from WalkState
     and invokes run_per_view once per view. Cache lives outside this
@@ -533,16 +570,17 @@ def run_per_view(
         return _format_view_block(view, {
             "receiver-fingerprint": cleaned_receiver,
             "not-applicable-reason": not_applicable_reason,
-        })
+        }), []
+    profile, partition_findings = _validate_view_trust_profile(view, trust_profile)
     answers = {
         "receiver-fingerprint": cleaned_receiver,
-        "trust-profile": _validate_view_trust_profile(view, trust_profile),
+        "trust-profile": profile,
         "contextual-binding": _validate_contextual_binding(binding) if binding else "<one-line description for this view>",
     }
     block = _format_view_block(view, answers)
     if prompt_fn is not None:
         block = _substitute_placeholders(block, prompt_fn)
-    return block
+    return block, partition_findings
 
 
 def _format_82_block(answers: dict) -> str:
@@ -824,7 +862,7 @@ def _main() -> int:
         # processors to handle.
         pv_prompt_fn = _stdin_prompt if sys.stdin.isatty() else None
         try:
-            block = run_per_view(
+            block, pv_findings = run_per_view(
                 view=args.view,
                 receiver=args.receiver,
                 trust_profile=args.trust_profile,
@@ -842,9 +880,20 @@ def _main() -> int:
                 remediation="re-run with corrected flag value for the field listed above",
             )
             return 1
+        # Surface any trust-token-misplaced block findings so the operator
+        # sees them immediately (same structured format as other block findings).
+        for f in pv_findings:
+            _status.emit(
+                "block",
+                f.kind,
+                dest="stderr",
+                message=f.message,
+                suggested_fix=f.suggested_fix or "",
+            )
         sys.stdout.write(block)
         sys.stdout.flush()
-        return 0
+        # Non-zero exit when block findings exist — caller must fix before lock.
+        return 1 if pv_findings else 0
 
     return 2
 

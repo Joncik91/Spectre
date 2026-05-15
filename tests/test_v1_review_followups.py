@@ -127,20 +127,24 @@ def test_empty_state_file_emits_recovery_hint(tmp_path):
 
 def test_trust_token_wrong_view_includes_disambiguation_hint():
     """`untrusted-input` is valid for implementing-agent, not human-user.
-    The error message must say so explicitly."""
-    with pytest.raises(substrate_wizard.WizardValidationError) as exc_info:
-        substrate_wizard._validate_view_trust_profile("human-user", "untrusted-input")
-    msg = str(exc_info.value)
-    assert "implementing-agent" in msg
-    assert "human-user" in msg
+    The finding's suggested_fix must reference the correct view."""
+    result = substrate_wizard._validate_view_trust_profile("human-user", "untrusted-input")
+    profile, findings = result
+    assert "untrusted-input" not in profile
+    assert len(findings) == 1
+    fix = findings[0].suggested_fix or ""
+    assert "implementing-agent" in fix
 
 
 def test_trust_token_genuine_typo_omits_hint():
-    """Unknown token that doesn't exist in any view → no misleading hint."""
-    with pytest.raises(substrate_wizard.WizardValidationError) as exc_info:
-        substrate_wizard._validate_view_trust_profile("human-user", "bogus-token")
-    msg = str(exc_info.value)
-    assert "Note:" not in msg
+    """Unknown token that doesn't exist in any view → block finding with valid-tokens fix."""
+    result = substrate_wizard._validate_view_trust_profile("human-user", "bogus-token")
+    profile, findings = result
+    assert "bogus-token" not in profile
+    assert len(findings) == 1
+    # No other-view hint; fix should list valid tokens for this view
+    fix = findings[0].suggested_fix or ""
+    assert "implementing-agent" not in fix
 
 
 # ── Issue #11: user-overlay shadowing surfaced via validate_catalog ──────────
