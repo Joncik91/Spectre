@@ -1064,6 +1064,24 @@ Status codes: dotted identifiers like `walker.init`. Terms: `term:<noun>` prefix
 - pm: Any point where information about the product travels from one party to another (AI to user, product to operator, etc.). The six-view spec makes sure each of these transitions is documented.
 - related: term:view, term:receiver
 
+## term:sanitized-input
+- kind: term
+- dev: An optional step field (`sanitized-input: [contract-entry, ...]`) that declares the listed artifact versions have been cleaned before this step consumes them. Clears taint of the *current artifact version* at the step's consumption boundary. Unlike `sanitizes:` (which marks this step's own output as clean), `sanitized-input:` asserts that an upstream process already sanitized the input. Artifact-version invariant: a subsequent `produces:` of the same path mints a new version that starts tainted again — a prior `sanitized-input:` declaration does not carry over to re-written versions.
+- pm: A field you add to a step to tell Spectre "I know this input was cleaned by a prior step." Use it when the scrubbing happened upstream and the current step just consumes a clean artifact. Different from `sanitizes:`, which says "this step's output is the clean version."
+- related: term:taint, term:artifact-version
+
+## term:taint
+- kind: term
+- dev: The per-artifact-version flag the `untrusted-flow-unguarded` check tracks. An artifact is tainted when produced by a step that declares `untrusted-input: yes` or receives tainted inputs. Taint is cleared by (a) `sanitizes:` on the producing step's output, or (b) `sanitized-input:` on the consuming step for that artifact. Each new `produces:` of a path mints a fresh artifact version with its own independent taint state.
+- pm: Whether Spectre considers a file or artifact to carry unvalidated external data. Tainted artifacts flag a warning if they flow into dangerous operations (file writes, shell commands, network calls) without a declared sanitization step.
+- related: term:sanitized-input, term:artifact-version
+
+## term:artifact-version
+- kind: term
+- dev: A monotonic logical version of a contract-entry path, minted each time a step produces that path. The taint model tracks taint per-version: clearing taint (via `sanitized-input:`) only affects the version visible at that step's position in the dependency graph. A later `produces:` of the same path creates a new version that is initially tainted if the producing step is a taint source or receives tainted inputs.
+- pm: A way to track that the same file can be written multiple times with different trust levels. If step 5 cleans a file and step 7 re-downloads it from an untrusted source, step 7 creates a new "version" of the file that is untrusted again — even though step 5 cleaned an earlier version.
+- related: term:taint, term:sanitized-input
+
 ## unsupported-spec-version
 - kind: finding
 - dev: Spec frontmatter is missing or carries a non-1.0 version. Tier-1 block. Hard cutover from v0.9 — no version-dispatch logic, no migration tool.
