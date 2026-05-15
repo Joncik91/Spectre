@@ -599,6 +599,12 @@ def yield_status_line(
 
 
 # ── Lifecycle / LLM-call / Semantic patterns (Decision 1) ────────────────────
+#
+# Gated weak tokens: some words appear in unrelated prose ("daemon" in a UNIX
+# history paragraph; "messages=[" in a logging discussion).  They fire only
+# when a strong-context keyword appears within 80 chars.  Strong tokens fire
+# unconditionally because they are specific enough.
+# See: decisions/walker-python-detection-taxonomy.md
 
 _INTENT_LIFECYCLE_PATTERNS: list[re.Pattern] = [
     re.compile(r"\bdaemon\b", re.IGNORECASE),
@@ -633,6 +639,11 @@ _INTENT_LIFECYCLE_PATTERNS: list[re.Pattern] = [
     re.compile(r"\bconsumes\b", re.IGNORECASE),
     re.compile(r"on event", re.IGNORECASE),
     re.compile(r"queue worker", re.IGNORECASE),
+    # Python-stack strong tokens for intent (qualified names are specific enough)
+    re.compile(r"watchdog\.observers", re.IGNORECASE),
+    re.compile(r"multiprocessing\.Process", re.IGNORECASE),
+    re.compile(r"asyncio\.run\b", re.IGNORECASE),
+    re.compile(r"\bapscheduler\b", re.IGNORECASE),
 ]
 
 _DRAFT_LIFECYCLE_PATTERNS: list[re.Pattern] = [
@@ -664,6 +675,13 @@ _DRAFT_LIFECYCLE_PATTERNS: list[re.Pattern] = [
     re.compile(r"\bonStartupFinished\b", re.IGNORECASE),
     re.compile(r"def activate\s*\(", re.IGNORECASE),
     re.compile(r"function activate\s*\(", re.IGNORECASE),
+    # Python-stack strong tokens for draft actions (qualified / CLI-specific)
+    re.compile(r"watchdog\.observers", re.IGNORECASE),
+    re.compile(r"multiprocessing\.Process", re.IGNORECASE),
+    re.compile(r"asyncio\.run\b", re.IGNORECASE),
+    re.compile(r"\bsystemd-run\b", re.IGNORECASE),
+    re.compile(r"\bcrontab\b", re.IGNORECASE),
+    re.compile(r"\bapscheduler\b", re.IGNORECASE),
 ]
 
 _DRAFT_LLM_PATTERNS: list[re.Pattern] = [
@@ -674,7 +692,54 @@ _DRAFT_LLM_PATTERNS: list[re.Pattern] = [
     re.compile(r"client\.messages\.create", re.IGNORECASE),
     re.compile(r"client\.chat\.completions", re.IGNORECASE),
     re.compile(r"client\.responses\.create", re.IGNORECASE),
+    # Python-stack strong tokens: qualified API names that cannot be prose
+    re.compile(r"openai\.ChatCompletion", re.IGNORECASE),
+    re.compile(r"anthropic\.Anthropic\b", re.IGNORECASE),
 ]
+
+# ── Gated weak-token helpers ──────────────────────────────────────────────────
+# Weak tokens: common words whose bare presence can appear in unrelated prose.
+# Each entry is (weak_pattern, context_pattern).  The weak token fires only
+# when context_pattern matches within GATED_WINDOW chars of the weak match.
+
+_GATED_WINDOW = 80
+
+_GATED_LIFECYCLE_PAIRS: list[tuple[re.Pattern, re.Pattern]] = [
+    # "daemon" near process-management terms (not: "daemon" in UNIX history prose)
+    (
+        re.compile(r"\bdaemon\b", re.IGNORECASE),
+        re.compile(r"systemd|\.service|pid\b|\.pid|fork\(\)|background process", re.IGNORECASE),
+    ),
+]
+
+_GATED_LLM_PAIRS: list[tuple[re.Pattern, re.Pattern]] = [
+    # "messages=[" near LLM vendor keyword (not: logging or dict literal)
+    (
+        re.compile(r"\bmessages\s*=\s*\[", re.IGNORECASE),
+        re.compile(r"openai|anthropic|claude|gpt|chat\.complet", re.IGNORECASE),
+    ),
+    # "system_prompt" near LLM vendor keyword
+    (
+        re.compile(r"\bsystem_prompt\b", re.IGNORECASE),
+        re.compile(r"openai|anthropic|claude|gpt|llm\b", re.IGNORECASE),
+    ),
+]
+
+
+def _matches_gated(
+    text: str,
+    pairs: list[tuple[re.Pattern, re.Pattern]],
+) -> bool:
+    """True if any weak token fires AND its context pattern matches within
+    _GATED_WINDOW characters of the weak match (either direction)."""
+    for weak_pat, ctx_pat in pairs:
+        for m in weak_pat.finditer(text):
+            start = max(0, m.start() - _GATED_WINDOW)
+            end = min(len(text), m.end() + _GATED_WINDOW)
+            window = text[start:end]
+            if ctx_pat.search(window):
+                return True
+    return False
 
 
 def _extract_step_actions(draft_text: str) -> list[str]:
@@ -698,22 +763,39 @@ def _extract_step_actions(draft_text: str) -> list[str]:
 
 
 def _detect_lifecycle_trigger(state: WalkState, draft_text: str) -> bool:
-    """True if intent or draft step actions match lifecycle patterns."""
+    """True if intent or draft step actions match lifecycle patterns.
+
+    Matching is two-tier:
+    - Strong tokens fire unconditionally (qualified names, CLI tools).
+    - Gated weak tokens fire only when a context keyword co-occurs within
+      _GATED_WINDOW chars (prevents false positives in prose, e.g. "daemon"
+      in a UNIX history paragraph).
+    """
     intent = state.spec_intent
     for pat in _INTENT_LIFECYCLE_PATTERNS:
         if pat.search(intent):
             return True
+    if _matches_gated(intent, _GATED_LIFECYCLE_PAIRS):
+        return True
     if draft_text:
         actions = _extract_step_actions(draft_text)
         for action in actions:
             for pat in _DRAFT_LIFECYCLE_PATTERNS:
                 if pat.search(action):
                     return True
+            if _matches_gated(action, _GATED_LIFECYCLE_PAIRS):
+                return True
     return False
 
 
 def _detect_llm_call_trigger(state: WalkState, draft_text: str) -> bool:
-    """True if any step action matches LLM-call patterns."""
+    """True if any step action matches LLM-call patterns.
+
+    Matching is two-tier:
+    - Strong tokens fire unconditionally (qualified API names, SDK identifiers).
+    - Gated weak tokens (messages=[, system_prompt) fire only when an LLM
+      vendor keyword co-occurs within _GATED_WINDOW chars.
+    """
     if not draft_text:
         return False
     actions = _extract_step_actions(draft_text)
@@ -721,6 +803,8 @@ def _detect_llm_call_trigger(state: WalkState, draft_text: str) -> bool:
         for pat in _DRAFT_LLM_PATTERNS:
             if pat.search(action):
                 return True
+        if _matches_gated(action, _GATED_LLM_PAIRS):
+            return True
     return False
 
 
