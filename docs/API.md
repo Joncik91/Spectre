@@ -83,6 +83,14 @@ INFO tier3.budget calls=1 exemplars_injected=N dismissals_by_fp={...}
 | **implement check** | `/implement check [<track>]` | Re-runs the current step's verification only — no execution, no state advance. |
 | **implement auto** | `/implement auto [<track>]` | Walks consecutive silent/repo-tier steps without re-prompting; halts at the first elevated-tier step, queued lock, verification fail, or drift trigger. |
 
+### Notes on direct module invocation
+
+The `spectre` wrapper is the supported entry point for all `python3 -m bin.<module>` style calls — it sets `CLAUDE_PLUGIN_ROOT` and `PYTHONPATH`. **Direct file-path invocation** (e.g. `python3 path/to/bin/walker.py`) is also supported as of v1.1.1: each module that imports siblings now puts the plugin root on `sys.path` before the imports resolve. Useful for debuggers, ad-hoc tests, and editor "run this file" shortcuts.
+
+### About "Shell cwd was reset to …"
+
+If you run a command like `cd /tmp && python3 ...` inside a Claude Code session, the harness emits `Shell cwd was reset to <repo>` on the next prompt. This line is a **Claude Code-side notification**, not a Spectre message — the string does not appear in any Spectre source. No supported install path emits it from Spectre code. Safe to ignore.
+
 ## CLI commands
 
 In addition to the hook-driven modules, the `spectre` shell wrapper exposes user-facing subcommands:

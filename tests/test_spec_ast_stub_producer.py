@@ -274,6 +274,14 @@ _VIDENCE_V2_STEPS_STUB = (
 _VIDENCE_V2_STEPS_CORRECTED = _VIDENCE_V2_STEPS_STUB.replace(
     "Write bootstrap stub — placeholder until step 3 is implemented.",
     "Write the initial bootstrap module.",
+).replace(
+    # v1.1.1 Fix K: after the YAML escape fix, the heredoc regex correctly
+    # extracts the body, so the body itself must not look like a stub. The
+    # plain `def bootstrap(): pass` body in the original `_STUB` block IS
+    # a stub by `_body_is_stub`; the corrected spec needs a real body to
+    # avoid `stub-producer-invoked` for the right reason.
+    "def bootstrap():\\n    pass",
+    "def bootstrap():\\n    import os\\n    os.makedirs('.vidence', exist_ok=True)",
 )
 
 

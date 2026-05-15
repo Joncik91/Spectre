@@ -8,10 +8,16 @@ Atomic writes via tempfile.mkstemp + os.replace.
 import json
 import os
 import re
+import sys
 import tempfile
 from pathlib import Path
 
-from bin import graph
+# v1.1.1 Fix G: see bin/walker.py for the rationale on this sys.path shim.
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from bin import graph  # noqa: E402
 
 _ADR_FILENAME_RE = re.compile(r"^(\d{4})-[\w-]+\.md$")
 

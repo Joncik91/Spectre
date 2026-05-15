@@ -12,9 +12,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import pathlib
 import sys
 
-from bin import _catalog
+# v1.1.1 Fix G: see bin/walker.py for the rationale on this sys.path shim.
+_ROOT = pathlib.Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from bin import _catalog  # noqa: E402
 
 
 def _cmd_list(args: argparse.Namespace) -> int:
