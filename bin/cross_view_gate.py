@@ -182,8 +182,31 @@ _VIEW_TO_CATALOG_TYPES: dict[str, set[str]] = {
 }
 
 
-def _emit_deferral_finding(section: str) -> "_findings.Finding":
-    """Return a post-ship-iteration-deferral info finding for the given view section."""
+def _emit_deferral_finding(
+    section: str,
+    reason: str = "operator-deferral",
+) -> "_findings.Finding":
+    """Return a post-ship-iteration-deferral info finding for the given view section.
+
+    ``reason`` distinguishes:
+    - ``operator-deferral`` (default) — the operator chose post-ship-iteration
+      despite compatible exemplars being available. Excessive deferrals across
+      views signal poor process; the aggregate check counts these.
+    - ``no-compatible-exemplar`` — the view's catalog has zero exemplars
+      matching the receiver-fingerprint. The deferral was forced, not chosen;
+      the aggregate check skips it. Recovery hint redirects to catalog
+      contribution rather than process correction.
+    """
+    if reason == "no-compatible-exemplar":
+        suggested = (
+            f"§{section}'s catalog is empty for this fingerprint — consider "
+            f"contributing an exemplar via docs/exemplars/<view>/<slug>.md."
+        )
+    else:
+        suggested = (
+            f"Add a compatible exemplar to ~/.spectre/exemplars/ or the plugin "
+            f"catalog, then re-run the walker to bind §{section}."
+        )
     return _findings.Finding(
         tier=2,
         kind="post-ship-iteration-deferral",
@@ -195,21 +218,57 @@ def _emit_deferral_finding(section: str) -> "_findings.Finding":
             f"§{section} deferred exemplar selection to post-ship iteration — "
             f"no catalog exemplar matched the view's receiver-fingerprint."
         ),
-        suggested_fix=(
-            f"Add a compatible exemplar to ~/.spectre/exemplars/ or the plugin catalog, "
-            f"then re-run the walker to bind §{section}."
-        ),
+        suggested_fix=suggested,
+        reason=reason,
     )
+
+
+def _no_compatible_exemplar(
+    section: str,
+    view_fp: str | None,
+    catalog: "_catalog.Catalog",
+) -> bool:
+    """True iff the catalog has zero exemplars compatible with this view's fingerprint.
+
+    "Compatible" means the exemplar's view-type covers the section AND its
+    `calibrated_for` either is empty (any-match) or includes the view's
+    receiver-fingerprint. When the view has no declared fingerprint, fall back
+    to "view-type alone must match" — same coverage check.
+    """
+    view_types = _VIEW_TO_CATALOG_TYPES.get(section, set())
+    if not view_types:
+        return False
+    for ex in catalog.exemplars.values():
+        if not (set(ex.view_types) & view_types):
+            continue
+        if not ex.calibrated_for or view_fp is None:
+            return False  # any-match exemplar exists
+        if view_fp in ex.calibrated_for:
+            return False
+    return True
 
 
 def _check_exemplar_bindings(
     view_blocks: dict[str, str],
+    substrate_blocks: dict[str, str] | None = None,
 ) -> list[_findings.Finding]:
     results: list[_findings.Finding] = []
     catalog = _catalog.load_catalog()
+    fingerprints = (
+        _extract_receiver_fingerprints(substrate_blocks)
+        if substrate_blocks is not None
+        else {}
+    )
     for section, block in view_blocks.items():
         if _is_not_applicable(block):
             continue
+        substrate_key = _VIEW_SECTION_TO_SUBSTRATE_KEY.get(section)
+        view_fp = fingerprints.get(substrate_key) if substrate_key else None
+        deferral_reason = (
+            "no-compatible-exemplar"
+            if _no_compatible_exemplar(section, view_fp, catalog)
+            else "operator-deferral"
+        )
         # Parse taxonomy-version declarations (`taxonomy-version: help-text:1, error-text:1`)
         spec_taxonomies: dict[str, int] = {}
         for tv_match in _TAXONOMY_VERSION_RE.finditer(block):
@@ -228,7 +287,7 @@ def _check_exemplar_bindings(
         # _EXEMPLAR_REF_RE — detect it with its own regex.  Emit at most one deferral
         # finding per section even if multiple style-keys are deferred.
         if _POST_SHIP_RE.search(block):
-            results.append(_emit_deferral_finding(section))
+            results.append(_emit_deferral_finding(section, reason=deferral_reason))
             _section_deferred = True
         # Find exemplar bindings
         for m in _EXEMPLAR_REF_RE.finditer(block):
@@ -244,7 +303,7 @@ def _check_exemplar_bindings(
             # missing-catalog error.  Skip if the section already emitted a deferral.
             if raw_ref == "post-ship-iteration":
                 if not _section_deferred:
-                    results.append(_emit_deferral_finding(section))
+                    results.append(_emit_deferral_finding(section, reason=deferral_reason))
                     _section_deferred = True
                 continue
             status, matches = _catalog.lookup_status(raw_ref)
@@ -460,7 +519,14 @@ def _check_excessive_post_ship_iteration(
     fingerprint. More than one suggests a broader catalog structural gap —
     the operator should file a catalog issue rather than deferring silently.
     """
-    count = sum(1 for f in findings if f.kind == "post-ship-iteration-deferral")
+    # Only count operator-chosen deferrals. Views with zero compatible
+    # exemplars (`reason == "no-compatible-exemplar"`) force the choice;
+    # penalizing the operator for the only valid option is the v1.2 defect.
+    count = sum(
+        1 for f in findings
+        if f.kind == "post-ship-iteration-deferral"
+        and (f.reason or "operator-deferral") == "operator-deferral"
+    )
     if count > 1:
         return [_findings.Finding(
             tier=2,
@@ -498,7 +564,7 @@ def classify(spec_path: pathlib.Path) -> list[_findings.Finding]:
     view_blocks = _extract_view_blocks(body)
     results: list[_findings.Finding] = []
     results.extend(_check_cross_view_references(view_blocks, substrate_blocks))
-    results.extend(_check_exemplar_bindings(view_blocks))
+    results.extend(_check_exemplar_bindings(view_blocks, substrate_blocks))
     results.extend(_check_fingerprint_vs_hard_contract(body, substrate_blocks))
     results.extend(_check_fingerprint_vs_exemplar(view_blocks, substrate_blocks))
     # Aggregation pass — must run after all per-view checks have emitted.

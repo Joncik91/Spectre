@@ -159,6 +159,12 @@ class Finding:
     # works even when the model omits the "missing: X;" message prefix.
     # NOT included in fingerprint() — message text already excluded there.
     target_artifact: str | None = None
+    # v1.2.1 — structured reason for findings that share a kind but have
+    # distinct semantic causes (e.g. `post-ship-iteration-deferral` may stem
+    # from an operator-chosen deferral or from a view with zero compatible
+    # exemplars). Lets aggregators count only the operator-deferral subset.
+    # NOT included in fingerprint() — same rationale as target_artifact.
+    reason: str | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in KNOWN_KINDS:

@@ -162,14 +162,19 @@ def test_single_deferral_emits_info(tmp_path, monkeypatch):
 
 def test_two_deferrals_emits_excessive_warn(tmp_path, monkeypatch):
     """Spec with two views bound to post-ship-iteration → two info findings
-    PLUS one excessive-post-ship-iteration warn finding."""
+    PLUS one excessive-post-ship-iteration warn finding.
+
+    v1.2.1 #5: fingerprints chosen so the catalog has compatible exemplars,
+    making both deferrals operator-chosen (not catalog-forced). The aggregate
+    warn only fires for operator-chosen deferrals.
+    """
     monkeypatch.setattr(_catalog, "_LOAD_CACHE", None)
 
     spec = _write_spec(
         tmp_path,
         extra_substrate=(
             "### 8.5 Human-user substrate\n"
-            "- receiver-fingerprint: gui-only\n\n"
+            "- receiver-fingerprint: cli-power-user\n\n"
             "### 8.7 Operator substrate\n"
             "- receiver-fingerprint: on-call-engineer\n\n"
         ),
@@ -210,11 +215,15 @@ def test_prefixed_sentinel_emits_deferral_not_exemplar_not_found(tmp_path, monke
     """
     monkeypatch.setattr(_catalog, "_LOAD_CACHE", None)
 
+    # v1.2.1 #5: fingerprints chosen so compatible exemplars EXIST in the
+    # catalog (cli-power-user for help-text; on-call-engineer for log-format).
+    # The deferral is therefore an operator choice, not catalog-forced —
+    # `excessive-post-ship-iteration` aggregate warn fires as designed.
     spec = _write_spec(
         tmp_path,
         extra_substrate=(
             "### 8.5 Human-user substrate\n"
-            "- receiver-fingerprint: gui-only\n\n"
+            "- receiver-fingerprint: cli-power-user\n\n"
             "### 8.7 Operator substrate\n"
             "- receiver-fingerprint: on-call-engineer\n\n"
         ),
@@ -237,5 +246,7 @@ def test_prefixed_sentinel_emits_deferral_not_exemplar_not_found(tmp_path, monke
     assert len(deferral) == 2, f"expected 2 deferral findings, got {len(deferral)}"
     assert all(f.severity == "info" for f in deferral)
     assert all(f.tier == 2 for f in deferral)
-    assert len(excessive) == 1, "two deferrals must trigger excessive-post-ship-iteration warn"
+    assert all(f.reason == "operator-deferral" for f in deferral), \
+        "compatible-exemplar deferrals must be tagged operator-deferral"
+    assert len(excessive) == 1, "two operator-chosen deferrals must trigger excessive warn"
     assert excessive[0].severity == "warn"

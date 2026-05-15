@@ -597,6 +597,7 @@ def evaluate(
     *,
     config_path: pathlib.Path | None = None,
     bundle_persist_dir: pathlib.Path | None = None,
+    project_root: pathlib.Path | None = None,
 ) -> EvaluatorResult:
     """Full pipeline: build bundle → Tier 1 → Tier 2 → Tier 3 (if config enables)
     → aggregate findings → compute max severity → persist bundle → return result.
@@ -624,7 +625,7 @@ def evaluate(
     _persist_bundle(bundle, bundle_persist_dir)
 
     # ── Step 3: Tier 1 ──────────────────────────────────────────────────────
-    tier1_findings = _spec_ast.classify(draft_path)
+    tier1_findings = _spec_ast.classify(draft_path, project_root=project_root)
     tier1_findings.extend(_substrate_ast.classify(draft_path))
     # Tier 1.5 spec-author lints (v0.3.1): runuser-no-cd, unsafe-heredoc.
     # Folded into Tier 1 results so callers see a single deterministic group.
@@ -886,7 +887,12 @@ if __name__ == "__main__":
         config_path = _resolve(args.config) if args.config else None
         bundle_dir = _resolve(args.bundle_dir) if args.bundle_dir else None
         try:
-            result = evaluate(spec_path, config_path=config_path, bundle_persist_dir=bundle_dir)
+            result = evaluate(
+                spec_path,
+                config_path=config_path,
+                bundle_persist_dir=bundle_dir,
+                project_root=project_root,
+            )
         except Exception as exc:  # noqa: BLE001
             _status.emit("error", "eval.run", dest="stderr", reason=str(exc),
                          remediation="check spec syntax then run 'spectre walker get-state' to inspect walk state")

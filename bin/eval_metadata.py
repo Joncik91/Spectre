@@ -240,6 +240,7 @@ def write_sidecar(
     contract_resolution: dict | None = None,
     substrate_resolution: dict | None = None,
     findings_inline: list[dict] | None = None,
+    substitutions: list[dict] | None = None,
 ) -> pathlib.Path:
     """Atomic write of <spec>.eval.json next to the spec file.
 
@@ -268,6 +269,12 @@ def write_sidecar(
     through; if the payload already contains a ``contract_resolution`` key it
     is forwarded automatically (see the CLI handler below).  Python API callers
     should pass the value from ``result.sidecar_payload.get("contract_resolution")``.
+
+    *substitutions* — v1.2.1 #6 evidence trail. When non-None, each entry is
+    a dict ``{"from": <old_text>, "to": <new_text>, "reason": <short>,
+    "tier1_check_name": <kind>, "step_id": <step-N>}`` recording an agent's
+    rewrite of action content or verification commands to satisfy a Tier-1
+    check. Not a finding — contemporaneous evidence the operator can audit.
     """
     spec_path = pathlib.Path(spec_path)
     sidecar_path = sidecar_path_for(spec_path)
@@ -307,6 +314,14 @@ def write_sidecar(
 
     if findings_inline is not None:
         payload["findings"] = findings_inline
+
+    # v1.2.1 #6: substitution evidence. Each entry shape:
+    #   {"from": str, "to": str, "reason": str,
+    #    "tier1_check_name": str, "step_id": str}
+    # Logged when an agent rewrites action content or verification commands
+    # to satisfy a Tier-1 check. Evidence, not a finding.
+    if substitutions is not None:
+        payload["substitutions"] = substitutions
 
     # Atomic write: mkstemp + os.replace
     fd, tmp = tempfile.mkstemp(
@@ -490,6 +505,7 @@ if __name__ == "__main__":
                 contract_resolution=payload.get("contract_resolution"),
                 substrate_resolution=payload.get("substrate_resolution"),
                 findings_inline=payload.get("findings_inline"),
+                substitutions=payload.get("substitutions"),
             )
         except KeyError as exc:
             _status.emit("error", "eval_metadata.sidecar_missing_field", dest="stderr",

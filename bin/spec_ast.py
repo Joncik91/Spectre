@@ -898,13 +898,46 @@ def _parse_mutates_paths(body: str) -> list[str]:
     return paths
 
 
-def _action_authored_path(action: str) -> list[str]:
+# Accept both absolute and relative authoring paths. Relative paths require
+# a project root and must resolve inside it (workspace-boundary guard).
+_AUTHORED_PATH_CHARSET = r"[a-zA-Z0-9_./-]"
+
+
+def _path_inside_root(raw: str, project_root: pathlib.Path | None) -> str | None:
+    """Return the path if it resolves inside project_root, else None.
+
+    Absolute paths must be under project_root after resolve(). Relative paths
+    are resolved against project_root. If project_root is None (today's
+    behavior), only absolute paths are accepted unchanged and no containment
+    check runs — preserves API compatibility for callers that have not yet
+    threaded the project root through. `..` escapes and symlink-escapes are
+    rejected once a project_root is supplied.
+    """
+    if project_root is None:
+        return raw if raw.startswith("/") else None
+    try:
+        candidate = pathlib.Path(raw)
+        if not candidate.is_absolute():
+            candidate = project_root / candidate
+        resolved = candidate.resolve()
+    except (OSError, ValueError):
+        return None
+    root = project_root.resolve()
+    if resolved == root or root in resolved.parents:
+        return raw
+    return None
+
+
+def _action_authored_path(
+    action: str, project_root: pathlib.Path | None = None
+) -> list[str]:
     """Heuristic: return file paths that the action plausibly *creates/writes*.
 
     Looks for:
-    - heredoc targets: `cat > /path <<EOF` or `tee /path <<EOF`
+    - heredoc targets: `cat > path <<EOF` or `tee path <<EOF`
     - explicit cp/install destination: last path arg
-    - Any > /path or >> /path redirects (file writes)
+    - Any > path or >> path redirects (file writes)
+    - touch path (single-arg authoring verb; relative or absolute)
     - CLI output flags: a token in _SELF_CYCLE_OUTPUT_OPTS means the next
       non-flag token is an authored output destination. Also handles the
       equals-form (--out=path).
@@ -913,24 +946,47 @@ def _action_authored_path(action: str) -> list[str]:
     within them. Keeping mkdir paths out prevents false "authored" matches
     when a subsequent step invokes a file inside the created directory.
 
+    Path scope:
+    - With ``project_root=None`` (today's behavior): only absolute paths are
+      recognized.
+    - With a project root provided: relative paths are resolved against it.
+      In both modes, paths that escape ``project_root`` (`../etc/passwd`,
+      out-of-root absolute paths, symlink-escapes) are rejected — the
+      workspace-boundary guard protects against false-clears of
+      ``self-cycle-produces``.
+
     Returns a list of created/written file paths.
     """
     created: list[str] = []
-    # Redirect writes: > /path or >> /path
-    for m in re.finditer(r"(?:>>?)\s*(/[a-zA-Z0-9_/.-]+)", action):
-        created.append(m.group(1))
-    # cat > /path <<EOF  (heredoc)
-    for m in re.finditer(r"\bcat\s+>\s*(/[a-zA-Z0-9_/.-]+)", action):
-        created.append(m.group(1))
-    # tee /path
-    for m in re.finditer(r"\btee\s+(/[a-zA-Z0-9_/.-]+)", action):
-        created.append(m.group(1))
-    # cp src /dest  — destination is the last abs path
-    for m in re.finditer(r"\bcp\s+\S+\s+(/[a-zA-Z0-9_/.-]+)", action):
-        created.append(m.group(1))
-    # install ... /dest
-    for m in re.finditer(r"\binstall\b[^&|;]*\s(/[a-zA-Z0-9_/.-]+)(?:\s|$)", action):
-        created.append(m.group(1))
+
+    def _add(raw: str) -> None:
+        guarded = _path_inside_root(raw, project_root)
+        if guarded is not None:
+            created.append(guarded)
+
+    cs = _AUTHORED_PATH_CHARSET
+    # Redirect writes: > path or >> path
+    for m in re.finditer(rf"(?:>>?)\s*({cs}+)", action):
+        _add(m.group(1))
+    # cat > path <<EOF  (heredoc)
+    for m in re.finditer(rf"\bcat\s+>\s*({cs}+)", action):
+        _add(m.group(1))
+    # tee path
+    for m in re.finditer(rf"\btee\s+({cs}+)", action):
+        _add(m.group(1))
+    # cp src dest  — destination is the last path
+    for m in re.finditer(rf"\bcp\s+\S+\s+({cs}+)", action):
+        _add(m.group(1))
+    # install ... dest
+    for m in re.finditer(rf"\binstall\b[^&|;]*\s({cs}+)(?:\s|$)", action):
+        _add(m.group(1))
+    # touch path1 [path2 ...] — single-arg authoring verb. Touch creates the
+    # named file if absent, so it qualifies as authoring for self-cycle
+    # purposes. Multiple paths handled by greedy tokenisation.
+    for m in re.finditer(r"\btouch\s+([^\n&|;]+)", action):
+        for part in m.group(1).split():
+            if re.fullmatch(rf"{cs}+", part):
+                _add(part)
     # CLI output flags: -o path, --out path, --out=path, etc.
     # Tokenise the action to find flag → next-token pairs.
     tokens: list[str] | None = None
@@ -985,6 +1041,7 @@ def _module_path_candidates(module: str) -> list[str]:
 def _check_action_invokes_uncreated_artifact(
     steps: list[dict],
     mutates_paths: list[str],
+    project_root: pathlib.Path | None = None,
 ) -> list[_findings.Finding]:
     """Gap A: block if an action invokes an absolute path under mutates: that no
     prior step authored.
@@ -1067,7 +1124,7 @@ def _check_action_invokes_uncreated_artifact(
             ))
 
         # --- Now record what this step authors ---
-        authored.extend(_action_authored_path(action))
+        authored.extend(_action_authored_path(action, project_root=project_root))
 
     return results
 
@@ -1593,7 +1650,10 @@ def _action_token_matches_produces_path(token: str, produces_path: str) -> bool:
     return produces_path == token or produces_path.endswith("/" + token.lstrip("/"))
 
 
-def _check_self_cycle_produces(steps: list[dict]) -> list[_findings.Finding]:
+def _check_self_cycle_produces(
+    steps: list[dict],
+    project_root: pathlib.Path | None = None,
+) -> list[_findings.Finding]:
     """Tier 1 block: a step's action consumes a path it also produces, with no
     earlier step's produces: covering that path.
 
@@ -1618,7 +1678,7 @@ def _check_self_cycle_produces(steps: list[dict]) -> list[_findings.Finding]:
             action_tokens = _extract_action_path_tokens(action)
             # Exclude paths the action itself *writes* (redirect destinations,
             # cp/install/tee targets) — those are outputs, not consumed inputs.
-            authored = set(_action_authored_path(action))
+            authored = set(_action_authored_path(action, project_root=project_root))
             this_produces_paths = _produces_file_paths(produces)
 
             for tok in dict.fromkeys(action_tokens):
@@ -2238,11 +2298,18 @@ def _check_verification_depth(step: dict, step_n: int) -> list[_findings.Finding
     )]
 
 
-def classify(spec_path: pathlib.Path) -> list[_findings.Finding]:
+def classify(
+    spec_path: pathlib.Path,
+    project_root: pathlib.Path | None = None,
+) -> list[_findings.Finding]:
     """Tier 1 deterministic classifier. Returns Finding list (possibly empty).
 
     PURE parse/structure/tautology. Does NOT call bin.tier or bin.resources.
     Budget: <100ms.
+
+    ``project_root`` (optional) enables relative-path authoring detection in
+    self-cycle and uncreated-artifact checks. Paths that resolve outside the
+    root are still treated as unauthored (workspace-boundary guard).
     """
     text = spec_path.read_text(encoding="utf-8")
     text = text.replace("\r\n", "\n").replace("\r", "\n")  # CRLF/CR normalization
@@ -2325,7 +2392,9 @@ def classify(spec_path: pathlib.Path) -> list[_findings.Finding]:
     # ── Check 6 (Gap A): action invokes uncreated artifact ───────────────────
     mutates_paths = _parse_mutates_paths(body)
     if mutates_paths:
-        results.extend(_check_action_invokes_uncreated_artifact(steps, mutates_paths))
+        results.extend(_check_action_invokes_uncreated_artifact(
+            steps, mutates_paths, project_root=project_root
+        ))
 
     # ── Check 7 (Gap C): unowned-requirement (e2e assertions) ────────────────
     results.extend(_check_unowned_requirement(steps))
@@ -2334,7 +2403,7 @@ def classify(spec_path: pathlib.Path) -> list[_findings.Finding]:
     results.extend(_check_negative_paths(steps, body))
 
     # ── Check 9 (v0.8 §42): self-cycle produces ──────────────────────────────
-    results.extend(_check_self_cycle_produces(steps))
+    results.extend(_check_self_cycle_produces(steps, project_root=project_root))
 
     # ── Check 10 (v0.9 §46): implicit-precondition-missing ───────────────────
     results.extend(_check_implicit_precondition_missing(steps))
